@@ -247,6 +247,56 @@ class UIAutomationClient:
             print(f"[ERROR] 섹션 선택 실패: {e}")
             return False
 
+    def select_notebook_by_text(
+        self, window, text: str, tree_control: Optional[object] = None
+    ) -> bool:
+        """
+        텍스트로 전자필기장(노트북)을 검색하고 선택합니다.
+        NOTE: OneNote UI 구조에 따라 TreeItem/ListItem로 보일 수 있어 둘 다 스캔합니다.
+        """
+        if not self.ensure_loaded():
+            return False
+        try:
+            if tree_control is None:
+                tree_control = self.find_tree_or_list(window)
+            if not tree_control:
+                return False
+
+            target_norm = self.normalize_text(text)
+
+            def _scan(types: List[str]) -> bool:
+                for control_type in types:
+                    try:
+                        for item in tree_control.descendants(control_type=control_type):
+                            try:
+                                if (
+                                    self.normalize_text(item.window_text())
+                                    == target_norm
+                                ):
+                                    try:
+                                        item.select()
+                                        return True
+                                    except Exception:
+                                        try:
+                                            item.click_input()
+                                            return True
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                return False
+
+            if _scan(["TreeItem"]):
+                return True
+            if _scan(["ListItem"]):
+                return True
+            return False
+        except Exception as e:
+            print(f"[ERROR] 전자필기장 선택 실패: {e}")
+            return False
+
     # ==================== 키보드 및 마우스 제어 ====================
 
     def send_keys(self, keys: str) -> bool:

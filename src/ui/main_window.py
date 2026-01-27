@@ -65,6 +65,10 @@ DEFAULT_GROUP_NAME = "Default"
 AGG_BUFFER_ID = "buffer-aggregate-all-sections"
 AGG_BUFFER_NAME = "종합"
 
+# OneNote: 전체 전자필기장 자동등록 그룹
+AUTO_ONENOTE_GROUP_ID = "group-onenote-auto"
+AUTO_ONENOTE_GROUP_NAME = "OneNote(자동등록)"
+
 # ----------------- 0.0 설정 파일 경로 헬퍼 -----------------
 def _get_settings_file_path() -> str:
     """
@@ -288,7 +292,6 @@ def _ensure_default_and_aggregate_inplace(settings: Dict[str, Any]) -> None:
             "type": "buffer",
             "id": AGG_BUFFER_ID,
             "name": AGG_BUFFER_NAME,
-            "virtual": "aggregate",
             "locked": True,
             "data": []
         }
@@ -296,10 +299,7 @@ def _ensure_default_and_aggregate_inplace(settings: Dict[str, Any]) -> None:
     else:
         # 항상 children[0]으로 이동 + 이름/속성 강제
         agg_node["name"] = AGG_BUFFER_NAME
-        agg_node["virtual"] = "aggregate"
         agg_node["locked"] = True
-        # 종합은 data 저장하지 않음(항상 비워둠)
-        agg_node["data"] = []
         if agg_idx != 0:
             children.pop(agg_idx)
             children.insert(0, agg_node)
@@ -764,25 +764,92 @@ def select_section_by_text(
                             if _normalize_text(itm.window_text()) == target_norm:
                                 try:
                                     itm.select()
+                                    return True
                                 except Exception:
                                     try:
                                         itm.click_input()
+                                        return True
                                     except Exception:
-                                        return False
-                                return True
+                                        pass
                         except Exception:
-                            continue
+                            pass
+                except Exception:
+                    pass
+            return False
+
+        if _scan(["TreeItem"]):
+            return True
+        if _scan(["ListItem"]):
+            return True
+        return False
+    except Exception as e:
+        print(f"[ERROR] 섹션 선택 실패: {e}")
+        return False
+
+
+def select_notebook_by_text(
+    onenote_window, text: str, tree_control: Optional[object] = None
+) -> bool:
+    """
+    전자필기장(노트북) 이름으로 찾고 선택합니다.
+    - root children 우선 탐색(전자필기장은 보통 루트에 있음)
+    - 실패하면 descendants(TreeItem/ListItem)로 fallback
+    """
+    ensure_pywinauto()
+    if not _pwa_ready:
+        return False
+    try:
+        tree_control = tree_control or _find_tree_or_list(onenote_window)
+        if not tree_control:
+            return False
+        target_norm = _normalize_text(text)
+
+        # 1) root-level children 우선
+        try:
+            for item in (tree_control.children() or []):
+                try:
+                    if _normalize_text(item.window_text()) == target_norm:
+                        try:
+                            item.select()
+                        except Exception:
+                            item.click_input()
+                        return True
                 except Exception:
                     continue
+        except Exception:
+            pass
+
+        # 2) descendants fallback
+        def _scan(types: List[str]) -> bool:
+            for control_type in types:
+                try:
+                    for item in tree_control.descendants(control_type=control_type):
+                        try:
+                            if _normalize_text(item.window_text()) == target_norm:
+                                try:
+                                    item.select()
+                                    return True
+                                except Exception:
+                                    try:
+                                        item.click_input()
+                                        return True
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
             return False
 
         if _scan(["TreeItem"]) or _scan(["ListItem"]):
+            # 선택된 후 중앙정렬 시도 (함수 내부에서 수행)
             _center_element_in_view(
                 get_selected_tree_item_fast(tree_control), tree_control
             )
             return True
         return False
-    except Exception:
+    except Exception as e:
+        print(f"[ERROR] 전자필기장 선택 실패: {e}")
         return False
 
 
@@ -1425,9 +1492,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.btn_rename_buffer.setText("이름변경(F2)")
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
 
+        self.btn_register_all_notebooks = QToolButton()
+        self.btn_register_all_notebooks.setText("원노트 전체등록")
+        self.btn_register_all_notebooks.setToolTip("현재 연결된 OneNote 창에서 전자필기장/섹션을 한 번에 버퍼로 등록")
+        self.btn_register_all_notebooks.clicked.connect(self._register_all_notebooks_from_current_onenote)
+        self.btn_register_all_notebooks.setEnabled(False)  # 종합 버퍼에서만 활성화
+
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer_group)
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer)
         buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
+        buffer_toolbar_top_layout.addWidget(self.btn_register_all_notebooks)
         buffer_toolbar_top_layout.addStretch(1)
         buffer_group_layout.addLayout(buffer_toolbar_top_layout)
 
@@ -1738,8 +1812,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
         save_settings(self.settings)
 
     def closeEvent(self, event):
-        self._save_window_state()  # 변경된 함수 호출
-        self._save_favorites()
+        try:
+            self._save_window_state()
+            self._save_favorites()
+            print("[DBG][FLUSH] Favorites saved on exit")
+        except Exception as e:
+            print(f"[ERR][FLUSH] Failed to save favorites on exit: {e}")
         super().closeEvent(event)
 
     def update_status_and_ui(self, status_text: str, is_connected: bool):
@@ -1870,19 +1948,77 @@ class OneNoteScrollRemoconApp(QMainWindow):
         save_settings(current_settings)
 
     def _pre_action_check(self) -> bool:
-        ensure_pywinauto()
-        if not self.onenote_window:
-            self.update_status_and_ui("오류: 앱에 연결되어 있지 않습니다.", False)
-            return False
+        """
+        OneNote 관련 액션을 실행하기 전 선행 조건 체크.
+        False가 나오는 이유를 터미널에 상세히 출력한다.
+        """
+        print("[DBG][PRECHECK] ENTER")
         try:
-            if not self.onenote_window.is_visible():
-                raise ElementNotFoundError
-        except (ElementNotFoundError, AttributeError):
-            self.update_status_and_ui(
-                "오류: 연결된 창을 찾을 수 없습니다. 연결을 해제합니다.", False
-            )
-            self.disconnect_and_clear_info()
+            w = getattr(self, "onenote_window", None)
+            print(f"[DBG][PRECHECK] onenote_window={w}")
+        except Exception as e:
+            print(f"[DBG][PRECHECK] onenote_window read EXC: {e}")
+            w = None
+
+        # 1) OneNote 윈도우 핸들 확보 여부
+        try:
+            hwnd = None
+            if w is not None:
+                hwnd = getattr(w, "handle", None)
+                if callable(hwnd):
+                    hwnd = w.handle()
+            print(f"[DBG][PRECHECK] hwnd={hwnd}")
+        except Exception as e:
+            print(f"[DBG][PRECHECK] hwnd EXC: {e}")
+            hwnd = None
+
+        if not hwnd:
+            print("[DBG][PRECHECK] FAIL: hwnd is None/0 (OneNote 창 연결 안됨)")
+            try:
+                self.update_status_and_ui("OneNote 창이 연결되지 않았습니다. 먼저 OneNote 창 연결/선택을 해주세요.", False)
+            except Exception:
+                pass
             return False
+
+        # 2) pywinauto backend / wrapper 사용 가능 여부
+        try:
+            ensure_pywinauto()
+            print("[DBG][PRECHECK] ensure_pywinauto OK")
+        except Exception as e:
+            print(f"[DBG][PRECHECK] FAIL: ensure_pywinauto EXC: {e}")
+            return False
+
+        # 3) 포그라인드/활성화 조건이 있으면 여기서 확인
+        try:
+            # 프로젝트에 기존 함수가 있으면 그대로 호출하되, 실패 사유를 찍는다.
+            if hasattr(self, "_bring_onenote_to_front"):
+                ok_focus = self._bring_onenote_to_front()
+                print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
+                if ok_focus is False:
+                    print("[DBG][PRECHECK] FAIL: bring_onenote_to_front returned False")
+                    return False
+        except Exception as e:
+            print(f"[DBG][PRECHECK] bring/front EXC: {e}")
+            return False
+
+        # 4) 트리 컨트롤 찾기 조건 (기존에 precheck에서 강제하는 경우가 많음)
+        try:
+            tc = getattr(self, "tree_control", None)
+            print(f"[DBG][PRECHECK] tree_control(before)={tc}")
+            if not tc:
+                finder = globals().get("_find_tree_or_list", None)
+                if callable(finder):
+                    tc = finder(w)
+                    self.tree_control = tc
+                print(f"[DBG][PRECHECK] tree_control(after)={tc}")
+            if not tc:
+                print("[DBG][PRECHECK] FAIL: tree_control not found")
+                return False
+        except Exception as e:
+            print(f"[DBG][PRECHECK] tree_control find EXC: {e}")
+            return False
+
+        print("[DBG][PRECHECK] PASS")
         return True
 
     def center_selected_item_action(self):
@@ -2023,7 +2159,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
             for child in node.get("children", []):
                 self._append_buffer_node(item, child)
         else:
-            item.setIcon(0, self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon))
+            # ✅ 종합(가상) 버퍼는 노트북 이모지(💻) 등으로 변경
+            if payload.get("virtual") == "aggregate":
+                item.setText(0, "💻 " + name)
+            else:
+                item.setIcon(0, self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon))
             
         item.setData(0, ROLE_DATA, payload)
         
@@ -2054,12 +2194,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if not self.active_buffer_node:
             return
 
-        # ✅ 종합(가상) 버퍼는 저장하면 안 됨
-        try:
-            if self.active_buffer_node.get("virtual") == "aggregate":
-                return
-        except Exception:
-            pass
+        # ✅ 종합 버퍼도 이제 '노트북 저장'을 위해 저장 허용
 
         try:
             data = []
@@ -2068,7 +2203,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 data.append(self._serialize_fav_item(root.child(i)))
 
             # 메모리 상의 active_buffer_node 데이터 업데이트
-            self.active_buffer_node["data"] = data
+            if self.active_buffer_node is not None:
+                self.active_buffer_node["data"] = data
+                print(f"[DBG][FAV][SAVE] Updated active_buffer_node data: count={len(data)}")
             
             # PyQt의 item.data()로 얻은 dict는 "수정해도 item 내부에 반영되지" 않는 경우가 있다.
             # 따라서 활성 버퍼의 QTreeWidgetItem에도 동일 데이터를 강제 주입한다.
@@ -2077,19 +2214,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 iterator = QTreeWidgetItemIterator(self.buffer_tree)
                 while iterator.value():
                     it = iterator.value()
-                    payload = it.data(0, ROLE_DATA) or {}
-                    if payload.get("id") == self.active_buffer_id:
+                    p = it.data(0, ROLE_DATA) or {}
+                    if p.get("id") == self.active_buffer_id:
                         self.active_buffer_item = it
                         break
                     iterator += 1
 
             if self.active_buffer_item is not None:
-                payload = self.active_buffer_item.data(0, ROLE_DATA) or {}
-                payload["data"] = data
-                self.active_buffer_item.setData(0, ROLE_DATA, payload)
+                p = self.active_buffer_item.data(0, ROLE_DATA) or {}
+                p["data"] = data
+                self.active_buffer_item.setData(0, ROLE_DATA, p)
+                print(f"[DBG][FAV][SAVE] Updated active_buffer_item payload: id={p.get('id')}")
 
             # 그리고 전체 버퍼 구조 저장
             self._save_buffer_structure()
+            print("[DBG][FAV][SAVE] SSOT synchronized and persisted")
 
         except Exception as e:
             print(f"[ERROR] 즐겨찾기 저장 실패: {e}")
@@ -2134,11 +2273,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             if payload.get("locked"):
                 node["locked"] = True
             
-            # 종합은 data 저장하지 않음
-            if payload.get("virtual") == "aggregate":
-                node["data"] = []
-            else:
-                node["data"] = payload.get("data", [])
+            node["data"] = payload.get("data", [])
+            # [DBG] 종합 버퍼 저장 스캔
+            if node.get("id") == AGG_BUFFER_ID:
+                print(f"[DBG][SSOT][SERIALIZE] Aggregate data count={len(node['data'])}")
             
         return node
 
@@ -2382,7 +2520,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             "id": payload.get("id") or str(uuid.uuid4()),
             "name": item.text(0),
         }
-        if node_type == "section":
+        if node_type in ("section", "notebook"):
             node["target"] = payload.get("target", {})
         children = []
         for i in range(item.childCount()):
@@ -2400,7 +2538,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         item.setText(0, name)
         item.setData(0, ROLE_TYPE, node_type)
         payload = {"id": node.get("id", str(uuid.uuid4()))}
-        if node_type == "section":
+        if node_type in ("section", "notebook"):
             payload["target"] = node.get("target", {})
             item.setIcon(
                 0,
@@ -2431,9 +2569,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
     # ----------------- 15-3. 버퍼 트리 이벤트 핸들러 -----------------
     def _on_buffer_tree_item_clicked(self, item, col):
         """버퍼 트리 항목 클릭 시 처리"""
+        if not item:
+            return
         node_type = item.data(0, ROLE_TYPE)
-        payload = item.data(0, ROLE_DATA)
-        is_agg = bool(payload and payload.get("virtual") == "aggregate")
+        payload = item.data(0, ROLE_DATA) or {}
 
         if node_type == "buffer":
             # 버퍼 전환 직전: 현재 중앙 트리 내용을 "이전 버퍼"에 반드시 저장
@@ -2446,21 +2585,26 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.active_buffer_item = item
             self.settings["active_buffer_id"] = self.active_buffer_id
             
-            # ✅ 종합(가상) 버퍼: 클릭 시점에 계산해서 로드 / 저장 금지
-            if is_agg:
-                agg_nodes = _collect_all_sections_dedup(self.settings)
-                self._load_tree_from_data(agg_nodes)
+            # ✅ 종합 버퍼: 전자필기장(노트북) 저장용
+            if payload.get("id") == AGG_BUFFER_ID:
+                self._load_tree_from_data(payload.get("data", []))
                 self.btn_add_section_current.setEnabled(False)
-                self.btn_add_group.setEnabled(False)
+                self.btn_add_group.setEnabled(True)  # 원하면 그룹도 허용
+                if hasattr(self, "btn_register_all_notebooks"):
+                    self.btn_register_all_notebooks.setEnabled(True)
             else:
                 self._load_tree_from_data(payload.get("data", []))
                 self.btn_add_section_current.setEnabled(True)
+                if hasattr(self, "btn_register_all_notebooks"):
+                    self.btn_register_all_notebooks.setEnabled(False)
                 self.btn_add_group.setEnabled(True)
         else:
             # 그룹 선택 시
             # 현재 버퍼 내용이 남아있을 수 있으므로 먼저 저장
             if self.active_buffer_id:
                 self._save_favorites()
+            if hasattr(self, "btn_register_all_notebooks"):
+                self.btn_register_all_notebooks.setEnabled(False)
             self.btn_add_section_current.setEnabled(False)
             self.btn_add_group.setEnabled(False)
             self.active_buffer_node = None
@@ -2780,13 +2924,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         items = self.fav_tree.selectedItems()
         if not items:
             return []
-        selected_set = set(items)
+        # QTreeWidgetItem은 unhashable이므로 id()로 membership set 구성
+        selected_ids = {id(it) for it in items}
         top_items: List[QTreeWidgetItem] = []
         for it in items:
             p = it.parent()
             skip = False
             while p is not None:
-                if p in selected_set:
+                if id(p) in selected_ids:
                     skip = True
                     break
                 p = p.parent()
@@ -2856,6 +3001,129 @@ class OneNoteScrollRemoconApp(QMainWindow):
         item = self._append_fav_node(parent, node)
         self.fav_tree.editItem(item, 0)
         self._save_favorites()
+
+    def _register_all_notebooks_from_current_onenote(self):
+        """Default > 종합 버퍼의 2패널(모듈영역)에 전자필기장(노트북)만 한 번에 등록합니다."""
+        print("[DBG][ONENOTE_REG][ALL] ENTER")
+
+        # 0) 종합 버퍼에서만 동작 (id 기준)
+        try:
+            cur_item = self.buffer_tree.currentItem()
+            cur_payload = cur_item.data(0, ROLE_DATA) if cur_item else {}
+            is_agg = bool(cur_payload and cur_payload.get("id") == AGG_BUFFER_ID)
+            print(f"[DBG][ONENOTE_REG][ALL] is_agg={is_agg} cur_item={cur_item} payload_keys={list(cur_payload.keys()) if isinstance(cur_payload, dict) else type(cur_payload)}")
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] is_agg check FAIL: {e}")
+            is_agg = False
+
+        if not is_agg:
+            print("[DBG][ONENOTE_REG][ALL] NOT AGG -> RETURN")
+            QMessageBox.information(self, "안내", "이 기능은 '종합' 버퍼에서만 사용할 수 있습니다.")
+            return
+
+        # 1) 기본 선행 체크(현재 연결 상태 등)
+        try:
+            ok = self._pre_action_check()
+            print(f"[DBG][ONENOTE_REG][ALL] _pre_action_check={ok}")
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] _pre_action_check EXC: {e}")
+            ok = False
+        if not ok:
+            print("[DBG][ONENOTE_REG][ALL] precheck FAIL -> RETURN")
+            return
+
+        # 2) OneNote 트리 컨트롤 확보
+        try:
+            if not getattr(self, "tree_control", None):
+                self.tree_control = _find_tree_or_list(self.onenote_window)
+            print(f"[DBG][ONENOTE_REG][ALL] tree_control={self.tree_control}")
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] tree_control find EXC: {e}")
+            self.tree_control = None
+
+        if not self.tree_control:
+            print("[DBG][ONENOTE_REG][ALL] tree_control NONE -> RETURN")
+            QMessageBox.warning(self, "오류", "OneNote의 섹션/페이지 트리를 찾지 못했습니다.")
+            return
+
+        # 3) 전자필기장(노트북) 이름만 수집 (섹션은 무시)
+        ensure_pywinauto()
+        notebooks = []  # List[str]
+        try:
+            roots = []
+            try:
+                roots = list(self.tree_control.children())
+            except Exception as e:
+                print(f"[DBG][ONENOTE_REG][ALL] children() FAIL: {e}")
+                roots = []
+            print(f"[DBG][ONENOTE_REG][ALL] roots_count={len(roots)}")
+
+            for i, r in enumerate(roots):
+                try:
+                    nb_name = (r.window_text() or "").strip()
+                except Exception:
+                    nb_name = ""
+                print(f"[DBG][ONENOTE_REG][ALL] root[{i}] nb_name='{nb_name}' type={type(r)}")
+                if not nb_name:
+                    continue
+                notebooks.append(nb_name)
+
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] collect EXC: {e}")
+            QMessageBox.warning(self, "오류", f"OneNote 항목 수집 중 오류: {e}")
+            return
+
+        print(f"[DBG][ONENOTE_REG][ALL] notebooks_count={len(notebooks)}")
+        if not notebooks:
+            print("[DBG][ONENOTE_REG][ALL] EMPTY notebooks -> RETURN")
+            QMessageBox.information(self, "안내", "등록할 전자필기장을 찾지 못했습니다.")
+            return
+
+        # 4) 윈도우 시그니처
+        try:
+            sig = build_window_signature(self.onenote_window)
+            print(f"[DBG][ONENOTE_REG][ALL] sig={sig}")
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] sig build FAIL: {e}")
+            sig = {}
+
+        # 5) 현재 종합 버퍼의 2패널(모듈영역=fav_tree)에 notebook 노드로 넣고 저장
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            # 기존 notebook 노드만 싹 정리 (그룹/섹션은 건드리지 않음)
+            keep_items = []
+            for i in range(root.childCount()):
+                it = root.child(i)
+                t = it.data(0, ROLE_TYPE)
+                if t == "notebook":
+                    continue
+                keep_items.append(it)
+            while root.childCount() > 0:
+                root.removeChild(root.child(0))
+            for it in keep_items:
+                root.addChild(it)
+            # notebook 노드 삽입
+            for nb_name in notebooks:
+                node = {
+                    "type": "notebook",
+                    "id": str(uuid.uuid4()),
+                    "name": nb_name,
+                    "target": {"sig": sig, "notebook_text": nb_name},
+                }
+                self._append_fav_node(root, node)
+            self.fav_tree.expandAll()
+            self._save_favorites()
+            
+            # SSOT 검증 로직 추가
+            print(f"[DBG][ONENOTE_REG][ALL] SSOT in_memory_count={len(self.active_buffer_node.get('data', [])) if self.active_buffer_node else 'N/A'}")
+            print(f"[DBG][ONENOTE_REG][ALL] disk_persist={os.path.exists(_get_settings_file_path())}")
+        except Exception as e:
+            print(f"[DBG][ONENOTE_REG][ALL] apply to fav_tree FAIL: {e}")
+            QMessageBox.warning(self, "오류", f"전자필기장 등록 UI 반영 실패: {e}")
+            return
+
+        self.update_status_and_ui(f"전자필기장 등록 완료: {len(notebooks)}개", True)
+        print("[DBG][ONENOTE_REG][ALL] DONE notebooks_only")
 
     def _add_section_from_current(self):
         if not self.onenote_window:
@@ -2945,39 +3213,47 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def _delete_favorite_item(self):
         print("[DBG][FAV][DEL] _delete_favorite_item: ENTER")
         try:
-            item = self._current_fav_item()
-            print(f"[DBG][FAV][DEL] item={item}")
-            if not item:
+            # ✅ 다중선택 삭제: 상위 선택만 남김(부모/자식 중복 선택 방지)
+            targets = self._selected_fav_items_top()
+            if not targets:
+                item = self._current_fav_item()
+                if item:
+                    targets = [item]
+            print(f"[DBG][FAV][DEL] targets_count={len(targets)}")
+            if not targets:
                 return
-            node_type = item.data(0, ROLE_TYPE)
-            name = item.text(0)
-            print(f"[DBG][FAV][DEL] node_type={node_type} name='{name}'")
 
-            if node_type == "group" and item.childCount() > 0:
-                ret = QMessageBox.question(
-                    self,
-                    "삭제 확인",
-                    f"그룹 '{name}'과(와) 모든 하위 항목을 삭제할까요?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if ret != QMessageBox.StandardButton.Yes:
-                    return
-            else:
-                ret = QMessageBox.question(
-                    self,
-                    "삭제 확인",
-                    f"'{name}'을(를) 삭제할까요?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if ret != QMessageBox.StandardButton.Yes:
-                    return
+            # ✅ 확인 메시지(한 번만)
+            names = [t.text(0) for t in targets[:5]]
+            more = "" if len(targets) <= 5 else f" 외 {len(targets)-5}개"
+            msg = f"선택한 {len(targets)}개 항목을 삭제할까요?\n- " + "\n- ".join(names) + more
+            ret = QMessageBox.question(
+                self,
+                "삭제 확인",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ret != QMessageBox.StandardButton.Yes:
+                return
 
-            parent = item.parent() or self.fav_tree.invisibleRootItem()
-            idx = parent.indexOfChild(item)
-            print(f"[DBG][FAV][DEL] removing at index={idx}")
-            parent.removeChild(item)
+            # ✅ 안전한 삭제 순서: 깊은 항목부터(자식 먼저)
+            def _depth(it: QTreeWidgetItem) -> int:
+                d = 0
+                p = it.parent()
+                while p:
+                    d += 1
+                    p = p.parent()
+                return d
+            targets.sort(key=_depth, reverse=True)
+
+            for it in targets:
+                parent = it.parent() or self.fav_tree.invisibleRootItem()
+                idx = parent.indexOfChild(it)
+                print(f"[DBG][FAV][DEL] remove name='{it.text(0)}' depth={_depth(it)} idx={idx}")
+                parent.takeChild(idx)
+
             self._save_favorites()
-            print("[DBG][FAV][DEL] DONE")
+            print("[DBG][FAV][DEL] DONE multi")
         except Exception:
             print("[ERR][FAV][DEL] exception")
             traceback.print_exc()
@@ -3027,9 +3303,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if not item:
             return
         node_type = item.data(0, ROLE_TYPE)
-        if node_type != "section":
+        print(f"[DBG][FAV][DBLCLK] type={node_type} text='{item.text(0)}'")
+        # ✅ notebook 타입도 더블클릭 동작해야 함
+        if node_type not in ("section", "notebook"):
             return
         self._activate_favorite_section(item)
+
+    # _activate_favorite_notebook 제거됨 (기능 통합)
 
     def _activate_favorite_section(self, item: QTreeWidgetItem):
         ensure_pywinauto()
@@ -3079,57 +3359,53 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if connected and self._auto_center_after_activate:
             exe_name = (sig.get("exe_name") or "").lower()
             if "onenote" in exe_name or "onenote" in (sig.get("title") or "").lower():
+                # ✅ 1) notebook_text 우선 (원노트 전체등록에서 주로 이걸 씀)
+                notebook_text = target.get("notebook_text")
                 section_text = target.get("section_text")
-                if section_text:
-                    ok = select_section_by_text(
-                        self.onenote_window, section_text, self.tree_control
+                ok = False
+                if notebook_text:
+                    print(f"[DBG][ACT] notebook_text='{notebook_text}'")
+                    ok = select_notebook_by_text(self.onenote_window, notebook_text, self.tree_control)
+                elif section_text:
+                    print(f"[DBG][ACT] section_text='{section_text}'")
+                    ok = select_section_by_text(self.onenote_window, section_text, self.tree_control)
+                else:
+                    # ✅ 2) fallback: 표시 이름을 노트북으로 간주하고 시도 (전체등록이 target 누락해도 동작)
+                    print(f"[DBG][ACT] fallback text='{display_name}'")
+                    ok = select_notebook_by_text(self.onenote_window, display_name, self.tree_control)
+
+                if ok:
+                    # --- [START] 이름 복원 로직 추가 ---
+                    is_name_restored = False
+                    current_name = item.text(0)
+                    restored_name = current_name
+                    if current_name.startswith("(구) "):
+                        restored_name = current_name[4:]  # "(구) " 제거
+                        item.setText(0, restored_name)
+                        self._save_favorites()
+                        is_name_restored = True
+                    # --- [END] 이름 복원 로직 추가 ---
+
+                    QTimer.singleShot(
+                        350,
+                        lambda: scroll_selected_item_to_center(self.onenote_window, self.tree_control),
                     )
-                    if ok:
-                        # --- [START] 이름 복원 로직 추가 ---
-                        is_name_restored = False
-                        current_name = item.text(0)
-                        restored_name = current_name
-                        if current_name.startswith("(구) "):
-                            restored_name = current_name[4:]  # "(구) " 제거
-                            item.setText(0, restored_name)
-                            self._save_favorites()
-                            is_name_restored = True
-                        # --- [END] 이름 복원 로직 추가 ---
 
-                        QTimer.singleShot(
-                            500,
-                            lambda: scroll_selected_item_to_center(
-                                self.onenote_window, self.tree_control
-                            ),
-                        )
-
-                        if is_name_restored:
-                            self.update_status_and_ui(
-                                f"활성화: '{restored_name}' (이름 복원)", True
-                            )
-                        else:
-                            self.update_status_and_ui(f"활성화: '{display_name}'", True)
-
-                        return
+                    if is_name_restored:
+                        self.update_status_and_ui(f"활성화: '{restored_name}' (이름 복원)", True)
                     else:
-                        # --- 실패 시 로직 (기존과 동일) ---
-                        current_name = item.text(0)
-
-                        if not current_name.startswith("(구) "):
-                            new_name = f"(구) {current_name}"
-                            item.setText(0, new_name)
-                            self._save_favorites()
-
-                            status_message = (
-                                f"섹션 찾기 실패: '{new_name}'(으)로 변경됨"
-                            )
-                            self.update_status_and_ui(status_message, True)
-                        else:
-                            status_message = (
-                                f"섹션 찾기 실패: '{current_name}' 섹션을 찾을 수 없음"
-                            )
-                            self.update_status_and_ui(status_message, True)
-                    return
+                        self.update_status_and_ui(f"활성화: '{display_name}'", True)
+                else:
+                    # --- 실패 시 로직 (기존과 동일) ---
+                    current_name = item.text(0)
+                    if not current_name.startswith("(구) "):
+                        new_name = f"(구) {current_name}"
+                        item.setText(0, new_name)
+                        self._save_favorites()
+                        self.update_status_and_ui(f"섹션 찾기 실패: '{new_name}'(으)로 변경됨", True)
+                    else:
+                        self.update_status_and_ui(f"섹션 찾기 실패: '{display_name}' 을 찾을 수 없음", True)
+                return
 
         self.update_status_and_ui(f"활성화: '{display_name}'", True)
 

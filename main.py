@@ -49,10 +49,13 @@ def main():
 
     def _toggle_group_and_activate_section(item, col):
         node_type = item.data(0, ROLE_TYPE)
-        if node_type != "section":
+        name = item.text(0)
+        print(f"[DBG][FAV][DBLCLK][MAIN] type={node_type} name='{name}' childCount={item.childCount()}")
+        # ✅ 그룹만 토글, 나머지는 전부 '활성화 로직'으로 넘긴다
+        if node_type == "group":
             item.setExpanded(not item.isExpanded())
-        else:
-            window._on_fav_item_double_clicked(item, col)
+            return
+        window._on_fav_item_double_clicked(item, col)
 
     window.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section)
 

@@ -35,6 +35,9 @@ class FavoritesTree(QTreeWidget):
         """UI를 설정합니다."""
         self.setHeaderHidden(True)
         self.setColumnCount(1)
+        # ✅ 더블클릭 시 '이름 편집'으로 들어가는 기본 동작 차단
+        #    (이름 변경은 F2 / 메뉴로만)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         # ✅ 2패널(모듈영역) 다중 선택 지원 (CTRL/SHIFT)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         # ✅ 키 이벤트(Del/F2/Ctrl+C/V)가 확실히 들어오게 포커스 강화
@@ -96,7 +99,12 @@ class FavoritesTree(QTreeWidget):
         """
         try:
             # ✅ 디버그: 어떤 트리가 키를 먹는지 추적
-            print(f"[DBG][TREE][KEY] cls={self.__class__.__name__} key={event.key()} mods={int(event.modifiers())} hasFocus={self.hasFocus()}")
+            mods_obj = event.modifiers()
+            # PyQt6: modifiers가 enum/flags라 int()가 바로 안 되는 케이스가 있어 .value로 정수화
+            mods_val = mods_obj.value if hasattr(mods_obj, "value") else mods_obj
+            print(
+                f"[DBG][TREE][KEY] cls={self.__class__.__name__} key={event.key()} mods={int(mods_val)} hasFocus={self.hasFocus()}"
+            )
 
             # Delete 키
             if event.key() == Qt.Key.Key_Delete:
@@ -115,7 +123,8 @@ class FavoritesTree(QTreeWidget):
             return
 
         # Ctrl+C / Ctrl+V
-        if event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+        # 다른 modifier(Shift 등)와 같이 눌려도 Ctrl을 감지하도록 비트 플래그로 체크
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             if event.key() == Qt.Key.Key_C:
                 self.copyRequested.emit()
                 event.accept()
