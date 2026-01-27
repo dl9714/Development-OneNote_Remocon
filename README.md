@@ -76,40 +76,41 @@ python OneNote_Scroll_Remocon.py
 
 팁: PyInstaller 등으로 빌드된 실행 파일(EXE)을 사용하면 Python 환경 설정 없이 바로 실행할 수 있습니다.
 
-## 프로젝트 구조 (리팩토링됨)
+## 프로젝트 구조 (모듈화)
 
 ```
 Development-OneNote_Remocon/
+├── main.py                        # ⭐ 애플리케이션 진입점
 ├── assets/                        # 리소스 파일
 │   └── app_icon.ico              # 애플리케이션 아이콘
-├── src/
+├── src/                           # 소스 코드
 │   ├── __init__.py
-│   ├── main.py                    # 애플리케이션 진입점
 │   ├── constants.py               # 상수 정의
 │   ├── utils.py                   # 유틸리티 함수
 │   ├── core/                      # 핵심 비즈니스 로직
 │   │   ├── __init__.py
-│   │   ├── settings_manager.py   # 설정 관리
-│   │   └── window_manager.py     # 윈도우 검색/연결
-│   └── automation/                # UI 자동화
-│       ├── __init__.py
-│       ├── ui_automation.py       # pywinauto 래퍼
-│       └── scrolling_engine.py   # 스크롤 엔진
-├── OneNote_Remocon.py             # 기존 통합 파일 (레거시)
+│   │   ├── settings_manager.py   # 설정 관리 클래스
+│   │   └── window_manager.py     # 윈도우 검색/연결 관리
+│   ├── automation/                # UI 자동화
+│   │   ├── __init__.py
+│   │   ├── ui_automation.py       # pywinauto 싱글톤 래퍼
+│   │   └── scrolling_engine.py   # 스크롤 엔진
+│   ├── ui/                        # UI 컴포넌트
+│   │   ├── __init__.py
+│   │   └── widgets.py             # 커스텀 위젯 (FavoritesTree)
+│   └── workers/                   # 백그라운드 워커
+│       └── __init__.py
 └── README.md
 ```
 
-## 실행 방법 업데이트
-
-리팩토링된 코드를 사용하여 실행하려면:
+## 실행 방법
 
 ```bash
-# 새로운 모듈 구조로 실행
-python src/main.py
-
-# 또는 기존 방식으로 실행 (하위 호환성)
-python OneNote_Remocon.py
+# 애플리케이션 실행
+python main.py
 ```
+
+> **참고**: 현재 리팩토링 진행 중입니다. 완전한 기능은 곧 제공될 예정입니다.
 
 사용 방법
 1. OneNote 창 연결
