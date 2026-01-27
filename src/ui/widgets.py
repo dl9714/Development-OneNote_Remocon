@@ -7,6 +7,7 @@
 
 from PyQt6.QtWidgets import QTreeWidget, QAbstractItemView
 from PyQt6.QtCore import pyqtSignal, Qt
+import traceback
 from src.constants import ROLE_TYPE
 from typing import Optional
 
@@ -34,7 +35,10 @@ class FavoritesTree(QTreeWidget):
         """UI를 설정합니다."""
         self.setHeaderHidden(True)
         self.setColumnCount(1)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # ✅ 2패널(모듈영역) 다중 선택 지원 (CTRL/SHIFT)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        # ✅ 키 이벤트(Del/F2/Ctrl+C/V)가 확실히 들어오게 포커스 강화
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -90,11 +94,19 @@ class FavoritesTree(QTreeWidget):
         - Ctrl+C: 항목 복사
         - Ctrl+V: 항목 붙여넣기
         """
-        # Delete 키
-        if event.key() == Qt.Key.Key_Delete:
-            self.deleteRequested.emit()
-            event.accept()
-            return
+        try:
+            # ✅ 디버그: 어떤 트리가 키를 먹는지 추적
+            print(f"[DBG][TREE][KEY] cls={self.__class__.__name__} key={event.key()} mods={int(event.modifiers())} hasFocus={self.hasFocus()}")
+
+            # Delete 키
+            if event.key() == Qt.Key.Key_Delete:
+                print(f"[DBG][TREE][DEL] emit deleteRequested from {self.__class__.__name__}")
+                self.deleteRequested.emit()
+                event.accept()
+                return
+        except Exception:
+            print("[ERR][TREE][KEY] exception")
+            traceback.print_exc()
 
         # F2 키
         if event.key() == Qt.Key.Key_F2:

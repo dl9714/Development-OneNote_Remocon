@@ -7,17 +7,33 @@
   },
   "splitter_states": {
     "main": "AAAA/wAAAAEAAAACAAACZwAAATwA/////wEAAAABAA==",
-    "left": "AAAA/wAAAAEAAAACAAAA2wAAAPoA/////wEAAAABAA=="
+    "left": "AAAA/wAAAAEAAAACAAAA2wAAAQUA/////wEAAAABAA=="
   },
   "connection_signature": {
     "handle": 8328460,
     "pid": 56340,
     "class_name": "Framework::CFrame",
-    "title": "서비스 구독-생활. - OneNote",
+    "title": "업무목표-종합_조직도-메타인지. - OneNote",
     "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
     "exe_name": "onenote.exe"
   },
   "favorites_buffers": [
+    {
+      "type": "group",
+      "id": "group-default-fixed",
+      "name": "Default",
+      "locked": true,
+      "children": [
+        {
+          "type": "buffer",
+          "id": "buffer-aggregate-all-sections",
+          "name": "종합",
+          "virtual": "aggregate",
+          "locked": true,
+          "data": []
+        }
+      ]
+    },
     {
       "type": "buffer",
       "id": "6068c297-5ba2-435d-ba56-8947782554db",
@@ -76,202 +92,7 @@
           "type": "group"
         }
       ]
-    },
-    {
-      "type": "buffer",
-      "id": "e24a099c-3c94-4053-95ce-0ab1f0e06b5c",
-      "name": "OneNote_Favorites_그룹-생산성도구_2026-01-28_01-16-46",
-      "data": [
-        {
-          "children": [
-            {
-              "children": [
-                {
-                  "id": "591522e5-4d1c-4e71-bf31-f1b3ace4cafc",
-                  "name": "생산성도구-임시 메모",
-                  "target": {
-                    "section_text": "생산성도구-임시 메모",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 3879866,
-                      "pid": 41836,
-                      "title": "유튜브 채널삭제-통화. - OneNote"
-                    }
-                  },
-                  "type": "section"
-                },
-                {
-                  "id": "485391f5-3c64-43c0-88fe-1ec9e68322a1",
-                  "name": "생산성도구-업무목표-플래너종합",
-                  "target": {
-                    "section_text": "생산성도구-업무목표-플래너종합",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 3879866,
-                      "pid": 41836,
-                      "title": "업무목표-종합_조직도-메타인지. - OneNote"
-                    }
-                  },
-                  "type": "section"
-                },
-                {
-                  "id": "9268705e-eeff-4ccb-bcf7-2857f2acce72",
-                  "name": "생산성도구-업무목표-전문사업",
-                  "target": {
-                    "section_text": "생산성도구-업무목표-전문사업",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 16397782,
-                      "pid": 46760,
-                      "title": "판매 계획_조직도. - OneNote"
-                    }
-                  },
-                  "type": "section"
-                },
-                {
-                  "id": "a9edeadd-be5f-4be3-a034-f4218d8c4910",
-                  "name": "생산성도구-업무목표-미니프로젝트",
-                  "target": {
-                    "section_text": "생산성도구-업무목표-미니프로젝트",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 11218542,
-                      "pid": 46760,
-                      "title": "기획-현장형님의 장비도감 - OneNote"
-                    }
-                  },
-                  "type": "section"
-                }
-              ],
-              "id": "c5a7b9ea-273c-4456-9c55-9dfaff257148",
-              "name": "생산성도구-업무목표",
-              "type": "group"
-            },
-            {
-              "children": [
-                {
-                  "id": "f9fdd482-28ab-4622-9c36-b4e945a99d21",
-                  "name": "생산성도구-현장-미니프로젝트 템플릿",
-                  "target": {
-                    "section_text": "생산성도구-현장-미니프로젝트 템플릿",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 21312718,
-                      "pid": 11016,
-                      "title": "제목 없음 - OneNote"
-                    }
-                  },
-                  "type": "section"
-                },
-                {
-                  "id": "b0ae91cd-d3d2-435c-a590-acb10aca16b3",
-                  "name": "생산성도구-현장-미니프로젝트A",
-                  "target": {
-                    "section_text": "생산성도구-현장-미니프로젝트A",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 17381098,
-                      "pid": 18872,
-                      "title": "기획-현장형님의 장비도감 - OneNote"
-                    }
-                  },
-                  "type": "section"
-                },
-                {
-                  "id": "bfcc71a5-c629-46ac-bb3c-fa2b92357a99",
-                  "name": "생산성도구-현장-미니프로젝트B",
-                  "target": {
-                    "section_text": "생산성도구-현장-미니프로젝트B",
-                    "sig": {
-                      "class_name": "Framework::CFrame",
-                      "exe_name": "onenote.exe",
-                      "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                      "handle": 21312718,
-                      "pid": 11016,
-                      "title": "제목 없음 - OneNote"
-                    }
-                  },
-                  "type": "section"
-                }
-              ],
-              "id": "a35074a6-4e6d-408f-a833-a3e13df82751",
-              "name": "생산성도구-미니 프로젝트",
-              "type": "group"
-            }
-          ],
-          "id": "99ed1efe-65b1-4af3-bb5d-5238ba3f1342",
-          "name": "생산성도구",
-          "type": "group"
-        },
-        {
-          "children": [
-            {
-              "id": "cc32436b-f3c3-4d07-af41-68a4e26f17ea",
-              "name": "생산성도구-개발방법론",
-              "target": {
-                "section_text": "생산성도구-개발방법론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 1444064,
-                  "pid": 13408,
-                  "title": "린스타트업 3단계 이론. - OneNote"
-                }
-              },
-              "type": "section"
-            },
-            {
-              "id": "8601fa93-3ed4-487b-a400-99c00a1d9ec3",
-              "name": "생산성도구-생산성업무_요령",
-              "target": {
-                "section_text": "생산성도구-생산성업무_요령",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 1444064,
-                  "pid": 13408,
-                  "title": "프로젝트-프로세스 단계별_용어. - OneNote"
-                }
-              },
-              "type": "section"
-            },
-            {
-              "id": "20cd71f7-569f-41f1-8ea3-766c5f1d58ee",
-              "name": "생산성도구-성장일기",
-              "target": {
-                "section_text": "생산성도구-성장일기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 1444064,
-                  "pid": 13408,
-                  "title": "MMPI2 검사. 2024-08-31 - OneNote"
-                }
-              },
-              "type": "section"
-            }
-          ],
-          "id": "e8c59593-82c7-4323-876a-66678b200c40",
-          "name": "생산성도구-미정리",
-          "type": "group"
-        }
-      ]
     }
   ],
-  "active_buffer_id": "e24a099c-3c94-4053-95ce-0ab1f0e06b5c"
+  "active_buffer_id": "6068c297-5ba2-435d-ba56-8947782554db"
 }

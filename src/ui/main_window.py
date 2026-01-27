@@ -4,6 +4,7 @@ import json
 import os
 import time
 import uuid
+import traceback
 import ctypes
 from ctypes import wintypes
 from typing import Optional, List, Dict, Any
@@ -58,6 +59,11 @@ SCROLL_STEP_SENSITIVITY = 40
 ROLE_TYPE = Qt.ItemDataRole.UserRole + 1
 ROLE_DATA = Qt.ItemDataRole.UserRole + 2
 
+# ----------------- 0.1 버퍼 트리 고정/가상 노드 -----------------
+DEFAULT_GROUP_ID = "group-default-fixed"
+DEFAULT_GROUP_NAME = "Default"
+AGG_BUFFER_ID = "buffer-aggregate-all-sections"
+AGG_BUFFER_NAME = "종합"
 
 # ----------------- 0.0 설정 파일 경로 헬퍼 -----------------
 def _get_settings_file_path() -> str:
@@ -193,8 +199,9 @@ def load_settings() -> Dict[str, Any]:
 
         settings = DEFAULT_SETTINGS.copy()
         settings.update(data)
-
-        # 마이그레이션이 있었다면 즉시 저장(다음 실행부터는 신스키마로 로드)
+        # ✅ 로드 직후에도 Default/종합 구조 강제
+        _ensure_default_and_aggregate_inplace(settings)
+        return settings
         if migrated:
             try:
                 _write_json(settings_path, settings)
@@ -215,11 +222,171 @@ def save_settings(data: Dict[str, Any]):
     try:
         if "favorites" in data:
             del data["favorites"]
+        
+        # ✅ 저장 직전에 항상 Default/종합 구조 강제 보정
+        _ensure_default_and_aggregate_inplace(data)
 
         with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[ERROR] 설정 파일 저장 실패: {e}")
+
+
+def _ensure_default_and_aggregate_inplace(settings: Dict[str, Any]) -> None:
+    """
+    1패널(버퍼 트리)에
+      - Default 그룹(최상단 고정)
+      - 종합(가상 버퍼)
+    를 항상 보장합니다.
+    """
+    bufs = settings.get("favorites_buffers")
+    if not isinstance(bufs, list):
+        bufs = []
+        settings["favorites_buffers"] = bufs
+
+    # Default 그룹 찾기/생성
+    default_idx = None
+    default_node = None
+    for i, n in enumerate(bufs):
+        if isinstance(n, dict) and n.get("type") == "group" and n.get("id") == DEFAULT_GROUP_ID:
+            default_idx = i
+            default_node = n
+            break
+    if default_node is None:
+        default_node = {
+            "type": "group",
+            "id": DEFAULT_GROUP_ID,
+            "name": DEFAULT_GROUP_NAME,
+            "locked": True,
+            "children": []
+        }
+        bufs.insert(0, default_node)
+    else:
+        # 항상 0번으로 이동 + 이름 강제
+        default_node["name"] = DEFAULT_GROUP_NAME
+        default_node["locked"] = True
+        if default_idx != 0:
+            bufs.pop(default_idx)
+            bufs.insert(0, default_node)
+
+    # Default 그룹 children 보정
+    children = default_node.get("children")
+    if not isinstance(children, list):
+        children = []
+        default_node["children"] = children
+
+    # 종합(가상 버퍼) 찾기/생성 (Default 그룹의 첫 번째로 고정)
+    agg_idx = None
+    agg_node = None
+    for i, c in enumerate(children):
+        if isinstance(c, dict) and c.get("type") == "buffer" and c.get("id") == AGG_BUFFER_ID:
+            agg_idx = i
+            agg_node = c
+            break
+    if agg_node is None:
+        agg_node = {
+            "type": "buffer",
+            "id": AGG_BUFFER_ID,
+            "name": AGG_BUFFER_NAME,
+            "virtual": "aggregate",
+            "locked": True,
+            "data": []
+        }
+        children.insert(0, agg_node)
+    else:
+        # 항상 children[0]으로 이동 + 이름/속성 강제
+        agg_node["name"] = AGG_BUFFER_NAME
+        agg_node["virtual"] = "aggregate"
+        agg_node["locked"] = True
+        # 종합은 data 저장하지 않음(항상 비워둠)
+        agg_node["data"] = []
+        if agg_idx != 0:
+            children.pop(agg_idx)
+            children.insert(0, agg_node)
+
+    # active_buffer_id가 종합/기타 버퍼에 대해 유효하지 않으면 첫 "일반 buffer"로 보정
+    # (종합으로 시작하고 싶으면 이 부분을 제거하면 됨)
+    if settings.get("active_buffer_id") is None:
+        # 기본은 종합이 아니라, 첫 일반 buffer를 찾는다
+        first_normal = _find_first_normal_buffer_id(bufs)
+        if first_normal:
+            settings["active_buffer_id"] = first_normal
+
+
+def _find_first_normal_buffer_id(nodes: List[Dict[str, Any]]) -> Optional[str]:
+    def _walk(lst):
+        for n in lst:
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "buffer":
+                if n.get("id") != AGG_BUFFER_ID:
+                    return n.get("id")
+            if n.get("type") == "group":
+                cid = _walk(n.get("children") or [])
+                if cid:
+                    return cid
+        return None
+    return _walk(nodes)
+
+
+def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    모든 버퍼의 data에서 section들을 수집해서 (sig + section_text) 기준 중복 제거 후 반환.
+    - 반환 형태: 중앙트리(_load_tree_from_data)에 바로 넣을 수 있는 node 리스트
+    """
+    bufs = settings.get("favorites_buffers", [])
+    out: List[Dict[str, Any]] = []
+    seen = set()
+
+    def _section_key(node: Dict[str, Any]) -> str:
+        t = node.get("target") or {}
+        sig = t.get("sig") or {}
+        sec = t.get("section_text") or ""
+        try:
+            sig_s = json.dumps(sig, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            sig_s = str(sig)
+        return sig_s + "|" + sec
+
+    def _walk_fav_nodes(nodes: Any):
+        if not isinstance(nodes, list):
+            return
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            ty = n.get("type")
+            if ty == "section":
+                k = _section_key(n)
+                if k not in seen:
+                    seen.add(k)
+                    # 종합은 "섹션만" flat으로 보여주기
+                    out.append({
+                        "type": "section",
+                        "id": n.get("id") or str(uuid.uuid4()),
+                        "name": n.get("name") or (n.get("target") or {}).get("section_text") or "섹션",
+                        "target": n.get("target") or {}
+                    })
+            # 그룹 아래 children 순회
+            ch = n.get("children")
+            if isinstance(ch, list):
+                _walk_fav_nodes(ch)
+
+    def _walk_buffers(nodes: Any):
+        if not isinstance(nodes, list):
+            return
+        for b in nodes:
+            if not isinstance(b, dict):
+                continue
+            if b.get("type") == "buffer":
+                # 종합 버퍼 자체는 제외
+                if b.get("id") == AGG_BUFFER_ID:
+                    continue
+                _walk_fav_nodes(b.get("data") or [])
+            elif b.get("type") == "group":
+                _walk_buffers(b.get("children") or [])
+
+    _walk_buffers(bufs)
+    return out
 
 
 # ----------------- 0.1 pywinauto 지연 로딩 -----------------
@@ -1316,13 +1483,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
         fav_group = QGroupBox("모듈영역")
         fav_layout = QVBoxLayout(fav_group)
 
-        # 툴바 - 1행: 그룹추가, 현재 섹션 추가, 이름 바꾸기
+        # 툴바 - 1행: 그룹추가, 현재 전자필기장 추가, 이름 바꾸기
         tb1_layout = QHBoxLayout()
         self.btn_add_group = QToolButton()
         self.btn_add_group.setText("그룹 추가")
         self.btn_add_group.clicked.connect(self._add_group)
         self.btn_add_section_current = QToolButton()
-        self.btn_add_section_current.setText("현재 섹션 추가")
+        self.btn_add_section_current.setText("현재 전자필기장 추가")
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
         self.btn_rename = QToolButton()
         self.btn_rename.setText("이름 바꾸기 (F2)")
@@ -1353,6 +1520,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.fav_tree.customContextMenuRequested.connect(self._on_fav_context_menu)
         self.fav_tree.structureChanged.connect(self._save_favorites)
         self.fav_tree.itemChanged.connect(lambda *_: self._save_favorites())
+        # ✅ 키보드 매핑 (Del, F2, Ctrl+C/V) 직접 연결
+        self.fav_tree.deleteRequested.connect(self._delete_favorite_item)
+        self.fav_tree.renameRequested.connect(self._rename_favorite_item)
+        self.fav_tree.copyRequested.connect(self._copy_favorite_item)
+        self.fav_tree.pasteRequested.connect(self._paste_favorite_item)
         fav_layout.addWidget(self.fav_tree)
 
         # 즐겨찾기 하단 툴바: 삭제, 위로, 아래로 (삭제 버튼 재배치)
@@ -1419,7 +1591,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         actions_group = QGroupBox("자동화 기능")
         actions_layout = QVBoxLayout(actions_group)
 
-        self.center_button = QPushButton("현재 선택된 항목 중앙으로 정렬")
+        self.center_button = QPushButton("현재 선택된 전자필기장 중앙으로 정렬")
         center_icon = self.style().standardIcon(
             QApplication.style().StandardPixmap.SP_ArrowRight
         )
@@ -1768,6 +1940,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
     # ----------------- 15. 즐겨찾기 로드/세이브 (계층형 버퍼 시스템 적용) -----------------
     def _load_buffers_and_favorites(self):
         """설정에서 버퍼 트리를 로드합니다."""
+        # ✅ 로드 전에 강제 보정 (UI에서 깨져도 복구)
+        _ensure_default_and_aggregate_inplace(self.settings)
+
         self.buffer_tree.blockSignals(True)
         self.buffer_tree.clear()
 
@@ -1838,7 +2013,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         # 여기서는 ID와 데이터 참조를 위해 payload 저장
         payload = {
             "id": node.get("id", str(uuid.uuid4())),
-            "data": node.get("data", []) # 버퍼인 경우 데이터
+            "data": node.get("data", []),  # 버퍼인 경우 데이터
+            "virtual": node.get("virtual"),  # 종합(aggregate) 등
+            "locked": bool(node.get("locked", False)),
         }
         
         if node_type == "group":
@@ -1849,7 +2026,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
             item.setIcon(0, self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon))
             
         item.setData(0, ROLE_DATA, payload)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+        
+        # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
+        if payload.get("locked"):
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsDragEnabled & ~Qt.ItemFlag.ItemIsDropEnabled)
+        else:
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            
         return item
 
     def _load_tree_from_data(self, favorites_data: List):
@@ -1870,6 +2053,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
         """현재 활성화된 중앙 트리의 내용을 버퍼 트리의 해당 노드 데이터에 반영하고 저장합니다."""
         if not self.active_buffer_node:
             return
+
+        # ✅ 종합(가상) 버퍼는 저장하면 안 됨
+        try:
+            if self.active_buffer_node.get("virtual") == "aggregate":
+                return
+        except Exception:
+            pass
 
         try:
             data = []
@@ -1912,6 +2102,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             structure.append(self._serialize_buffer_item(root.child(i)))
         
         self.settings["favorites_buffers"] = structure
+        # ✅ 저장 직전에 구조 강제 보정(순서/락/종합 유지)
+        _ensure_default_and_aggregate_inplace(self.settings)
         self._save_settings_to_file()
 
     def _serialize_buffer_item(self, item: QTreeWidgetItem) -> Dict:
@@ -1925,6 +2117,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
         }
         
         if node_type == "group":
+            if payload.get("locked"):
+                node["locked"] = True
             children = []
             for i in range(item.childCount()):
                 children.append(self._serialize_buffer_item(item.child(i)))
@@ -1935,7 +2129,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
             # payload['data']는 로드 시점의 스냅샷일 수 있으므로 주의.
             # 여기서는 payload['data']를 그대로 쓰고, 
             # 활성 버퍼가 변경될 때마다 payload['data']를 갱신해두는 방식을 사용.
-            node["data"] = payload.get("data", [])
+            if payload.get("virtual"):
+                node["virtual"] = payload.get("virtual")
+            if payload.get("locked"):
+                node["locked"] = True
+            
+            # 종합은 data 저장하지 않음
+            if payload.get("virtual") == "aggregate":
+                node["data"] = []
+            else:
+                node["data"] = payload.get("data", [])
             
         return node
 
@@ -2230,19 +2433,29 @@ class OneNoteScrollRemoconApp(QMainWindow):
         """버퍼 트리 항목 클릭 시 처리"""
         node_type = item.data(0, ROLE_TYPE)
         payload = item.data(0, ROLE_DATA)
+        is_agg = bool(payload and payload.get("virtual") == "aggregate")
+
         if node_type == "buffer":
             # 버퍼 전환 직전: 현재 중앙 트리 내용을 "이전 버퍼"에 반드시 저장
             # (그렇지 않으면 버퍼를 다시 클릭했을 때 섹션/그룹이 사라지는 현상 발생)
             if self.active_buffer_id and payload and payload.get("id") != self.active_buffer_id:
                 self._save_favorites()
-
+            
             self.active_buffer_id = payload.get("id")
             self.active_buffer_node = payload  # Dict payload(스냅샷)
             self.active_buffer_item = item
             self.settings["active_buffer_id"] = self.active_buffer_id
-            self._load_tree_from_data(payload.get("data", []))
-            self.btn_add_section_current.setEnabled(True)
-            self.btn_add_group.setEnabled(True)
+            
+            # ✅ 종합(가상) 버퍼: 클릭 시점에 계산해서 로드 / 저장 금지
+            if is_agg:
+                agg_nodes = _collect_all_sections_dedup(self.settings)
+                self._load_tree_from_data(agg_nodes)
+                self.btn_add_section_current.setEnabled(False)
+                self.btn_add_group.setEnabled(False)
+            else:
+                self._load_tree_from_data(payload.get("data", []))
+                self.btn_add_section_current.setEnabled(True)
+                self.btn_add_group.setEnabled(True)
         else:
             # 그룹 선택 시
             # 현재 버퍼 내용이 남아있을 수 있으므로 먼저 저장
@@ -2330,9 +2543,109 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.buffer_tree.editItem(item, 0)
 
     def _delete_buffer(self):
-        # ... (삭제 로직 구현 - 그룹인 경우 자식 포함 경고 등) ...
-        # 삭제 후 _save_buffer_structure() 호출
-        pass
+        print("[DBG][BUF][DEL] _delete_buffer: ENTER")
+        try:
+            item = self.buffer_tree.currentItem()
+            print(f"[DBG][BUF][DEL] currentItem={item}")
+            if not item:
+                print("[DBG][BUF][DEL] no currentItem -> RETURN")
+                return
+
+            node_type = item.data(0, ROLE_TYPE)
+            payload = item.data(0, ROLE_DATA) or {}
+            name = item.text(0) or "(no-name)"
+            deleting_id = payload.get("id")
+            locked = bool(payload.get("locked"))
+
+            parent = item.parent() or self.buffer_tree.invisibleRootItem()
+            idx = parent.indexOfChild(item)
+            print(f"[DBG][BUF][DEL] node_type={node_type} name='{name}' id={deleting_id} locked={locked} parent={parent} idx={idx}")
+
+            if locked:
+                print("[DBG][BUF][DEL] locked item -> blocked")
+                QMessageBox.information(self, "삭제 불가", "이 항목은 고정 항목이라 삭제할 수 없습니다.")
+                return
+
+            deleting_active = bool(self.active_buffer_id and deleting_id == self.active_buffer_id)
+            print(f"[DBG][BUF][DEL] deleting_active={deleting_active} active_buffer_id={self.active_buffer_id}")
+
+            # ✅ 확인창
+            if node_type == "group":
+                child_cnt = item.childCount()
+                msg = f"그룹 '{name}' 을(를) 삭제할까요?\n\n하위 항목 {child_cnt}개도 함께 삭제됩니다."
+            else:
+                msg = f"버퍼 '{name}' 을(를) 삭제할까요?"
+
+            reply = QMessageBox.question(
+                self,
+                "삭제 확인",
+                msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            print(f"[DBG][BUF][DEL] confirm reply={reply}")
+            if reply != QMessageBox.StandardButton.Yes:
+                print("[DBG][BUF][DEL] user cancelled -> RETURN")
+                return
+
+            # ✅ 활성 버퍼 삭제면 중앙 트리 저장(유실 방지)
+            if deleting_active:
+                print("[DBG][BUF][DEL] deleting active buffer -> _save_favorites()")
+                try:
+                    self._save_favorites()
+                except Exception:
+                    print("[ERR][BUF][DEL] _save_favorites failed (ignored)")
+                    traceback.print_exc()
+
+            # ✅ 실제 트리에서 제거
+            taken = parent.takeChild(idx)
+            print(f"[DBG][BUF][DEL] takeChild result={taken}")
+            del taken
+
+            # ✅ 구조 저장
+            print("[DBG][BUF][DEL] _save_buffer_structure()")
+            try:
+                self._save_buffer_structure()
+            except Exception:
+                print("[ERR][BUF][DEL] _save_buffer_structure failed")
+                traceback.print_exc()
+
+            # ✅ 활성 버퍼였다면 다른 버퍼로 자동 전환
+            if deleting_active:
+                print("[DBG][BUF][DEL] deleted active -> reset active and auto-select next buffer")
+                self.active_buffer_id = None
+                self.active_buffer_item = None
+                self.active_buffer_node = None
+                self.settings["active_buffer_id"] = None
+
+                found_item = None
+                it = QTreeWidgetItemIterator(self.buffer_tree)
+                while it.value():
+                    cand = it.value()
+                    if cand.data(0, ROLE_TYPE) == "buffer":
+                        found_item = cand
+                        break
+                    it += 1
+                print(f"[DBG][BUF][DEL] next buffer found_item={found_item}")
+                if found_item:
+                    self.buffer_tree.setCurrentItem(found_item)
+                    self._on_buffer_tree_item_clicked(found_item, 0)
+                else:
+                    print("[DBG][BUF][DEL] no buffer remains -> clear fav_tree")
+                    try:
+                        self.fav_tree.clear()
+                    except Exception:
+                        traceback.print_exc()
+
+            try:
+                self._update_buffer_move_button_state()
+            except Exception:
+                pass
+
+            print("[DBG][BUF][DEL] DONE")
+        except Exception:
+            print("[ERR][BUF][DEL] exception in _delete_buffer")
+            traceback.print_exc()
 
     # ----------------- 15-2. 즐겨찾기 버퍼 순서 변경 로직 (수정) -----------------
     def _update_buffer_move_button_state(self):
@@ -2403,15 +2716,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     # ----------------- 16-1. 즐겨찾기 복사/붙여넣기 로직 -----------------
     def _copy_favorite_item(self):
-        """선택된 즐겨찾기 항목을 복사합니다."""
-        item = self._current_fav_item()
-        if not item:
+        """선택된 즐겨찾기 항목(다중 가능)을 복사합니다."""
+        items = self._selected_fav_items_top()
+        if not items:
             return
-
-        self.clipboard_data = self._serialize_fav_item(item)
+        payload = [self._serialize_fav_item(it) for it in items]
+        # 단일이면 dict로, 다중이면 list로 저장
+        self.clipboard_data = payload[0] if len(payload) == 1 else payload
         self.connection_status_label.setText(
-            f"'{item.text(0)}' 항목 복사됨."
-        )  # 상태바 알림 사용
+            f"{len(items)}개 항목 복사됨."
+        )
 
     def _paste_favorite_item(self):
         """클립보드에 있는 즐겨찾기 항목을 붙여넣습니다."""
@@ -2422,10 +2736,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             return
 
         parent = self._current_fav_item()
-
         if parent and parent.data(0, ROLE_TYPE) == "section":
             parent = parent.parent()
-
         parent = parent or self.fav_tree.invisibleRootItem()
 
         def _deep_copy_node(node: Dict[str, Any]) -> Dict[str, Any]:
@@ -2439,21 +2751,48 @@ class OneNoteScrollRemoconApp(QMainWindow):
             return new_node
 
         try:
-            copied_node = _deep_copy_node(self.clipboard_data)
+            nodes = self.clipboard_data
+            if isinstance(nodes, dict):
+                nodes = [nodes]
+            new_items = []
+            for node in nodes:
+                copied_node = _deep_copy_node(node)
+                new_item = self._append_fav_node(parent, copied_node)
+                new_items.append(new_item)
 
-            new_item = self._append_fav_node(parent, copied_node)
-
-            self.fav_tree.setCurrentItem(new_item)
-
+            if new_items:
+                self.fav_tree.setCurrentItem(new_items[-1])
             self._save_favorites()
             self.connection_status_label.setText(
-                f"'{new_item.text(0)}' 항목 붙여넣기 완료."
+                f"{len(new_items)}개 항목 붙여넣기 완료."
             )  # 상태바 알림 사용
 
         except Exception as e:
             QMessageBox.critical(
                 self, "붙여넣기 오류", f"항목을 붙여넣는 중 오류가 발생했습니다: {e}"
             )
+
+    def _selected_fav_items_top(self) -> List[QTreeWidgetItem]:
+        """
+        다중 선택 시 '상위 선택만' 반환합니다.
+        (부모와 자식을 동시에 선택했을 때 중복 복사/붙여넣기 방지)
+        """
+        items = self.fav_tree.selectedItems()
+        if not items:
+            return []
+        selected_set = set(items)
+        top_items: List[QTreeWidgetItem] = []
+        for it in items:
+            p = it.parent()
+            skip = False
+            while p is not None:
+                if p in selected_set:
+                    skip = True
+                    break
+                p = p.parent()
+            if not skip:
+                top_items.append(it)
+        return top_items
 
     # ----------------- 16. 즐겨찾기 조작 -----------------
     def _current_fav_item(self) -> Optional[QTreeWidgetItem]:
@@ -2604,34 +2943,44 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.fav_tree.editItem(item, 0)
 
     def _delete_favorite_item(self):
-        item = self._current_fav_item()
-        if not item:
-            return
-        node_type = item.data(0, ROLE_TYPE)
-        name = item.text(0)
-
-        if node_type == "group" and item.childCount() > 0:
-            ret = QMessageBox.question(
-                self,
-                "삭제 확인",
-                f"그룹 '{name}'과(와) 모든 하위 항목을 삭제할까요?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
+        print("[DBG][FAV][DEL] _delete_favorite_item: ENTER")
+        try:
+            item = self._current_fav_item()
+            print(f"[DBG][FAV][DEL] item={item}")
+            if not item:
                 return
-        else:
-            ret = QMessageBox.question(
-                self,
-                "삭제 확인",
-                f"'{name}'을(를) 삭제할까요?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if ret != QMessageBox.StandardButton.Yes:
-                return
+            node_type = item.data(0, ROLE_TYPE)
+            name = item.text(0)
+            print(f"[DBG][FAV][DEL] node_type={node_type} name='{name}'")
 
-        parent = item.parent() or self.fav_tree.invisibleRootItem()
-        parent.removeChild(item)
-        self._save_favorites()
+            if node_type == "group" and item.childCount() > 0:
+                ret = QMessageBox.question(
+                    self,
+                    "삭제 확인",
+                    f"그룹 '{name}'과(와) 모든 하위 항목을 삭제할까요?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if ret != QMessageBox.StandardButton.Yes:
+                    return
+            else:
+                ret = QMessageBox.question(
+                    self,
+                    "삭제 확인",
+                    f"'{name}'을(를) 삭제할까요?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if ret != QMessageBox.StandardButton.Yes:
+                    return
+
+            parent = item.parent() or self.fav_tree.invisibleRootItem()
+            idx = parent.indexOfChild(item)
+            print(f"[DBG][FAV][DEL] removing at index={idx}")
+            parent.removeChild(item)
+            self._save_favorites()
+            print("[DBG][FAV][DEL] DONE")
+        except Exception:
+            print("[ERR][FAV][DEL] exception")
+            traceback.print_exc()
 
     def _on_fav_context_menu(self, pos):
         item = self._current_fav_item()
@@ -2641,7 +2990,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         act_add_group.triggered.connect(self._add_group)
         menu.addAction(act_add_group)
 
-        act_add_curr = QAction("현재 섹션 추가", self)
+        act_add_curr = QAction("현재 전자필기장 추가", self)
         act_add_curr.triggered.connect(self._add_section_from_current)
         menu.addAction(act_add_curr)
 

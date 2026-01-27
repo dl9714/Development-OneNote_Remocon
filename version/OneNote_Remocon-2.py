@@ -926,7 +926,7 @@ class OneNoteScrollRemoconApp(QWidget):
         self.btn_add_group.setText("그룹 추가")
         self.btn_add_group.clicked.connect(self._add_group)
         self.btn_add_section_current = QToolButton()
-        self.btn_add_section_current.setText("현재 섹션 추가")
+        self.btn_add_section_current.setText("현재 전자필기장 추가")
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
         self.btn_add_section_other = QToolButton()  # Placeholder for context menu
         self.btn_add_section_other.clicked.connect(self._add_section_from_other_window)
@@ -1005,7 +1005,7 @@ class OneNoteScrollRemoconApp(QWidget):
         actions_group = QGroupBox("자동화 기능")
         actions_layout = QVBoxLayout(actions_group)
 
-        self.center_button = QPushButton("현재 선택된 항목 중앙으로 정렬")
+        self.center_button = QPushButton("현재 선택된 전자필기장 중앙으로 정렬")
         center_icon = self.style().standardIcon(
             QApplication.style().StandardPixmap.SP_ArrowRight
         )
@@ -1452,7 +1452,7 @@ class OneNoteScrollRemoconApp(QWidget):
         act_add_group.triggered.connect(self._add_group)
         menu.addAction(act_add_group)
 
-        act_add_curr = QAction("현재 섹션 추가", self)
+        act_add_curr = QAction("현재 전자필기장 추가", self)
         act_add_curr.triggered.connect(self._add_section_from_current)
         menu.addAction(act_add_curr)
 
