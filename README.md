@@ -80,6 +80,8 @@ python OneNote_Scroll_Remocon.py
 
 ```
 Development-OneNote_Remocon/
+├── assets/                        # 리소스 파일
+│   └── app_icon.ico              # 애플리케이션 아이콘
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                    # 애플리케이션 진입점

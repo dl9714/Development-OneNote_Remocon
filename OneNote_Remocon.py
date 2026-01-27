@@ -45,7 +45,7 @@ from PyQt6.QtGui import QIcon, QAction
 
 # ----------------- 0. 전역 상수 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
-APP_ICON_PATH = "app_icon.ico"
+APP_ICON_PATH = "assets/app_icon.ico"
 
 ONENOTE_CLASS_NAME = "ApplicationFrameWindow"
 SCROLL_STEP_SENSITIVITY = 40
