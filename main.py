@@ -23,11 +23,30 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication
-_boot("import PyQt6.QtWidgets done")
-
-# main_window 모듈에서 필요한 것들 import
+from PyQt6.QtGui import QIcon
 from src.ui.main_window import OneNoteScrollRemoconApp, ROLE_TYPE
+from src.constants import APP_ICON_PATH
+from src.utils import resource_path
+
 _boot("import MainWindow done")
+
+
+def _set_windows_appusermodelid(app_id: str) -> None:
+    """
+    Windows 작업표시줄/Alt+Tab 아이콘이 '파이썬 기본 아이콘'으로 뜨는 문제를 줄이기 위한 설정.
+    (PyInstaller/Qt 조합에서 특히 중요)
+    """
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
+
+
+def _apply_app_icon(app: QApplication) -> None:
+    icon_path = resource_path(APP_ICON_PATH)
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
 
 def main():
@@ -35,6 +54,13 @@ def main():
     """애플리케이션을 실행합니다."""
     app = QApplication(sys.argv)
     _boot("QApplication() created")
+
+    # 0) 작업표시줄/Alt+Tab 아이콘 안정화 (Windows)
+    if sys.platform.startswith("win"):
+        _set_windows_appusermodelid("OneNoteRemocon.OneNote_Remocon")
+
+    # 1) QApplication 레벨 아이콘 (모든 윈도우에 기본 적용)
+    _apply_app_icon(app)
 
     window = OneNoteScrollRemoconApp()
     _boot("MainWindow() created")

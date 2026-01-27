@@ -52,10 +52,10 @@ echo.
 pyinstaller --onedir ^
     --windowed ^
     --name "OneNote_Remocon" ^
-    --icon="assets/app_icon.ico" ^
-    --add-data "assets/app_icon.ico;assets" ^
-    --add-data "assets/app_icon.png;assets" ^
-    main.py
+    --icon="%~dp0assets\app_icon.ico" ^
+    --add-data "%~dp0assets\app_icon.ico;assets" ^
+    --add-data "%~dp0assets\app_icon.png;assets" ^
+    "%~dp0main.py"
 
 if errorlevel 1 (
     echo.
