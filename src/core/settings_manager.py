@@ -9,6 +9,7 @@ import sys
 import json
 import os
 from typing import Dict, Any, Optional
+import uuid
 from src.constants import SETTINGS_FILE, DEFAULT_SETTINGS, DEFAULT_FAVORITES_BUFFER
 
 
@@ -170,6 +171,23 @@ class SettingsManager:
             data["favorites_buffers"] = {DEFAULT_FAVORITES_BUFFER: data["favorites"]}
             data["active_buffer"] = DEFAULT_FAVORITES_BUFFER
             del data["favorites"]
+
+        # 2. Dict favorites_buffers -> List hierarchy (그룹 기능 지원을 위한 마이그레이션)
+        # 기존: {"버퍼1": [...], "버퍼2": [...]}
+        # 신규: [{"type": "buffer", "id": "...", "name": "버퍼1", "data": [...]}, ...]
+        fb = data.get("favorites_buffers")
+        if isinstance(fb, dict):
+            print("[INFO] 평면적 버퍼 구조 감지. 계층형 구조로 마이그레이션합니다.")
+            new_structure = []
+            for name, content in fb.items():
+                new_structure.append({
+                    "id": str(uuid.uuid4()),
+                    "type": "buffer",
+                    "name": name,
+                    "data": content
+                })
+            data["favorites_buffers"] = new_structure
+            # active_buffer(이름)는 로드 시 처리
 
         return data
 

@@ -6,24 +6,40 @@ OneNote Remocon - 전자필기장 스크롤 리모컨
 메인 진입점입니다.
 """
 
+import time
+
+_T0 = time.perf_counter()
+def _boot(msg: str):
+    dt = (time.perf_counter() - _T0) * 1000.0
+    print(f"[BOOT0] {dt:8.1f} ms | {msg}")
+
+_boot("process start")
+
 import sys
+_boot("import sys done")
 import os
 
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication
+_boot("import PyQt6.QtWidgets done")
 
 # main_window 모듈에서 필요한 것들 import
 from src.ui.main_window import OneNoteScrollRemoconApp, ROLE_TYPE
+_boot("import MainWindow done")
 
 
 def main():
+    _boot("enter main()")
     """애플리케이션을 실행합니다."""
     app = QApplication(sys.argv)
+    _boot("QApplication() created")
 
     window = OneNoteScrollRemoconApp()
+    _boot("MainWindow() created")
     window.show()
+    _boot("MainWindow.show() called")
 
     # 즐겨찾기 더블클릭 동작 설정
     try:

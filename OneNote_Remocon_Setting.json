@@ -1,24 +1,103 @@
 {
   "window_geometry": {
-    "x": 200,
-    "y": 180,
-    "width": 1395,
-    "height": 540
+    "x": 410,
+    "y": 259,
+    "width": 1157,
+    "height": 538
   },
   "splitter_states": {
     "main": "AAAA/wAAAAEAAAACAAACZwAAATwA/////wEAAAABAA==",
-    "left": "AAAA/wAAAAEAAAACAAAAwQAAAPoA/////wEAAAABAA=="
+    "left": "AAAA/wAAAAEAAAACAAAA2wAAAPoA/////wEAAAABAA=="
   },
   "connection_signature": {
-    "handle": 593406,
-    "pid": 22256,
+    "handle": 8328460,
+    "pid": 56340,
     "class_name": "Framework::CFrame",
-    "title": "사업시도-사업 설계-종합. - OneNote",
+    "title": "서비스 구독-생활. - OneNote",
     "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
     "exe_name": "onenote.exe"
   },
-  "favorites_buffers": {
-    "기본 즐겨찾기 버퍼": []
-  },
+  "favorites_buffers": [
+    {
+      "type": "group",
+      "id": "a0939c1d-60c6-4fea-9342-f689400d911e",
+      "name": "새 그룹",
+      "children": []
+    },
+    {
+      "type": "group",
+      "id": "3e9a8c3b-c061-40b2-9add-b1fb625950ff",
+      "name": "새 그룹",
+      "children": []
+    },
+    {
+      "type": "group",
+      "id": "869c6d04-49c5-4b63-acf2-33ce4d31eebb",
+      "name": "새 그룹",
+      "children": [
+        {
+          "type": "group",
+          "id": "116eee69-dbad-4998-99c2-1a80fb23bf5f",
+          "name": "새 그룹",
+          "children": [
+            {
+              "type": "buffer",
+              "id": "cc2856a8-bdfe-485d-aa9c-309c84edb354",
+              "name": "새 버퍼",
+              "data": []
+            }
+          ]
+        },
+        {
+          "type": "buffer",
+          "id": "068c3c27-b8c4-4cf8-953a-81943dfd11c7",
+          "name": "새 버퍼",
+          "data": [
+            {
+              "id": "6f1e4592-6e40-48f6-b414-fc69b2cacaca",
+              "name": "소비자사업-관리-대시보드-배치처리",
+              "target": {
+                "section_text": "소비자사업-관리-대시보드-배치처리",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 12848008,
+                  "pid": 20064,
+                  "title": "서비스 구독-생활. - OneNote"
+                }
+              },
+              "type": "section"
+            }
+          ]
+        },
+        {
+          "type": "buffer",
+          "id": "54a98779-de0d-4adf-98f8-f6709b832603",
+          "name": "rytytr",
+          "data": []
+        },
+        {
+          "type": "buffer",
+          "id": "92e6e31a-f111-4d5b-9d51-9599f1430de8",
+          "name": "새 버퍼",
+          "data": []
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "id": "a332e632-20ce-4836-a317-f1918ebbde45",
+      "name": "새 그룹",
+      "children": []
+    },
+    {
+      "type": "group",
+      "id": "985e740b-e56b-457e-b885-2cce75c83bab",
+      "name": "새 그룹",
+      "children": []
+    }
+  ],
+  "active_buffer_id": "068c3c27-b8c4-4cf8-953a-81943dfd11c7",
   "active_buffer": "기본 즐겨찾기 버퍼"
 }

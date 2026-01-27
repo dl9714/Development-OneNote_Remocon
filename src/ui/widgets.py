@@ -8,6 +8,7 @@
 from PyQt6.QtWidgets import QTreeWidget, QAbstractItemView
 from PyQt6.QtCore import pyqtSignal, Qt
 from src.constants import ROLE_TYPE
+from typing import Optional
 
 
 class FavoritesTree(QTreeWidget):
@@ -63,7 +64,8 @@ class FavoritesTree(QTreeWidget):
             source_type = source_item.data(0, ROLE_TYPE)
             target_type = target_item.data(0, ROLE_TYPE)
 
-            if source_type == "section" and target_type == "section":
+            # 섹션(또는 버퍼)이 같은 타입 위로 드롭되면 형제로 이동
+            if source_type == target_type and source_type in ["section", "buffer"]:
                 moved_item = target_item.takeChild(
                     target_item.indexOfChild(source_item)
                 )
@@ -112,3 +114,12 @@ class FavoritesTree(QTreeWidget):
                 return
 
         super().keyPressEvent(event)
+
+
+class BufferTree(FavoritesTree):
+    """
+    즐겨찾기 버퍼 목록을 관리하는 트리 위젯 (그룹 기능 포함)
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 기본적인 설정은 FavoritesTree와 동일
