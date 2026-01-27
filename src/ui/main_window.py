@@ -1094,6 +1094,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
         import_action.triggered.connect(self._import_favorites)
         file_menu.addAction(import_action)
 
+        file_menu.addSeparator()
+
+        backup_action = QAction("백업하기...", self)
+        backup_action.triggered.connect(self._backup_full_settings)
+        file_menu.addAction(backup_action)
+
+        restore_action = QAction("복원하기...", self)
+        restore_action.triggered.connect(self._restore_full_settings)
+        file_menu.addAction(restore_action)
+
         # --- 스타일시트 정의 (생략) ---
         COLOR_BACKGROUND = "#2E2E2E"
         COLOR_PRIMARY_TEXT = "#E0E0E0"
@@ -2065,6 +2075,100 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(
                     self, "오류", f"파일을 불러오는 중 오류가 발생했습니다:\n{e}"
+                )
+
+    def _backup_full_settings(self):
+        """전체 설정을 백업합니다."""
+        last_dir = self.settings.get("last_backup_dir", os.getcwd())
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        default_filename = f"OneNote_Remocon_Backup_{timestamp}.json"
+        
+        default_path = os.path.join(last_dir, default_filename)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "설정 백업",
+            default_path,
+            "JSON Files (*.json);;All Files (*)",
+        )
+
+        if file_path:
+            try:
+                # 현재 메모리 설정을 파일로 강제 저장 (최신 상태 반영)
+                self._save_window_state() # 창 위치 등 업데이트
+                self._save_favorites()    # 즐겨찾기 업데이트
+                
+                # 백업 디렉토리 기억
+                self.settings["last_backup_dir"] = os.path.dirname(file_path)
+                
+                # _write_json을 사용하여 안전하게 저장
+                _write_json(file_path, self.settings)
+                
+                # 설정 파일에도 last_backup_dir 반영하여 저장
+                save_settings(self.settings)
+
+                QMessageBox.information(
+                    self, "백업 완료", f"성공적으로 백업되었습니다.\n\n경로: {file_path}"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "백업 실패", f"백업 중 오류가 발생했습니다:\n{e}"
+                )
+
+    def _restore_full_settings(self):
+        """설정 파일을 복원합니다."""
+        last_dir = self.settings.get("last_backup_dir", os.getcwd())
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "설정 복원",
+            last_dir,
+            "JSON Files (*.json);;All Files (*)",
+        )
+
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    restored_data = json.load(f)
+                
+                # 마이그레이션 적용 (구버전 백업일 경우 대비)
+                if _migrate_favorites_buffers_inplace(restored_data):
+                    print("[INFO] 복원 데이터 마이그레이션 수행됨")
+
+                confirm = QMessageBox.question(
+                    self,
+                    "복원 확인",
+                    "설정을 복원하면 현재 설정이 덮어씌워집니다.\n계속하시겠습니까?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                
+                if confirm != QMessageBox.StandardButton.Yes:
+                    return
+
+                # 복원 디렉토리 기억
+                restored_data["last_backup_dir"] = os.path.dirname(file_path)
+
+                # 현재 설정 교체
+                self.settings = DEFAULT_SETTINGS.copy()
+                self.settings.update(restored_data)
+                
+                # 파일에 즉시 반영
+                _write_json(_get_settings_file_path(), self.settings)
+                
+                # UI 리로드
+                # 1. 버퍼/즐겨찾기 트리 갱신
+                self._load_buffers_and_favorites()
+                
+                # 2. 스플리터 위치 등은 재시작 시 적용되거나 지금 강제 적용 가능하나
+                # 여기서는 데이터 갱신에 집중
+                
+                QMessageBox.information(
+                    self, "복원 완료", "설정이 복원되었습니다."
+                )
+                
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "복원 실패", f"복원 중 오류가 발생했습니다:\n{e}"
                 )
 
     def _serialize_fav_item(self, item: QTreeWidgetItem) -> Dict[str, Any]:
