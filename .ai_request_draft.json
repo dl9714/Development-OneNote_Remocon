@@ -1,0 +1,132 @@
+{
+  "buffers": {
+    "": {
+      "saved_at": 1768035636.5580294,
+      "state": {
+        "single": {
+          "edit": {
+            "current_file": null,
+            "edit_content": "",
+            "cmb_selected": ""
+          },
+          "new": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          },
+          "tpl": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          }
+        },
+        "split": {
+          "left": {
+            "edit": {
+              "current_file": null,
+              "edit_content": "",
+              "cmb_selected": ""
+            },
+            "new": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            },
+            "tpl": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            }
+          },
+          "right": {
+            "edit": {
+              "current_file": null,
+              "edit_content": "",
+              "cmb_selected": ""
+            },
+            "new": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            },
+            "tpl": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            }
+          }
+        }
+      },
+      "ui": {
+        "split_left_idx": 0,
+        "split_right_idx": 0
+      }
+    },
+    "_default": {
+      "saved_at": 1769086284.0358331,
+      "state": {
+        "single": {
+          "edit": {
+            "current_file": null,
+            "edit_content": "",
+            "cmb_selected": ""
+          },
+          "new": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          },
+          "tpl": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          }
+        },
+        "split": {
+          "left": {
+            "edit": {
+              "current_file": null,
+              "edit_content": "",
+              "cmb_selected": ""
+            },
+            "new": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            },
+            "tpl": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            }
+          },
+          "right": {
+            "edit": {
+              "current_file": null,
+              "edit_content": "",
+              "cmb_selected": ""
+            },
+            "new": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            },
+            "tpl": {
+              "current_file": null,
+              "title": "",
+              "prompt": ""
+            }
+          }
+        }
+      },
+      "ui": {
+        "split_left_idx": 0,
+        "split_right_idx": 0
+      }
+    }
+  },
+  "version": 2,
+  "active_buffer": "_default",
+  "saved_at": 1769528858.1210806,
+  "project_key": "c:\\users\\dl971\\desktop\\project-py\\py-util-development\\development-onenote_remocon"
+}

@@ -1,0 +1,24 @@
+{
+  "window_geometry": {
+    "x": 200,
+    "y": 180,
+    "width": 1395,
+    "height": 540
+  },
+  "splitter_states": {
+    "main": "AAAA/wAAAAEAAAACAAACZwAAATwA/////wEAAAABAA==",
+    "left": "AAAA/wAAAAEAAAACAAAAwQAAAPoA/////wEAAAABAA=="
+  },
+  "connection_signature": {
+    "handle": 593406,
+    "pid": 22256,
+    "class_name": "Framework::CFrame",
+    "title": "사업시도-사업 설계-종합. - OneNote",
+    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+    "exe_name": "onenote.exe"
+  },
+  "favorites_buffers": {
+    "기본 즐겨찾기 버퍼": []
+  },
+  "active_buffer": "기본 즐겨찾기 버퍼"
+}

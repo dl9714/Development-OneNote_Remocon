@@ -1,0 +1,5 @@
+onefile버전
+pyinstaller --onefile --windowed --name "OneNote_Remocon" --icon="app_icon.ico" --add-data "app_icon.ico;." Onenote_Remocon.py
+
+onedir버전
+pyinstaller --onedir --windowed --name "OneNote_Remocon" --icon="app_icon.ico" --add-data "app_icon.ico;." Onenote_Remocon.py

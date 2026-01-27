@@ -1,0 +1,242 @@
+{
+  "window_geometry": {
+    "x": 682,
+    "y": 237,
+    "width": 636,
+    "height": 540
+  },
+  "connection_signature": {
+    "handle": 45229414,
+    "pid": 42104,
+    "class_name": "Framework::CFrame",
+    "title": "채널-해시태그. - OneNote",
+    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+    "exe_name": "onenote.exe"
+  },
+  "favorites_buffers": {
+    "기본 버퍼": [
+      {
+        "type": "group",
+        "id": "364a2886-d25a-4bcf-b04d-00860f01ce7b",
+        "name": "새 그룹",
+        "children": [
+          {
+            "type": "group",
+            "id": "d6eaf8db-13a8-4df2-bdf4-c929c938d828",
+            "name": "복사본 - 새 그룹"
+          }
+        ]
+      },
+      {
+        "type": "group",
+        "id": "ee52b26a-e538-4b8f-a8fd-aad2ad7870d9",
+        "name": "새 그룹",
+        "children": [
+          {
+            "type": "group",
+            "id": "ae7ac02d-9a8b-448d-b8fb-e007e75f1158",
+            "name": "새 그룹",
+            "children": [
+              {
+                "type": "section",
+                "id": "c608c4c6-2fe1-458e-8820-558522770071",
+                "name": "(구) e",
+                "target": {
+                  "section_text": "생산성도구-업무목표-미니프로젝트",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 9516744,
+                    "pid": 24092,
+                    "title": "판매 프로젝트_유동-종합. - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "8ea7973f-d020-4602-939b-ca6d29246ad7",
+                "name": "qq",
+                "target": {
+                  "section_text": "사업체-유튜브-2썰 채널",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 3879866,
+                    "pid": 41836,
+                    "title": "제목: 가족갈등 - 콩가루 집안 - 환갑 넘은 아빠가 바람나서 엄마랑 이혼 소송 중. 인생 - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "3185a6ac-008e-41a5-804e-ab9968aa6aad",
+                "name": "ww",
+                "target": {
+                  "section_text": "사업체-유튜브-2썰 채널",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 3879866,
+                    "pid": 41836,
+                    "title": "2025-06 - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "c4ef20ec-83cc-4311-aee8-c35688e9336d",
+                "name": "사업체-유튜브-9기타",
+                "target": {
+                  "section_text": "사업체-유튜브-9기타",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 105850502,
+                    "pid": 42476,
+                    "title": "궁금증 폭파 연구소-성장. - OneNote"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "id": "7624fe0b-3c21-4ee8-a27d-00b665e5a461",
+            "name": "새 그룹"
+          }
+        ]
+      },
+      {
+        "type": "group",
+        "id": "5f06d813-4447-4fdd-85a2-2c035405079d",
+        "name": "새 그룹"
+      }
+    ],
+    "rr": [],
+    "1": [
+      {
+        "type": "section",
+        "id": "f2dc3c1d-c690-4e08-9fda-0b6ebd0b27ca",
+        "name": "생산성도구-업무목표-미니프로젝트",
+        "target": {
+          "section_text": "생산성도구-업무목표-미니프로젝트",
+          "sig": {
+            "class_name": "Framework::CFrame",
+            "exe_name": "onenote.exe",
+            "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+            "handle": 45229414,
+            "pid": 42104,
+            "title": "사업시도-사업 설계-종합. - OneNote"
+          }
+        }
+      },
+      {
+        "type": "section",
+        "id": "7fd809cc-08b2-4647-85d2-93ef782c1bac",
+        "name": "사업체-유튜브-2썰 채널",
+        "target": {
+          "section_text": "사업체-유튜브-2썰 채널",
+          "sig": {
+            "class_name": "Framework::CFrame",
+            "exe_name": "onenote.exe",
+            "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+            "handle": 45229414,
+            "pid": 42104,
+            "title": "#이미지싱크 - OneNote"
+          }
+        }
+      }
+    ],
+    "복사본 - rr": [
+      {
+        "type": "group",
+        "id": "49feb6f8-05ba-4605-9b05-44fd38d70453",
+        "name": "복사본 - 새 그룹",
+        "children": [
+          {
+            "type": "group",
+            "id": "7028cc16-8bcc-4bfa-97e0-0053ce84681c",
+            "name": "복사본 - 새 그룹",
+            "children": [
+              {
+                "type": "section",
+                "id": "24f531b5-1149-4ec7-944d-10ccc55b8d81",
+                "name": "복사본 - (구) e",
+                "target": {
+                  "section_text": "생산성도구-업무목표-미니프로젝트",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 9516744,
+                    "pid": 24092,
+                    "title": "판매 프로젝트_유동-종합. - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "0119d827-d8a9-479f-8e2c-bbdd935e0271",
+                "name": "복사본 - qq",
+                "target": {
+                  "section_text": "사업체-유튜브-2썰 채널",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 3879866,
+                    "pid": 41836,
+                    "title": "제목: 가족갈등 - 콩가루 집안 - 환갑 넘은 아빠가 바람나서 엄마랑 이혼 소송 중. 인생 - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "363a85ff-196e-475f-b561-f5ad5cad2bf4",
+                "name": "복사본 - ww",
+                "target": {
+                  "section_text": "사업체-유튜브-2썰 채널",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 3879866,
+                    "pid": 41836,
+                    "title": "2025-06 - OneNote"
+                  }
+                }
+              },
+              {
+                "type": "section",
+                "id": "40c5f448-77eb-4b07-abd1-e2bfb766deac",
+                "name": "복사본 - 사업체-유튜브-9기타",
+                "target": {
+                  "section_text": "사업체-유튜브-9기타",
+                  "sig": {
+                    "class_name": "Framework::CFrame",
+                    "exe_name": "onenote.exe",
+                    "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                    "handle": 105850502,
+                    "pid": 42476,
+                    "title": "궁금증 폭파 연구소-성장. - OneNote"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "group",
+            "id": "b7ff0b69-39ad-454b-b767-aa69af81f9de",
+            "name": "복사본 - 새 그룹"
+          }
+        ]
+      }
+    ]
+  },
+  "active_buffer": "복사본 - rr",
+  "language": "en"
+}
