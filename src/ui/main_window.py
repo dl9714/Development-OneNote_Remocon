@@ -86,6 +86,97 @@ DEFAULT_SETTINGS = {
     "active_buffer_id": None, # ID 기반으로 변경
 }
 
+def _write_json(path: str, obj: Dict[str, Any]) -> None:
+    """UTF-8(한글 유지)로 설정 파일을 저장합니다."""
+    # 기존 파일은 .bak으로 백업 (마이그레이션 실패/되돌리기 대비)
+    try:
+        if os.path.exists(path):
+            import shutil
+            shutil.copy2(path, path + ".bak")
+    except Exception:
+        pass
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+def _migrate_favorites_buffers_inplace(data: Dict[str, Any]) -> bool:
+    """
+    1패널(버퍼 트리) 도입 이후에도 예전 설정/즐겨찾기 JSON을 그대로 인식하도록 마이그레이션합니다.
+
+    지원하는 레거시 형태:
+      - favorites: [...]                     (아주 구버전)
+      - favorites_buffers: {name: [...]}     (버퍼=이름 딕셔너리)
+      - favorites_buffers: [...]             (버퍼가 없고, 그룹/섹션 목록만 있는 리스트)
+    """
+    migrated = False
+
+    # (A) favorites -> favorites_buffers(dict) (구버전)
+    if "favorites" in data and "favorites_buffers" not in data:
+        data["favorites_buffers"] = {"기본 즐겨찾기 버퍼": data.get("favorites") or []}
+        data["active_buffer"] = "기본 즐겨찾기 버퍼"
+        data.pop("favorites", None)
+        migrated = True
+
+    raw = data.get("favorites_buffers")
+
+    # (B) dict -> list[buffer] (이전 버전: {name: [data...]})
+    if isinstance(raw, dict):
+        new_list = []
+        name_to_id = {}
+        for name, fav_data in raw.items():
+            buf = {
+                "type": "buffer",
+                "id": str(uuid.uuid4()),
+                "name": name,
+                "data": fav_data if isinstance(fav_data, list) else [],
+            }
+            new_list.append(buf)
+            name_to_id[name] = buf["id"]
+        data["favorites_buffers"] = new_list
+
+        # active_buffer(name) -> active_buffer_id
+        legacy_name = data.get("active_buffer")
+        if legacy_name and legacy_name in name_to_id:
+            data["active_buffer_id"] = name_to_id[legacy_name]
+        migrated = True
+
+    # (C) list인데 buffer 노드가 하나도 없으면: "즐겨찾기 트리 데이터"만 있던 구버전으로 간주
+    raw2 = data.get("favorites_buffers")
+    if isinstance(raw2, list):
+        has_buffer = any(isinstance(n, dict) and n.get("type") == "buffer" for n in raw2)
+        if (not has_buffer) and raw2:
+            data["favorites_buffers"] = [{
+                "type": "buffer",
+                "id": str(uuid.uuid4()),
+                "name": "기본 즐겨찾기 버퍼",
+                "data": raw2,
+            }]
+            migrated = True
+
+    # (D) active_buffer_id 유효성 검사
+    buf_ids = [
+        n.get("id")
+        for n in data.get("favorites_buffers", [])
+        if isinstance(n, dict) and n.get("type") == "buffer" and n.get("id")
+    ]
+    if buf_ids:
+        if data.get("active_buffer_id") not in buf_ids:
+            data["active_buffer_id"] = buf_ids[0]
+            migrated = True
+    else:
+        # 버퍼가 하나도 없으면 active_id도 None
+        if data.get("active_buffer_id") is not None:
+            data["active_buffer_id"] = None
+            migrated = True
+
+    # 더 이상 쓰지 않는 레거시 키 정리
+    if "active_buffer" in data:
+        data.pop("active_buffer", None)
+        migrated = True
+
+    return migrated
+
 
 def load_settings() -> Dict[str, Any]:
     # 설정 파일 경로를 실행 파일 위치 기준으로 가져옴
@@ -98,23 +189,19 @@ def load_settings() -> Dict[str, Any]:
             data = json.load(f)
 
         # 하위 호환성을 위한 마이그레이션 로직
-        if "favorites" in data and "favorites_buffers" not in data:
-            print(
-                "[INFO] 구 버전 설정 감지. 새 즐겨찾기 버퍼 구조로 마이그레이션합니다."
-            )
-            data["favorites_buffers"] = {"기본 즐겨찾기 버퍼": data["favorites"]}
-            data["active_buffer"] = "기본 즐겨찾기 버퍼"
-            del data["favorites"]
-
-        # 2차 마이그레이션 (Dict -> List)는 SettingsManager 혹은 여기서 처리 가능하지만
-        # main.py에서는 SettingsManager를 쓰지 않고 직접 로드하므로 여기서도 간단히 처리
-        if isinstance(data.get("favorites_buffers"), dict):
-             # settings_manager.py의 로직과 동일하게 처리하거나,
-             # 단순히 빈 리스트로 초기화하여 오류 방지 (실제 마이그레이션은 settings_manager 권장)
-             pass
+        migrated = _migrate_favorites_buffers_inplace(data)
 
         settings = DEFAULT_SETTINGS.copy()
         settings.update(data)
+
+        # 마이그레이션이 있었다면 즉시 저장(다음 실행부터는 신스키마로 로드)
+        if migrated:
+            try:
+                _write_json(settings_path, settings)
+                print(f"[INFO] 설정 마이그레이션 완료: {settings_path}")
+            except Exception as e:
+                print(f"[WARN] 마이그레이션 저장 실패(무시): {e}")
+
         return settings
     except Exception as e:
         print(f"[ERROR] 설정 파일 로드 실패: {e}")
@@ -1675,7 +1762,22 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.buffer_tree.clear()
 
         buffers_data = self.settings.get("favorites_buffers", [])
-        # 마이그레이션되지 않은 Dict 데이터가 오면 빈 리스트 처리 (안전장치)
+
+        # ✅ 레거시 설정(딕트/버퍼 없는 리스트) 자동 마이그레이션
+        tmp = {
+            "favorites_buffers": buffers_data,
+            "active_buffer_id": self.settings.get("active_buffer_id"),
+            "active_buffer": self.settings.get("active_buffer"),
+        }
+        if _migrate_favorites_buffers_inplace(tmp):
+            self.settings.update(tmp)
+            buffers_data = self.settings.get("favorites_buffers", [])
+            try:
+                self._save_settings_to_file()
+            except Exception:
+                pass
+
+        # 방어: 그래도 dict면 비워서 크래시 방지
         if isinstance(buffers_data, dict):
             buffers_data = []
 
@@ -1833,13 +1935,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def _export_favorites(self):
         self._save_favorites()
-        if not self.active_buffer_name:
+        
+        # 활성 버퍼 노드 확인
+        if not self.active_buffer_node:
             QMessageBox.warning(self, "내보내기", "활성화된 즐겨찾기 버퍼가 없습니다.")
             return
 
-        favorites_data = self.settings["favorites_buffers"].get(
-            self.active_buffer_name, []
-        )
+        favorites_data = self.active_buffer_node.get("data", [])
+        buffer_name = self.active_buffer_node.get("name", "Favorites")
 
         if not favorites_data:
             QMessageBox.information(
@@ -1849,7 +1952,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
         default_filename = (
-            f"OneNote_Favorites_{self.active_buffer_name}_{timestamp}.json"
+            f"OneNote_Favorites_{buffer_name}_{timestamp}.json"
         )
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1910,26 +2013,49 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     if not ok or not new_buffer_name:
                         return
 
-                    self.settings["favorites_buffers"][new_buffer_name] = imported_data
+                    # 새 버퍼 노드 생성 및 추가
+                    new_buffer_node = {
+                        "type": "buffer",
+                        "id": str(uuid.uuid4()),
+                        "name": new_buffer_name,
+                        "data": imported_data
+                    }
+                    if not isinstance(self.settings["favorites_buffers"], list):
+                        self.settings["favorites_buffers"] = []
+                    
+                    self.settings["favorites_buffers"].append(new_buffer_node)
                     self._load_buffers_and_favorites()
-                    items = self.buffer_list_widget.findItems(
-                        new_buffer_name, Qt.MatchFlag.MatchExactly
-                    )
-                    if items:
-                        self.buffer_list_widget.setCurrentItem(items[0])
+                    
+                    # 새로 추가된 버퍼 활성화
+                    # _load_buffers_and_favorites() 후 트리에서 찾기
+                    found_item = None
+                    iterator = QTreeWidgetItemIterator(self.buffer_tree)
+                    while iterator.value():
+                        item = iterator.value()
+                        payload = item.data(0, ROLE_DATA)
+                        if payload and payload.get("id") == new_buffer_node["id"]:
+                            found_item = item
+                            break
+                        iterator += 1
+                    
+                    if found_item:
+                        self.buffer_tree.setCurrentItem(found_item)
+                        self._on_buffer_tree_item_clicked(found_item, 0)
 
                 else:
-                    if not self.active_buffer_name:
+                    if not self.active_buffer_node:
                         QMessageBox.critical(
                             self,
                             "오류",
                             "활성화된 즐겨찾기 버퍼가 없어 가져올 수 없습니다.",
                         )
                         return
-                    self.settings["favorites_buffers"][
-                        self.active_buffer_name
-                    ] = imported_data
-                    self._load_tree_from_buffer(self.active_buffer_name)
+                    
+                    # 현재 활성 버퍼 데이터 덮어쓰기
+                    self.active_buffer_node["data"] = imported_data
+                    # 트리 갱신 및 저장
+                    self._load_tree_from_data(imported_data)
+                    self._save_favorites()
 
                 self._save_settings_to_file()
                 QMessageBox.information(
