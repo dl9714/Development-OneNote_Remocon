@@ -152,9 +152,35 @@ def _migrate_favorites_buffers_inplace(data: Dict[str, Any]) -> bool:
         migrated = True
 
     # (C) list인데 buffer 노드가 하나도 없으면: "즐겨찾기 트리 데이터"만 있던 구버전으로 간주
+    # ⚠️ 주의: 신규 구조에서는 최상단이 group이고 buffer는 children에 들어갈 수 있다.
+    # 따라서 has_buffer 검사는 반드시 재귀적으로 수행해야 한다.
+    def _has_any_buffer_node(nodes: Any) -> bool:
+        if not isinstance(nodes, list):
+            return False
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "buffer":
+                return True
+            if n.get("type") == "group":
+                if _has_any_buffer_node(n.get("children") or []):
+                    return True
+        return False
+
+    def _collect_buffer_ids(nodes: Any, out: list) -> None:
+        if not isinstance(nodes, list):
+            return
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            if n.get("type") == "buffer" and n.get("id"):
+                out.append(n.get("id"))
+            elif n.get("type") == "group":
+                _collect_buffer_ids(n.get("children") or [], out)
+
     raw2 = data.get("favorites_buffers")
     if isinstance(raw2, list):
-        has_buffer = any(isinstance(n, dict) and n.get("type") == "buffer" for n in raw2)
+        has_buffer = _has_any_buffer_node(raw2)
         if (not has_buffer) and raw2:
             data["favorites_buffers"] = [{
                 "type": "buffer",
@@ -164,12 +190,9 @@ def _migrate_favorites_buffers_inplace(data: Dict[str, Any]) -> bool:
             }]
             migrated = True
 
-    # (D) active_buffer_id 유효성 검사
-    buf_ids = [
-        n.get("id")
-        for n in data.get("favorites_buffers", [])
-        if isinstance(n, dict) and n.get("type") == "buffer" and n.get("id")
-    ]
+    # (D) active_buffer_id 유효성 검사 (버퍼가 group 아래에 있을 수 있으므로 재귀 수집)
+    buf_ids: list = []
+    _collect_buffer_ids(data.get("favorites_buffers", []), buf_ids)
     if buf_ids:
         if data.get("active_buffer_id") not in buf_ids:
             data["active_buffer_id"] = buf_ids[0]
