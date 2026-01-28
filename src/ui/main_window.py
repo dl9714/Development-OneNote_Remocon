@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 import base64
 import hashlib
+import copy
+import unicodedata
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -70,6 +72,18 @@ AGG_BUFFER_NAME = "종합"
 # OneNote: 전체 전자필기장 자동등록 그룹
 AUTO_ONENOTE_GROUP_ID = "group-onenote-auto"
 AUTO_ONENOTE_GROUP_NAME = "OneNote(자동등록)"
+
+# ----------------- 0.05 정렬 헬퍼 -----------------
+def _name_sort_key(text: Any) -> str:
+    "이름 기준 정렬용 키(유니코드 정규화 + casefold)."
+    try:
+        s = text if isinstance(text, str) else ("" if text is None else str(text))
+        return unicodedata.normalize("NFKD", s).casefold()
+    except Exception:
+        try:
+            return str(text)
+        except Exception:
+            return ""
 
 # ----------------- 0.0 설정 파일 경로 헬퍼 -----------------
 def _get_settings_file_path() -> str:
@@ -317,6 +331,7 @@ def _ensure_default_and_aggregate_inplace(settings: Dict[str, Any]) -> None:
             "type": "buffer",
             "id": AGG_BUFFER_ID,
             "name": AGG_BUFFER_NAME,
+            "virtual": "aggregate",
             "locked": True,
             "data": []
         }
@@ -325,6 +340,7 @@ def _ensure_default_and_aggregate_inplace(settings: Dict[str, Any]) -> None:
         # 항상 children[0]으로 이동 + 이름/속성 강제
         agg_node["name"] = AGG_BUFFER_NAME
         agg_node["locked"] = True
+        agg_node["virtual"] = "aggregate"
         if agg_idx != 0:
             children.pop(agg_idx)
             children.insert(0, agg_node)
@@ -411,6 +427,11 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
                 _walk_buffers(b.get("children") or [])
 
     _walk_buffers(bufs)
+    # ✅ 종합은 중앙트리에서 '이름순'으로 보이도록 정렬
+    try:
+        out.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+    except Exception:
+        pass
     return out
 
 
@@ -1353,16 +1374,6 @@ class OneNoteScrollRemoconApp(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&파일")
 
-        export_action = QAction("즐겨찾기 내보내기...", self)
-        export_action.triggered.connect(self._export_favorites)
-        file_menu.addAction(export_action)
-
-        import_action = QAction("즐겨찾기 가져오기...", self)
-        import_action.triggered.connect(self._import_favorites)
-        file_menu.addAction(import_action)
-
-        file_menu.addSeparator()
-
         backup_action = QAction("백업하기...", self)
         backup_action.triggered.connect(self._backup_full_settings)
         file_menu.addAction(backup_action)
@@ -1639,9 +1650,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         try:
             self._icon_file = self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
             self._icon_dir = self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
+            self._icon_agg = self.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon)
         except Exception:
             self._icon_file = None
             self._icon_dir = None
+            self._icon_agg = None
 
         self.btn_expand_all.clicked.connect(self.fav_tree.expandAll)
         self.btn_collapse_all.clicked.connect(self.fav_tree.collapseAll)
@@ -2172,6 +2185,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         self._ssot_signature = new_sig
         data = _collect_all_sections_dedup(self.settings)
+        # ✅ 종합 버퍼는 이름순으로 표시
+        data = self._sorted_copy_nodes_by_name(data)
         self._aggregate_cache = data
         return data
 
@@ -2333,9 +2348,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             for child in node.get("children", []):
                 self._append_buffer_node(item, child)
         else:
-            # ✅ 종합(가상) 버퍼는 노트북 이모지(💻) 등으로 변경
+            # ✅ 종합(가상) 버퍼는 전용 아이콘(컴퓨터)로 표시
             if payload.get("virtual") == "aggregate":
-                item.setText(0, "💻 " + name)
+                icon = getattr(self, "_icon_agg", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon)
+                item.setIcon(0, icon)
             else:
                 icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
                 item.setIcon(0, icon)
@@ -2349,6 +2365,33 @@ class OneNoteScrollRemoconApp(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
             
         return item
+
+    def _expand_fav_groups_always(self, *, total_nodes: int = -1, reason: str = "") -> None:
+        """2패널(중앙 트리)에서 그룹 노드를 기본으로 펼쳐둡니다.
+
+        주의: fav_tree.expandAll()은 노드가 많을 때 렉을 유발할 수 있어,
+        '자식이 있는 노드만 expandItem()' 하는 방식으로 그룹만 펼칩니다.
+        """
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount())]
+            expanded = 0
+            while stack:
+                it = stack.pop()
+                # 자식이 있으면 '그룹성 노드'로 간주
+                if it.childCount() > 0:
+                    self.fav_tree.expandItem(it)
+                    expanded += 1
+                    for j in range(it.childCount()):
+                        stack.append(it.child(j))
+            tag = f" reason={reason}" if reason else ""
+            print(f"[DBG][FAV][EXPAND_GROUPS]{tag} expanded={expanded} total_nodes={total_nodes}")
+        except Exception as e:
+            try:
+                tag = f" reason={reason}" if reason else ""
+                print(f"[DBG][FAV][EXPAND_GROUPS][FAIL]{tag} {e}")
+            except Exception:
+                pass
 
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
@@ -2379,17 +2422,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             build_ms = (time.perf_counter() - t_build0) * 1000.0
             print(f"[BOOT][PERF][FAV_REBUILD] total_nodes={total_nodes} build_ms={build_ms:.1f}")
 
-            # ✅ 최초 1회만 확장
-            #    노드가 많을 때 expandAll()은 체감 렉(수초)을 유발하므로 기본은 1단계까지만 펼친다.
-            if not getattr(self, "_fav_expanded_once", False):
-                try:
-                    if total_nodes <= 300:
-                        self.fav_tree.expandAll()
-                    else:
-                        self.fav_tree.expandToDepth(1)
-                except Exception:
-                    pass
-                self._fav_expanded_once = True
+            # ✅ 2패널은 '그룹이 항상 펼쳐진 상태'가 기본 UX
+            #    - 예전에는 최초 1회만 펼쳤는데, 그 이후엔 항상 접힌 상태로 복원되어 사용성이 나빠짐
+            #    - expandAll() 대신 '자식이 있는 노드만 expandItem' 방식으로 그룹만 펼쳐 성능도 방어
+            self._expand_fav_groups_always(total_nodes=total_nodes, reason="rebuild")
         finally:
             self.fav_tree.setUpdatesEnabled(True)
             self.fav_tree.blockSignals(False)
@@ -2507,139 +2543,6 @@ class OneNoteScrollRemoconApp(QMainWindow):
         """현재 self.settings 객체를 파일에 저장합니다."""
         save_settings(self.settings)
 
-    def _export_favorites(self):
-        self._save_favorites()
-        
-        # 활성 버퍼 노드 확인
-        if not self.active_buffer_node:
-            QMessageBox.warning(self, "내보내기", "활성화된 즐겨찾기 버퍼가 없습니다.")
-            return
-
-        favorites_data = self.active_buffer_node.get("data", [])
-        buffer_name = self.active_buffer_node.get("name", "Favorites")
-
-        if not favorites_data:
-            QMessageBox.information(
-                self, "내보내기", "내보낼 즐겨찾기 항목이 없습니다."
-            )
-            return
-
-        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        default_filename = (
-            f"OneNote_Favorites_{buffer_name}_{timestamp}.json"
-        )
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "현재 즐겨찾기 버퍼 즐겨찾기 내보내기",
-            default_filename,
-            "JSON Files (*.json);;All Files (*)",
-        )
-
-        if file_path:
-            try:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(favorites_data, f, ensure_ascii=False, indent=2)
-                QMessageBox.information(
-                    self,
-                    "성공",
-                    f"즐겨찾기를 성공적으로 내보냈습니다.\n\n경로: {file_path}",
-                )
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "오류", f"파일을 저장하는 중 오류가 발생했습니다:\n{e}"
-                )
-
-    def _import_favorites(self):
-        reply = QMessageBox.question(
-            self,
-            "즐겨찾기 가져오기",
-            "새 즐겨찾기 버퍼를 만들어 가져오시겠습니까?\n\n"
-            "(아니오를 선택하면 현재 활성 즐겨찾기 버퍼에 덮어씁니다)",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No
-            | QMessageBox.StandardButton.Cancel,
-        )
-
-        if reply == QMessageBox.StandardButton.Cancel:
-            return
-
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "즐겨찾기 가져오기", "", "JSON Files (*.json);;All Files (*)"
-        )
-
-        if file_path:
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    imported_data = json.load(f)
-
-                if not isinstance(imported_data, list):
-                    raise ValueError("올바른 즐겨찾기 파일 형식이 아닙니다.")
-
-                if reply == QMessageBox.StandardButton.Yes:
-                    base_name = os.path.splitext(os.path.basename(file_path))[0]
-                    new_buffer_name, ok = QInputDialog.getText(
-                        self,
-                        "새 즐겨찾기 버퍼 이름",
-                        "가져올 즐겨찾기 버퍼의 이름을 입력하세요:",
-                        text=base_name,
-                    )
-                    if not ok or not new_buffer_name:
-                        return
-
-                    # 새 버퍼 노드 생성 및 추가
-                    new_buffer_node = {
-                        "type": "buffer",
-                        "id": str(uuid.uuid4()),
-                        "name": new_buffer_name,
-                        "data": imported_data
-                    }
-                    if not isinstance(self.settings["favorites_buffers"], list):
-                        self.settings["favorites_buffers"] = []
-                    
-                    self.settings["favorites_buffers"].append(new_buffer_node)
-                    self._load_buffers_and_favorites()
-                    
-                    # 새로 추가된 버퍼 활성화
-                    # _load_buffers_and_favorites() 후 트리에서 찾기
-                    found_item = None
-                    iterator = QTreeWidgetItemIterator(self.buffer_tree)
-                    while iterator.value():
-                        item = iterator.value()
-                        payload = item.data(0, ROLE_DATA)
-                        if payload and payload.get("id") == new_buffer_node["id"]:
-                            found_item = item
-                            break
-                        iterator += 1
-                    
-                    if found_item:
-                        self.buffer_tree.setCurrentItem(found_item)
-                        self._on_buffer_tree_item_clicked(found_item, 0)
-
-                else:
-                    if not self.active_buffer_node:
-                        QMessageBox.critical(
-                            self,
-                            "오류",
-                            "활성화된 즐겨찾기 버퍼가 없어 가져올 수 없습니다.",
-                        )
-                        return
-                    
-                    # 현재 활성 버퍼 데이터 덮어쓰기
-                    self.active_buffer_node["data"] = imported_data
-                    # 트리 갱신 및 저장
-                    self._load_favorites_into_center_tree(imported_data)
-                    self._save_favorites()
-
-                self._save_settings_to_file()
-                QMessageBox.information(
-                    self, "성공", "즐겨찾기를 성공적으로 가져왔습니다."
-                )
-
-            except Exception as e:
-                QMessageBox.critical(
-                    self, "오류", f"파일을 불러오는 중 오류가 발생했습니다:\n{e}"
-                )
 
     def _backup_full_settings(self):
         """전체 설정을 백업합니다."""
@@ -2817,6 +2720,42 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 stack.extend(ch)
         return total
 
+    def _sorted_copy_nodes_by_name(self, nodes: Any) -> List:
+        """
+        종합(aggregate) 버퍼에서만 사용하는 표시용 정렬.
+        - 원본 nodes를 변형하지 않기 위해 deepcopy 후 정렬
+        - group이 있으면 children도 재귀 정렬
+        """
+        if not isinstance(nodes, list):
+            return nodes if isinstance(nodes, list) else (nodes or [])
+        try:
+            copied = copy.deepcopy(nodes)
+        except Exception:
+            copied = list(nodes)
+
+        def _disp_name(n: Any) -> str:
+            if not isinstance(n, dict):
+                return ""
+            # group / buffer / section / notebook 모두 name 우선
+            name = n.get("name")
+            if name:
+                return name
+            t = n.get("target") or {}
+            return t.get("section_text") or t.get("notebook_text") or ""
+
+        def _rec(lst: List) -> List:
+            # children 먼저 정렬
+            for it in lst:
+                if isinstance(it, dict) and isinstance(it.get("children"), list):
+                    it["children"] = _rec(it["children"])
+            try:
+                lst.sort(key=lambda n: _name_sort_key(_disp_name(n)))
+            except Exception:
+                pass
+            return lst
+
+        return _rec(copied)
+
     # ----------------- FavoritesTree Undo/Redo helpers -----------------
     def _fav_reset_undo_context_from_data(self, data, *, reason: str = "") -> None:
         """
@@ -2880,14 +2819,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     # 1) 종합 버퍼에 notebook 저장이 있으면: 그걸 그대로 보여준다 (절대 덮어쓰기 금지)
                     if self._nodes_have_type(saved, "notebook") or self._nodes_have_type(saved, "group"):
                         print(f"[DBG][AGG] load SAVED data (len={len(saved)})")
-                        data_to_load = saved
+                        data_to_load = self._sorted_copy_nodes_by_name(saved)
                         self._load_favorites_into_center_tree(data_to_load)
                     else:
                         # 2) 저장된게 없을 때만: 기존 섹션 종합 계산 fallback
                         agg_data = self._build_aggregate_buffer()
                         self._dbg_node_type_counts(agg_data, "AGG_BUILT")
                         print(f"[DBG][AGG] load BUILT aggregate (len={len(agg_data)})")
-                        data_to_load = agg_data
+                        data_to_load = self._sorted_copy_nodes_by_name(agg_data)
                         self._load_favorites_into_center_tree(data_to_load)
 
                     # ✅ 버퍼 전환 직후: Undo/Redo 컨텍스트를 현재 버퍼 데이터로 리셋
