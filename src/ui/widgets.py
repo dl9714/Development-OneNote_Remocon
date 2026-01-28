@@ -25,6 +25,9 @@ class FavoritesTree(QTreeWidget):
     renameRequested = pyqtSignal()
     copyRequested = pyqtSignal()
     pasteRequested = pyqtSignal()
+    cutRequested = pyqtSignal()
+    undoRequested = pyqtSignal()
+    redoRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         """즐겨찾기 트리를 초기화합니다."""
@@ -122,9 +125,35 @@ class FavoritesTree(QTreeWidget):
             event.accept()
             return
 
-        # Ctrl+C / Ctrl+V
+        # Ctrl 조합 단축키 (편집 중이면 기본 편집 동작 우선)
         # 다른 modifier(Shift 등)와 같이 눌려도 Ctrl을 감지하도록 비트 플래그로 체크
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # 편집 중(Ctrl+Z 등)은 기본 편집 동작 우선
+            if self.state() == QAbstractItemView.State.EditingState:
+                super().keyPressEvent(event)
+                return
+
+            # Undo / Redo
+            if event.key() == Qt.Key.Key_Z:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Shift+Z)")
+                    self.redoRequested.emit()
+                else:
+                    print("[DBG][TREE][UNDO] emit undoRequested (Ctrl+Z)")
+                    self.undoRequested.emit()
+                event.accept()
+                return
+            if event.key() == Qt.Key.Key_Y:
+                print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Y)")
+                self.redoRequested.emit()
+                event.accept()
+                return
+
+            # Cut / Copy / Paste
+            if event.key() == Qt.Key.Key_X:
+                self.cutRequested.emit()
+                event.accept()
+                return
             if event.key() == Qt.Key.Key_C:
                 self.copyRequested.emit()
                 event.accept()

@@ -7,8 +7,10 @@ import uuid
 import traceback
 import ctypes
 from ctypes import wintypes
+from contextlib import contextmanager
 from typing import Optional, List, Dict, Any
 import base64
+import hashlib
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -354,8 +356,8 @@ def _find_first_normal_buffer_id(nodes: List[Dict[str, Any]]) -> Optional[str]:
 
 def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    모든 버퍼의 data에서 section들을 수집해서 (sig + section_text) 기준 중복 제거 후 반환.
-    - 반환 형태: 중앙트리(_load_tree_from_data)에 바로 넣을 수 있는 node 리스트
+    모든 버퍼의 data에서 section/notebook들을 수집해서 (sig + text) 기준 중복 제거 후 반환.
+    - 반환 형태: 중앙트리(_load_favorites_into_center_tree)에 바로 넣을 수 있는 node 리스트
     """
     bufs = settings.get("favorites_buffers", [])
     out: List[Dict[str, Any]] = []
@@ -364,12 +366,14 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
     def _section_key(node: Dict[str, Any]) -> str:
         t = node.get("target") or {}
         sig = t.get("sig") or {}
-        sec = t.get("section_text") or ""
+        ty = node.get("type", "section")
+        # 섹션명 또는 노트북명 수집
+        text = t.get("section_text") or t.get("notebook_text") or ""
         try:
             sig_s = json.dumps(sig, sort_keys=True, ensure_ascii=False)
         except Exception:
             sig_s = str(sig)
-        return sig_s + "|" + sec
+        return f"{ty}|{sig_s}|{text}"
 
     def _walk_fav_nodes(nodes: Any):
         if not isinstance(nodes, list):
@@ -378,15 +382,15 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
             if not isinstance(n, dict):
                 continue
             ty = n.get("type")
-            if ty == "section":
+            if ty in ("section", "notebook"):
                 k = _section_key(n)
                 if k not in seen:
                     seen.add(k)
-                    # 종합은 "섹션만" flat으로 보여주기
+                    # 종합은 납작하게(flat) 보여주기
                     out.append({
-                        "type": "section",
+                        "type": ty,
                         "id": n.get("id") or str(uuid.uuid4()),
-                        "name": n.get("name") or (n.get("target") or {}).get("section_text") or "섹션",
+                        "name": n.get("name") or (n.get("target") or {}).get("section_text") or (n.get("target") or {}).get("notebook_text") or "항목",
                         "target": n.get("target") or {}
                     })
             # 그룹 아래 children 순회
@@ -401,9 +405,7 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
             if not isinstance(b, dict):
                 continue
             if b.get("type") == "buffer":
-                # 종합 버퍼 자체는 제외
-                if b.get("id") == AGG_BUFFER_ID:
-                    continue
+                # ✅ 더 이상 aggregate를 스킵하지 않음 (그 안에 직접 등록한 노트북 등 보존 목적)
                 _walk_fav_nodes(b.get("data") or [])
             elif b.get("type") == "group":
                 _walk_buffers(b.get("children") or [])
@@ -1283,6 +1285,18 @@ class OneNoteScrollRemoconApp(QMainWindow):
         # 즐겨찾기 버퍼 복사 데이터 임시 저장소
         self.buffer_clipboard_data: Optional[Dict] = None
 
+        # --- FavoritesTree Undo/Redo (Ctrl+Z / Ctrl+Shift+Z / Ctrl+X) ---
+        self._fav_undo_stack: List[str] = []
+        self._fav_redo_stack: List[str] = []
+        self._fav_last_snapshot: Optional[str] = None
+        self._fav_undo_suspended: bool = False
+        self._fav_undo_max: int = 80
+        # bulk operation에서 (다중 붙여넣기/삭제/잘라내기 등) Ctrl+Z가 "한 개씩" 되돌아가는 문제를 막기 위해
+        # Undo/Redo를 "트랜잭션"처럼 한 번에 묶어 처리한다.
+        self._fav_undo_batch_depth: int = 0
+        self._fav_undo_batch_base_snapshot: Optional[str] = None
+        self._fav_undo_batch_reason: str = ""
+
         # 1.1 애플리케이션 아이콘 설정
         icon_path = resource_path(APP_ICON_PATH)
         if os.path.exists(icon_path):
@@ -1300,7 +1314,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         super().showEvent(e)
         if not getattr(self, "_bootstrap_scheduled", False):
             self._bootstrap_scheduled = True
-            QTimer.singleShot(0, self._deferred_bootstrap)
+            QTimer.singleShot(10, self._deferred_bootstrap)  # allow first paint
 
     def _deferred_bootstrap(self):
         # 첫 페인트 이후에 돌리되, 작업 중 불필요한 리페인트/레이아웃을 줄인다.
@@ -1310,17 +1324,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._load_buffers_and_favorites()
         self._boot_mark(f"_load_buffers_and_favorites done (+{(time.perf_counter()-t0)*1000.0:.1f}ms)")
 
-        self.fav_tree.deleteRequested.connect(self._delete_favorite_item)
-        self.fav_tree.renameRequested.connect(self._rename_favorite_item)
-        # 복사/붙여넣기 시그널 연결
-        self.fav_tree.copyRequested.connect(self._copy_favorite_item)
-        self.fav_tree.pasteRequested.connect(self._paste_favorite_item)
-        self._boot_mark("signals wired")
-
         # OneNote/pywinauto 쪽은 여기서부터 시작해도 충분 (필요 시 내부에서 ensure_pywinauto()가 또 호출됨)
         QTimer.singleShot(0, self.refresh_onenote_list)
         QTimer.singleShot(0, self._start_auto_reconnect)
         self._boot_mark("timers scheduled")
+
+        # FIX: 앱 시작 시 저장된 버퍼 기준으로 2패널 강제 리빌드
+        QTimer.singleShot(50, self._finish_boot_sequence)
 
         self.setUpdatesEnabled(True)
         self.update()
@@ -1530,11 +1540,19 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         # QListWidget -> BufferTree로 교체
         self.buffer_tree = BufferTree()
+        # PERF: 큰 트리에서 초기 렌더링 성능 개선
+        try:
+            self.buffer_tree.setUniformRowHeights(True)
+            self.buffer_tree.setAnimated(False)
+        except Exception:
+            pass
+
         self.buffer_tree.itemClicked.connect(self._on_buffer_tree_item_clicked)
         self.buffer_tree.itemDoubleClicked.connect(self._on_buffer_tree_double_clicked)
-        # ✅ 1패널에서 "선택만 변경"되어도(키보드 이동/프로그램 setCurrentItem 등)
-        # 2패널(모듈/섹션)이 즉시 갱신되도록
-        self.buffer_tree.itemSelectionChanged.connect(self._on_buffer_tree_selection_changed)
+        # ✅ 2패널(모듈/섹션)이 즉시 갱신되도록 하되, 부팅 중에는 무시
+        self.buffer_tree.itemSelectionChanged.connect(
+            lambda: getattr(self, "_boot_loading", False) or self._on_buffer_tree_selection_changed()
+        )
         self.buffer_tree.structureChanged.connect(self._save_buffer_structure)
         self.buffer_tree.renameRequested.connect(self._rename_buffer)
         self.buffer_tree.deleteRequested.connect(self._delete_buffer)
@@ -1610,6 +1628,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
         fav_layout.addLayout(tb2_layout)
 
         self.fav_tree = FavoritesTree()
+        # PERF: 큰 트리에서 초기 렌더링 성능 개선
+        try:
+            self.fav_tree.setUniformRowHeights(True)
+            self.fav_tree.setAnimated(False)
+        except Exception:
+            pass
+
+        # PERF: 아이콘 캐싱(standardIcon 반복 호출 비용 감소)
+        try:
+            self._icon_file = self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+            self._icon_dir = self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
+        except Exception:
+            self._icon_file = None
+            self._icon_dir = None
+
         self.btn_expand_all.clicked.connect(self.fav_tree.expandAll)
         self.btn_collapse_all.clicked.connect(self.fav_tree.collapseAll)
         self.fav_tree.itemDoubleClicked.connect(self._on_fav_item_double_clicked)
@@ -1622,6 +1655,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.fav_tree.renameRequested.connect(self._rename_favorite_item)
         self.fav_tree.copyRequested.connect(self._copy_favorite_item)
         self.fav_tree.pasteRequested.connect(self._paste_favorite_item)
+        self.fav_tree.cutRequested.connect(self._cut_favorite_item)
+        self.fav_tree.undoRequested.connect(self._undo_favorite_tree)
+        self.fav_tree.redoRequested.connect(self._redo_favorite_tree)
         fav_layout.addWidget(self.fav_tree)
 
         # 즐겨찾기 하단 툴바: 삭제, 위로, 아래로 (삭제 버튼 재배치)
@@ -1835,6 +1871,27 @@ class OneNoteScrollRemoconApp(QMainWindow):
         save_settings(self.settings)
 
     def closeEvent(self, event):
+        # 실행 중 QThread 정리 (종료 시 'Destroyed while thread is still running' 방지)
+        for attr in ["_reconnect_worker", "_scanner_worker", "_scan_worker", "_window_list_worker"]:
+            t = getattr(self, attr, None)
+            try:
+                if t is not None and hasattr(t, "isRunning") and t.isRunning():
+                    print(f"[DBG][THREAD][STOP] {attr} stopping...")
+                    try:
+                        t.requestInterruption()
+                    except Exception:
+                        pass
+                    try:
+                        t.quit()
+                    except Exception:
+                        pass
+                    try:
+                        t.wait(800)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         try:
             self._save_window_state()
             self._save_favorites()
@@ -2096,6 +2153,92 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 f"검색 실패: '{search_text}' 섹션을 찾을 수 없습니다.", True
             )
 
+    def _calc_ssot_signature(self):
+        """SSOT(전체 버퍼 구조)의 시그니처를 계산하여 변경 여부를 확인합니다."""
+        try:
+            raw = json.dumps(self.settings.get("favorites_buffers", []), sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(raw.encode("utf-8")).hexdigest()
+        except Exception:
+            return None
+
+    def _build_aggregate_buffer(self):
+        """모든 섹션을 수집하여 종합 버퍼 데이터를 생성합니다. 캐시를 활용하여 성능을 최적화합니다."""
+        # ✅ 변경 없으면 캐시 재사용
+        ssot_sig = getattr(self, "_ssot_signature", None)
+        new_sig = self._calc_ssot_signature()
+
+        if ssot_sig == new_sig and hasattr(self, "_aggregate_cache"):
+            return self._aggregate_cache
+
+        self._ssot_signature = new_sig
+        data = _collect_all_sections_dedup(self.settings)
+        self._aggregate_cache = data
+        return data
+
+    def _finish_boot_sequence(self):
+        """부팅 완료 단계에서 마지막 상태(활성 버퍼 데이터)를 강제 복원합니다."""
+        print("[BOOT] Starting final boot sequence...")
+        t0 = time.perf_counter()
+        try:
+            # 활성 버퍼 다시 확인
+            active_id = self.settings.get("active_buffer_id")
+            found_data = []
+            buf_name = "None"
+
+            iterator = QTreeWidgetItemIterator(self.buffer_tree)
+            while iterator.value():
+                item = iterator.value()
+                payload = item.data(0, ROLE_DATA) or {}
+                if payload.get("id") == active_id:
+                    buf_name = item.text(0)
+                    if active_id == AGG_BUFFER_ID:
+                        found_data = self._build_aggregate_buffer()
+                    else:
+                        found_data = payload.get("data", [])
+                    break
+                iterator += 1
+
+            # 강제 리빌드
+            self._rebuild_modules_from_buffer(buf_name, found_data)
+        except Exception as e:
+            print(f"[BOOT][RESTORE][BUF_REBUILD_FAIL] {e}")
+            traceback.print_exc()
+        finally:
+            self._boot_loading = False
+            total_ms = (time.perf_counter() - t0) * 1000.0
+            try:
+                total_nodes = self._count_nodes_recursive(found_data)
+            except Exception:
+                total_nodes = len(found_data) if isinstance(found_data, list) else 0
+            print(f"[BOOT][PERF] final_restore_ms={total_ms:.1f} total_nodes={total_nodes}")
+            print(f"[BOOT] Final boot sequence finished. (Active: {buf_name})")
+
+    def _rebuild_modules_from_buffer(self, buffer_name: str, nodes: list):
+        """
+        저장된 favorites_buffers 기준으로
+        2패널(모듈/전자필기장 영역)을 복원합니다.
+        """
+        print(f"[BOOT][BUF_RESTORE] buffer='{buffer_name}' count={len(nodes)}")
+        self._clear_module_panel()
+
+        if nodes:
+            self._load_favorites_into_center_tree(nodes)
+        
+        # 활성 상태바 업데이트
+        if buffer_name != "None":
+            self.connection_status_label.setText(f"준비됨 (활성 버퍼: {buffer_name})")
+
+    def _clear_module_panel(self):
+        """중앙 모듈(즐겨찾기) 패널을 완전히 비웁니다."""
+        try:
+            self.fav_tree.blockSignals(True)
+            self.fav_tree.clear()
+            self._last_center_payload_hash = None # 해시 캐시 초기화
+        except Exception:
+            pass
+        finally:
+            self.fav_tree.blockSignals(False)
+
     # ----------------- 15. 즐겨찾기 로드/세이브 (계층형 버퍼 시스템 적용) -----------------
     def _load_buffers_and_favorites(self):
         """설정에서 버퍼 트리를 로드합니다."""
@@ -2125,40 +2268,47 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if isinstance(buffers_data, dict):
             buffers_data = []
 
-        for node in buffers_data:
-            self._append_buffer_node(self.buffer_tree.invisibleRootItem(), node)
+        self._boot_loading = True
+        try:
+            for node in buffers_data:
+                self._append_buffer_node(self.buffer_tree.invisibleRootItem(), node)
 
-        self.buffer_tree.expandAll()
-        self.buffer_tree.blockSignals(False)
+            try:
+                self.buffer_tree.expandToDepth(1)
+            except Exception:
+                self.buffer_tree.expandAll()
+            self.buffer_tree.blockSignals(False)
 
-        # 활성 버퍼 복원
-        active_id = self.settings.get("active_buffer_id")
-        found_item = None
+            # 활성 버퍼 복원
+            active_id = self.settings.get("active_buffer_id")
+            found_item = None
 
-        if active_id:
-            # 트리를 순회하며 ID 찾기
-            iterator = QTreeWidgetItemIterator(self.buffer_tree)
-            while iterator.value():
-                item = iterator.value()
-                payload = item.data(0, ROLE_DATA)
-                if payload and payload.get("id") == active_id:
-                    found_item = item
-                    break
-                iterator += 1
-        
-        # 못 찾았으면 첫 번째 버퍼 선택
-        if not found_item:
-            iterator = QTreeWidgetItemIterator(self.buffer_tree)
-            while iterator.value():
-                item = iterator.value()
-                if item.data(0, ROLE_TYPE) == "buffer":
-                    found_item = item
-                    break
-                iterator += 1
+            if active_id:
+                # 트리를 순회하며 ID 찾기
+                iterator = QTreeWidgetItemIterator(self.buffer_tree)
+                while iterator.value():
+                    item = iterator.value()
+                    payload = item.data(0, ROLE_DATA)
+                    if payload and payload.get("id") == active_id:
+                        found_item = item
+                        break
+                    iterator += 1
+            
+            # 못 찾았으면 첫 번째 버퍼 선택
+            if not found_item:
+                iterator = QTreeWidgetItemIterator(self.buffer_tree)
+                while iterator.value():
+                    item = iterator.value()
+                    if item.data(0, ROLE_TYPE) == "buffer":
+                        found_item = item
+                        break
+                    iterator += 1
 
-        if found_item:
-            self.buffer_tree.setCurrentItem(found_item)
-            self._on_buffer_tree_item_clicked(found_item, 0)
+            if found_item:
+                self.buffer_tree.setCurrentItem(found_item)
+                self._on_buffer_tree_item_clicked(found_item, 0)
+        finally:
+            self._boot_loading = False
 
     def _append_buffer_node(self, parent: QTreeWidgetItem, node: Dict[str, Any]) -> QTreeWidgetItem:
         item = QTreeWidgetItem(parent)
@@ -2178,7 +2328,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
         }
         
         if node_type == "group":
-            item.setIcon(0, self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon))
+            icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
+            item.setIcon(0, icon)
             for child in node.get("children", []):
                 self._append_buffer_node(item, child)
         else:
@@ -2186,7 +2337,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             if payload.get("virtual") == "aggregate":
                 item.setText(0, "💻 " + name)
             else:
-                item.setIcon(0, self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon))
+                icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+                item.setIcon(0, icon)
             
         item.setData(0, ROLE_DATA, payload)
         
@@ -2198,19 +2350,50 @@ class OneNoteScrollRemoconApp(QMainWindow):
             
         return item
 
-    def _load_tree_from_data(self, favorites_data: List):
+    def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
+        # ✅ 동일 데이터면 rebuild 스킵 (클릭 렉 제거 핵심)
+        try:
+            payload_raw = json.dumps(node_data, sort_keys=True, ensure_ascii=False)
+            new_hash = hashlib.md5(payload_raw.encode("utf-8")).hexdigest()
+        except Exception:
+            new_hash = None
+
+        if getattr(self, "_last_center_payload_hash", None) == new_hash:
+            return
+
+        self._last_center_payload_hash = new_hash
+
         # 로딩 중 clear/append 과정에서 structureChanged/itemChanged가 발생하면
         # 선택 버퍼가 바뀌는 타이밍에 "빈 데이터"가 저장되는 문제가 발생할 수 있다.
         # (재현: 버퍼 A에서 섹션 추가 → 버퍼 B 클릭 → 다시 A 클릭 시 A가 빈 목록으로 덮임)
         self.fav_tree.blockSignals(True)
+        self.fav_tree.setUpdatesEnabled(False)
         try:
             self.fav_tree.clear()
-            for node in favorites_data:
+            total_nodes = self._count_nodes_recursive(node_data)
+            t_build0 = time.perf_counter()
+            for node in node_data:
                 self._append_fav_node(self.fav_tree.invisibleRootItem(), node)
-            self.fav_tree.expandAll()
+            
+            build_ms = (time.perf_counter() - t_build0) * 1000.0
+            print(f"[BOOT][PERF][FAV_REBUILD] total_nodes={total_nodes} build_ms={build_ms:.1f}")
+
+            # ✅ 최초 1회만 확장
+            #    노드가 많을 때 expandAll()은 체감 렉(수초)을 유발하므로 기본은 1단계까지만 펼친다.
+            if not getattr(self, "_fav_expanded_once", False):
+                try:
+                    if total_nodes <= 300:
+                        self.fav_tree.expandAll()
+                    else:
+                        self.fav_tree.expandToDepth(1)
+                except Exception:
+                    pass
+                self._fav_expanded_once = True
         finally:
+            self.fav_tree.setUpdatesEnabled(True)
             self.fav_tree.blockSignals(False)
+            self.fav_tree.update()
 
     def _save_favorites(self):
         """현재 활성화된 중앙 트리의 내용을 버퍼 트리의 해당 노드 데이터에 반영하고 저장합니다."""
@@ -2224,6 +2407,23 @@ class OneNoteScrollRemoconApp(QMainWindow):
             root = self.fav_tree.invisibleRootItem()
             for i in range(root.childCount()):
                 data.append(self._serialize_fav_item(root.child(i)))
+
+            # --- Undo/Redo: FavoritesTree 변경 스냅샷 기록 ---
+            try:
+                snap = json.dumps(data, sort_keys=True, ensure_ascii=False)
+                # ✅ IMPORTANT:
+                # 중앙 트리는 _load_favorites_into_center_tree()에서만 해시를 갱신한다는 가정이 있었는데,
+                # 실제로는 paste/cut/delete 등으로 트리를 "직접" 수정한다.
+                # 그러면 _last_center_payload_hash가 과거 상태(예: 7개)의 해시로 남아,
+                # Undo가 과거 스냅샷(7개)을 로드하려 할 때 "해시가 같다"로 판단되어 리빌드가 스킵된다.
+                # => Ctrl+Z가 안 먹는 것처럼 보이는 핵심 원인.
+                try:
+                    self._last_center_payload_hash = hashlib.md5(snap.encode("utf-8")).hexdigest()
+                except Exception:
+                    self._last_center_payload_hash = None
+                self._fav_record_snapshot(snap)
+            except Exception:
+                pass
 
             # 메모리 상의 active_buffer_node 데이터 업데이트
             if self.active_buffer_node is not None:
@@ -2428,7 +2628,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     # 현재 활성 버퍼 데이터 덮어쓰기
                     self.active_buffer_node["data"] = imported_data
                     # 트리 갱신 및 저장
-                    self._load_tree_from_data(imported_data)
+                    self._load_favorites_into_center_tree(imported_data)
                     self._save_favorites()
 
                 self._save_settings_to_file()
@@ -2563,19 +2763,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         payload = {"id": node.get("id", str(uuid.uuid4()))}
         if node_type in ("section", "notebook"):
             payload["target"] = node.get("target", {})
-            item.setIcon(
-                0,
-                self.style().standardIcon(
-                    QApplication.style().StandardPixmap.SP_FileIcon
-                ),
-            )
+            icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+            item.setIcon(0, icon)
         else:
-            item.setIcon(
-                0,
-                self.style().standardIcon(
-                    QApplication.style().StandardPixmap.SP_DirIcon
-                ),
-            )
+            icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
+            item.setIcon(0, icon)
         item.setData(0, ROLE_DATA, payload)
         item.setFlags(
             item.flags()
@@ -2588,6 +2780,76 @@ class OneNoteScrollRemoconApp(QMainWindow):
         for ch in node.get("children", []):
             self._append_fav_node(item, ch)
         return item
+
+    def _dbg_node_type_counts(self, nodes, tag=""):
+        try:
+            cnt = {}
+            if isinstance(nodes, list):
+                for n in nodes:
+                    if isinstance(n, dict):
+                        ty = n.get("type", "<?>")
+                        cnt[ty] = cnt.get(ty, 0) + 1
+            print(f"[DBG][NODE_TYPES]{'['+tag+']' if tag else ''} total={len(nodes) if isinstance(nodes, list) else 'NA'} {cnt}")
+        except Exception as e:
+            print(f"[DBG][NODE_TYPES][FAIL] {e}")
+
+    def _nodes_have_type(self, nodes, ty: str) -> bool:
+        if not isinstance(nodes, list):
+            return False
+        for n in nodes:
+            if isinstance(n, dict) and n.get("type") == ty:
+                return True
+        return False
+
+    def _count_nodes_recursive(self, nodes) -> int:
+        """node(list[dict])의 총 노드 수(자식 포함)를 빠르게 계산한다."""
+        if not isinstance(nodes, list):
+            return 0
+        total = 0
+        stack = list(nodes)
+        while stack:
+            n = stack.pop()
+            if not isinstance(n, dict):
+                continue
+            total += 1
+            ch = n.get("children")
+            if isinstance(ch, list) and ch:
+                stack.extend(ch)
+        return total
+
+    # ----------------- FavoritesTree Undo/Redo helpers -----------------
+    def _fav_reset_undo_context_from_data(self, data, *, reason: str = "") -> None:
+        """
+        2패널(모듈영역) Undo/Redo가 이상해지는 핵심 원인은
+        '버퍼 전환 후에도 이전 버퍼의 _fav_last_snapshot / undo stack이 유지'되어
+        Ctrl+Z가 다른 버퍼 스냅샷을 불러오는 케이스가 생기는 것입니다.
+
+        버퍼/그룹 선택으로 중앙 트리를 로드한 직후,
+        로드된 데이터 기준으로 undo/redo 컨텍스트를 초기화합니다.
+
+        - _fav_last_snapshot: 현재 상태(초기 스냅샷)
+        - _fav_undo_stack / _fav_redo_stack: 비움
+
+        이렇게 해야 첫 변경 저장 시 "초기 스냅샷"이 undo에 들어가며,
+        Ctrl+Z가 현재 버퍼 내부에서만 정상 동작합니다.
+        """
+        try:
+            data_list = data if isinstance(data, list) else []
+            snap = json.dumps(data_list, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            snap = ""
+        try:
+            self._fav_undo_stack.clear()
+            self._fav_redo_stack.clear()
+        except Exception:
+            self._fav_undo_stack = []
+            self._fav_redo_stack = []
+        self._fav_last_snapshot = snap
+        try:
+            tag = f" reason={reason}" if reason else ""
+            print(f"[DBG][FAV][UNDO_CTX] reset{tag} undo=0 redo=0 snap_len={len(snap)}")
+        except Exception:
+            pass
 
     # ----------------- 15-3. 버퍼 트리 이벤트 핸들러 -----------------
     def _on_buffer_tree_item_clicked(self, item, col):
@@ -2608,19 +2870,45 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.active_buffer_item = item
             self.settings["active_buffer_id"] = self.active_buffer_id
             
-            # ✅ 종합 버퍼: 전자필기장(노트북) 저장용
-            if payload.get("id") == AGG_BUFFER_ID:
-                self._load_tree_from_data(payload.get("data", []))
-                self.btn_add_section_current.setEnabled(False)
-                self.btn_add_group.setEnabled(True)  # 원하면 그룹도 허용
-                if hasattr(self, "btn_register_all_notebooks"):
-                    self.btn_register_all_notebooks.setEnabled(True)
-            else:
-                self._load_tree_from_data(payload.get("data", []))
-                self.btn_add_section_current.setEnabled(True)
-                if hasattr(self, "btn_register_all_notebooks"):
-                    self.btn_register_all_notebooks.setEnabled(False)
-                self.btn_add_group.setEnabled(True)
+            self.setUpdatesEnabled(False)
+            try:
+                # ✅ 종합 버퍼: 전자필기장(노트북) 저장용
+                if payload.get("id") == AGG_BUFFER_ID:
+                    saved = payload.get("data", []) or []
+                    self._dbg_node_type_counts(saved, "AGG_SAVED")
+
+                    # 1) 종합 버퍼에 notebook 저장이 있으면: 그걸 그대로 보여준다 (절대 덮어쓰기 금지)
+                    if self._nodes_have_type(saved, "notebook") or self._nodes_have_type(saved, "group"):
+                        print(f"[DBG][AGG] load SAVED data (len={len(saved)})")
+                        data_to_load = saved
+                        self._load_favorites_into_center_tree(data_to_load)
+                    else:
+                        # 2) 저장된게 없을 때만: 기존 섹션 종합 계산 fallback
+                        agg_data = self._build_aggregate_buffer()
+                        self._dbg_node_type_counts(agg_data, "AGG_BUILT")
+                        print(f"[DBG][AGG] load BUILT aggregate (len={len(agg_data)})")
+                        data_to_load = agg_data
+                        self._load_favorites_into_center_tree(data_to_load)
+
+                    # ✅ 버퍼 전환 직후: Undo/Redo 컨텍스트를 현재 버퍼 데이터로 리셋
+                    self._fav_reset_undo_context_from_data(data_to_load, reason="buffer_switch:AGG")
+                    self.btn_add_section_current.setEnabled(False)
+                    self.btn_add_group.setEnabled(True)  # 원하면 그룹도 허용
+                    if hasattr(self, "btn_register_all_notebooks"):
+                        self.btn_register_all_notebooks.setEnabled(True)
+                else:
+                    data_to_load = payload.get("data", []) or []
+                    self._load_favorites_into_center_tree(data_to_load)
+
+                    # ✅ 버퍼 전환 직후: Undo/Redo 컨텍스트를 현재 버퍼 데이터로 리셋
+                    self._fav_reset_undo_context_from_data(data_to_load, reason="buffer_switch")
+                    self.btn_add_section_current.setEnabled(True)
+                    if hasattr(self, "btn_register_all_notebooks"):
+                        self.btn_register_all_notebooks.setEnabled(False)
+                    self.btn_add_group.setEnabled(True)
+            finally:
+                self.setUpdatesEnabled(True)
+                self.update()
         else:
             # 그룹 선택 시
             # 현재 버퍼 내용이 남아있을 수 있으므로 먼저 저장
@@ -2630,10 +2918,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.btn_register_all_notebooks.setEnabled(False)
             self.btn_add_section_current.setEnabled(False)
             self.btn_add_group.setEnabled(False)
-            self.active_buffer_node = None
             self.active_buffer_id = None
             self.active_buffer_item = None
-            self._load_tree_from_data([])
+            self._load_favorites_into_center_tree([])
+
+            # ✅ 버퍼가 아닌(그룹/빈) 상태에서도 Undo 컨텍스트를 리셋 (이전 버퍼 스냅샷 혼입 방지)
+            self._fav_reset_undo_context_from_data([], reason="buffer_switch:group_or_none")
         self._update_buffer_move_button_state()
 
     def _on_buffer_tree_selection_changed(self):
@@ -2902,10 +3192,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             )
             return
 
-        parent = self._current_fav_item()
-        if parent and parent.data(0, ROLE_TYPE) == "section":
-            parent = parent.parent()
-        parent = parent or self.fav_tree.invisibleRootItem()
+        # ✅ 붙여넣기 대상 정규화: notebook/section 선택 상태에서 붙여넣으면
+        #    항목(노트북/섹션) 안에 항목이 들어가 트리가 꼬입니다.
+        #    따라서 선택이 notebook/section이면 자동으로 group 레벨로 올려 붙여넣습니다.
+        parent = self._normalize_fav_paste_parent(self._current_fav_item())
 
         def _deep_copy_node(node: Dict[str, Any]) -> Dict[str, Any]:
             new_node = node.copy()
@@ -2921,18 +3211,20 @@ class OneNoteScrollRemoconApp(QMainWindow):
             nodes = self.clipboard_data
             if isinstance(nodes, dict):
                 nodes = [nodes]
+            if not isinstance(nodes, list):
+                nodes = []
             new_items = []
-            for node in nodes:
-                copied_node = _deep_copy_node(node)
-                new_item = self._append_fav_node(parent, copied_node)
-                new_items.append(new_item)
 
-            if new_items:
-                self.fav_tree.setCurrentItem(new_items[-1])
-            self._save_favorites()
-            self.connection_status_label.setText(
-                f"{len(new_items)}개 항목 붙여넣기 완료."
-            )  # 상태바 알림 사용
+            # ✅ 다중 붙여넣기를 '한 번의 Undo'로 묶기
+            with self._fav_bulk_edit(reason=f"paste:{len(nodes)}"):
+                for node in nodes:
+                    copied_node = _deep_copy_node(node)
+                    new_item = self._append_fav_node(parent, copied_node)
+                    new_items.append(new_item)
+                if new_items:
+                    self.fav_tree.setCurrentItem(new_items[-1])
+
+            self.connection_status_label.setText(f"{len(new_items)}개 항목 붙여넣기 완료.")
 
         except Exception as e:
             QMessageBox.critical(
@@ -2961,6 +3253,250 @@ class OneNoteScrollRemoconApp(QMainWindow):
             if not skip:
                 top_items.append(it)
         return top_items
+
+    def _normalize_fav_paste_parent(self, item: Optional[QTreeWidgetItem]) -> QTreeWidgetItem:
+        """
+        붙여넣기 대상 정규화:
+        - group 선택: 그대로 group 안에 붙여넣기
+        - notebook/section 선택: 자동으로 상위 group 레벨에 붙여넣기 (항목-항목 중첩 방지)
+        - 그 외/None: 루트
+        """
+        root = self.fav_tree.invisibleRootItem()
+        if not item:
+            return root
+        try:
+            t = item.data(0, ROLE_TYPE)
+        except Exception:
+            return root
+        if t == "group":
+            return item
+        # notebook/section 등은 group까지 올라간다
+        p = item
+        while p is not None:
+            try:
+                if p.data(0, ROLE_TYPE) == "group":
+                    return p
+            except Exception:
+                break
+            p = p.parent()
+        return root
+
+    def _fav_capture_center_tree_snapshot(self) -> str:
+        """
+        현재 중앙 FavoritesTree의 상태를 JSON 스냅샷으로 캡쳐한다.
+        Undo 그룹(base/final)을 _fav_last_snapshot에 의존하면
+        버퍼 전환/리빌드 스킵/hash 최적화/중간 save 타이밍에 의해 base==final로 잡혀
+        Ctrl+Z가 '안 먹는' 상태가 생길 수 있어서, 트리에서 직접 캡쳐로 고정한다.
+        """
+        try:
+            data = []
+            root = self.fav_tree.invisibleRootItem()
+            for i in range(root.childCount()):
+                data.append(self._serialize_fav_item(root.child(i)))
+            return json.dumps(data, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            return "[]"
+
+    def _fav_record_snapshot(self, new_snapshot: str):
+        """FavoritesTree 변경사항을 Undo/Redo 스택에 기록합니다."""
+        # (A) 로드/undo apply 중에는 기록하지 않는다.
+        if getattr(self, "_fav_undo_suspended", False):
+            self._fav_last_snapshot = new_snapshot
+            return
+
+        # (B) 최초 스냅샷
+        if self._fav_last_snapshot is None:
+            self._fav_last_snapshot = new_snapshot
+            return
+
+        # (C) 동일하면 skip
+        if new_snapshot == self._fav_last_snapshot:
+            return
+
+        # (D) 다중 붙여넣기/다중 삭제 같은 "벌크 변경"에서는
+        #     itemChanged가 여러 번 발생하며 _save_favorites()가 연속 호출된다.
+        #     이때 매번 undo 스택에 쌓이면 Ctrl+Z가 "한 개씩" 되돌아가서 답답해진다.
+        #     => 트랜잭션(depth>0)에서는 _fav_last_snapshot만 갱신하고,
+        #        최종 커밋은 _fav_end_undo_group()에서 1회만 수행한다.
+        if getattr(self, "_fav_undo_batch_depth", 0) > 0:
+            self._fav_last_snapshot = new_snapshot
+            return
+
+        # (E) 일반 단일 변경
+        self._fav_undo_stack.append(self._fav_last_snapshot)
+        if len(self._fav_undo_stack) > self._fav_undo_max:
+            self._fav_undo_stack = self._fav_undo_stack[-self._fav_undo_max:]
+        self._fav_redo_stack.clear()
+        self._fav_last_snapshot = new_snapshot
+
+    def _fav_begin_undo_group(self, *, reason: str = "") -> None:
+        """여러 변경을 한 번의 Undo step으로 묶기 시작."""
+        if self._fav_undo_batch_depth == 0:
+            # ✅ base는 _fav_last_snapshot 대신 '현재 트리'에서 직접 캡쳐 (base==final 문제 원천 차단)
+            base = self._fav_capture_center_tree_snapshot()
+            self._fav_undo_batch_base_snapshot = base
+            self._fav_undo_batch_reason = reason or ""
+            # base를 last_snapshot에도 맞춰둬야 이후 비교가 흔들리지 않는다.
+            self._fav_last_snapshot = base
+        self._fav_undo_batch_depth += 1
+        try:
+            if reason:
+                print(f"[DBG][FAV][UNDO_GRP] begin depth={self._fav_undo_batch_depth} reason={reason} base_len={len(self._fav_undo_batch_base_snapshot or '')}")
+        except Exception:
+            pass
+
+    def _fav_end_undo_group(self) -> None:
+        """Undo group 종료: 변경이 있었으면 undo 스택에 1회만 커밋."""
+        if self._fav_undo_batch_depth <= 0:
+            return
+        self._fav_undo_batch_depth -= 1
+        if self._fav_undo_batch_depth != 0:
+            return
+
+        base = self._fav_undo_batch_base_snapshot or ""
+        # ✅ final도 last_snapshot 의존 X: 트리에서 직접 캡쳐
+        final = self._fav_capture_center_tree_snapshot()
+        # last_snapshot을 final로 동기화 (Undo/Redo 비교 흔들림 방지)
+        self._fav_last_snapshot = final
+
+        changed = (final != base)
+        if changed:
+            self._fav_undo_stack.append(base)
+            if len(self._fav_undo_stack) > self._fav_undo_max:
+                self._fav_undo_stack = self._fav_undo_stack[-self._fav_undo_max:]
+            self._fav_redo_stack.clear()
+
+        try:
+            r = self._fav_undo_batch_reason
+            print(
+                f"[DBG][FAV][UNDO_GRP] end changed={int(changed)} undo={len(self._fav_undo_stack)} redo={len(self._fav_redo_stack)} reason={r} base_len={len(base)} final_len={len(final)}"
+            )
+        except Exception:
+            pass
+
+        self._fav_undo_batch_base_snapshot = None
+        self._fav_undo_batch_reason = ""
+
+    @contextmanager
+    def _fav_bulk_edit(self, *, reason: str = ""):
+        """
+        FavoritesTree를 벌크로 수정할 때 사용.
+        - Qt itemChanged 연쇄 save를 막기 위해 fav_tree signals를 잠깐 막고
+        - Undo/Redo는 begin/end로 한 번의 step으로 묶는다.
+        """
+        self._fav_begin_undo_group(reason=reason)
+        self.fav_tree.blockSignals(True)
+        self.fav_tree.setUpdatesEnabled(False)
+        try:
+            yield
+            # 벌크 작업이 끝나면 딱 1번만 저장(=스냅샷 갱신)
+            try:
+                self._save_favorites()
+            except Exception:
+                pass
+        finally:
+            self.fav_tree.setUpdatesEnabled(True)
+            self.fav_tree.blockSignals(False)
+            try:
+                self.fav_tree.update()
+            except Exception:
+                pass
+            self._fav_end_undo_group()
+
+    def _fav_apply_snapshot(self, snapshot: str):
+        """스냅샷(JSON 문자열)을 중앙 즐겨찾기 트리에 적용합니다."""
+        try:
+            data = json.loads(snapshot) if snapshot else []
+            if not isinstance(data, list):
+                data = []
+        except Exception:
+            print("[ERR][FAV][UNDO] invalid snapshot")
+            traceback.print_exc()
+            return
+        self._fav_undo_suspended = True
+        try:
+            # ✅ Undo/Redo는 무조건 리빌드되어야 한다.
+            # 해시 스킵 최적화가 undo 적용을 막는 케이스를 원천 차단.
+            self._last_center_payload_hash = None
+            self._load_favorites_into_center_tree(data)
+            self._save_favorites()
+        finally:
+            self._fav_undo_suspended = False
+
+    def _undo_favorite_tree(self):
+        try:
+            print(f"[DBG][FAV][UNDO] called undo={len(self._fav_undo_stack)} redo={len(self._fav_redo_stack)} last_len={len(self._fav_last_snapshot or '')}")
+        except Exception:
+            pass
+        if not self._fav_undo_stack:
+            try:
+                self.connection_status_label.setText("되돌릴 작업이 없습니다.")
+            except Exception:
+                pass
+            return
+        cur = self._fav_last_snapshot
+        if cur is None:
+            try:
+                cur = json.dumps(self.active_buffer_node.get("data", []), sort_keys=True, ensure_ascii=False)
+            except Exception:
+                cur = ""
+        self._fav_redo_stack.append(cur or "")
+        snap = self._fav_undo_stack.pop()
+        self._fav_apply_snapshot(snap)
+        try:
+            self.connection_status_label.setText("되돌리기 완료 (Ctrl+Z)")
+        except Exception:
+            pass
+
+    def _redo_favorite_tree(self):
+        try:
+            print(f"[DBG][FAV][REDO] called undo={len(self._fav_undo_stack)} redo={len(self._fav_redo_stack)} last_len={len(self._fav_last_snapshot or '')}")
+        except Exception:
+            pass
+        if not self._fav_redo_stack:
+            try:
+                self.connection_status_label.setText("다시 실행할 작업이 없습니다.")
+            except Exception:
+                pass
+            return
+        cur = self._fav_last_snapshot
+        if cur is None:
+            try:
+                cur = json.dumps(self.active_buffer_node.get("data", []), sort_keys=True, ensure_ascii=False)
+            except Exception:
+                cur = ""
+        self._fav_undo_stack.append(cur or "")
+        snap = self._fav_redo_stack.pop()
+        self._fav_apply_snapshot(snap)
+        try:
+            self.connection_status_label.setText("다시 실행 완료 (Ctrl+Shift+Z)")
+        except Exception:
+            pass
+
+    def _cut_favorite_item(self):
+        """선택 항목 잘라내기(Ctrl+X): 복사 + 삭제."""
+        items = self._selected_fav_items_top()
+        if not items:
+            cur = self._current_fav_item()
+            if cur:
+                items = [cur]
+        if not items:
+            return
+        payload_nodes = [self._serialize_fav_item(it) for it in items]
+        self.clipboard_data = payload_nodes[0] if len(payload_nodes) == 1 else payload_nodes
+
+        # ✅ 다중 잘라내기를 '한 번의 Undo'로 묶기
+        with self._fav_bulk_edit(reason=f"cut:{len(items)}"):
+            # 실제 삭제 (부모 기준으로 takeChild)
+            for it in items:
+                parent = it.parent() or self.fav_tree.invisibleRootItem()
+                idx = parent.indexOfChild(it)
+                if idx >= 0:
+                    parent.takeChild(idx)
+        try:
+            self.connection_status_label.setText(f"{len(items)}개 항목 잘라내기 완료.")
+        except Exception:
+            pass
 
     # ----------------- 16. 즐겨찾기 조작 -----------------
     def _current_fav_item(self) -> Optional[QTreeWidgetItem]:
@@ -3269,13 +3805,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 return d
             targets.sort(key=_depth, reverse=True)
 
-            for it in targets:
-                parent = it.parent() or self.fav_tree.invisibleRootItem()
-                idx = parent.indexOfChild(it)
-                print(f"[DBG][FAV][DEL] remove name='{it.text(0)}' depth={_depth(it)} idx={idx}")
-                parent.takeChild(idx)
-
-            self._save_favorites()
+            # ✅ 다중 삭제를 '한 번의 Undo'로 묶기
+            with self._fav_bulk_edit(reason=f"delete:{len(targets)}"):
+                for it in targets:
+                    parent = it.parent() or self.fav_tree.invisibleRootItem()
+                    idx = parent.indexOfChild(it)
+                    print(f"[DBG][FAV][DEL] remove name='{it.text(0)}' depth={_depth(it)} idx={idx}")
+                    parent.takeChild(idx)
             print("[DBG][FAV][DEL] DONE multi")
         except Exception:
             print("[ERR][FAV][DEL] exception")

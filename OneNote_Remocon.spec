@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['main.py'],
+    ['C:\\Users\\dl971\\Desktop\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/app_icon.ico', 'assets'), ('assets/app_icon.png', 'assets')],
+    datas=[('C:\\Users\\dl971\\Desktop\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.ico', 'assets'), ('C:\\Users\\dl971\\Desktop\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.png', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,7 +32,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets\\app_icon.ico'],
+    icon=['C:\\Users\\dl971\\Desktop\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.ico'],
 )
 coll = COLLECT(
     exe,
