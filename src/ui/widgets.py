@@ -5,8 +5,8 @@
 애플리케이션에서 사용하는 커스텀 위젯들을 정의합니다.
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QAbstractItemView
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtWidgets import QTreeWidget, QAbstractItemView, QLineEdit, QStyledItemDelegate
+from PyQt6.QtCore import pyqtSignal, Qt, QSize
 import traceback
 from src.constants import ROLE_TYPE
 from typing import Optional
@@ -173,3 +173,61 @@ class BufferTree(FavoritesTree):
     def __init__(self, parent=None):
         super().__init__(parent)
         # 기본적인 설정은 FavoritesTree와 동일
+
+
+class TreeNameEditDelegate(QStyledItemDelegate):
+    """
+    트리 이름 변경용 인라인 에디터 높이를 안정적으로 맞춰주는 델리게이트.
+
+    전역 QLineEdit padding이 트리 인라인 편집기에도 그대로 적용되면
+    기본 셀 높이보다 편집기가 살짝 커져 텍스트 상/하단이 미세하게 잘릴 수 있다.
+    여기서는 이름 변경 에디터에만 조금 더 타이트한 내부 여백과 최소 높이를 적용해
+    프로젝트/모듈 트리의 rename UX를 자연스럽게 맞춘다.
+    """
+
+    _HORIZONTAL_TEXT_MARGIN = 8
+    _VERTICAL_TEXT_MARGIN = 2
+    _EDITOR_EXTRA_HEIGHT = 2
+
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        editor.setObjectName("TreeItemRenameEditor")
+        editor.setFrame(False)
+        editor.setTextMargins(
+            self._HORIZONTAL_TEXT_MARGIN,
+            self._VERTICAL_TEXT_MARGIN,
+            self._HORIZONTAL_TEXT_MARGIN,
+            self._VERTICAL_TEXT_MARGIN,
+        )
+
+        fm = editor.fontMetrics()
+        min_height = fm.height() + (self._VERTICAL_TEXT_MARGIN * 2) + self._EDITOR_EXTRA_HEIGHT
+        editor.setMinimumHeight(min_height)
+        editor.setStyleSheet(
+            """
+            QLineEdit#TreeItemRenameEditor {
+                padding: 0px;
+                border: 1px solid #0078D7;
+                border-radius: 4px;
+                background: palette(base);
+            }
+            """
+        )
+        return editor
+
+    def updateEditorGeometry(self, editor, option, index):
+        rect = option.rect.adjusted(0, -1, 0, 1)
+        editor_height = max(rect.height(), editor.minimumHeight())
+
+        if editor_height > rect.height():
+            extra = editor_height - rect.height()
+            top_extra = extra // 2
+            bottom_extra = extra - top_extra
+            rect = rect.adjusted(0, -top_extra, 0, bottom_extra)
+
+        editor.setGeometry(rect)
+
+    def sizeHint(self, option, index):
+        base = super().sizeHint(option, index)
+        min_height = option.fontMetrics.height() + (self._VERTICAL_TEXT_MARGIN * 2) + self._EDITOR_EXTRA_HEIGHT
+        return QSize(base.width(), max(base.height(), min_height))

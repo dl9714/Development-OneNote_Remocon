@@ -51,7 +51,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QIcon, QAction
 
 # widgets 모듈에서 커스텀 트리 위젯 임포트
-from src.ui.widgets import FavoritesTree, BufferTree
+from src.ui.widgets import FavoritesTree, BufferTree, TreeNameEditDelegate
 
 # ----------------- 0. 전역 상수 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
@@ -1551,6 +1551,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         # QListWidget -> BufferTree로 교체
         self.buffer_tree = BufferTree()
+        self._tree_name_edit_delegate = TreeNameEditDelegate(self)
+        self.buffer_tree.setItemDelegate(self._tree_name_edit_delegate)
         # PERF: 큰 트리에서 초기 렌더링 성능 개선
         try:
             self.buffer_tree.setUniformRowHeights(True)
@@ -1639,6 +1641,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         fav_layout.addLayout(tb2_layout)
 
         self.fav_tree = FavoritesTree()
+        self.fav_tree.setItemDelegate(self._tree_name_edit_delegate)
         # PERF: 큰 트리에서 초기 렌더링 성능 개선
         try:
             self.fav_tree.setUniformRowHeights(True)
@@ -2289,9 +2292,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._append_buffer_node(self.buffer_tree.invisibleRootItem(), node)
 
             try:
-                self.buffer_tree.expandToDepth(1)
-            except Exception:
+                # 시작 시 프로젝트 영역은 항상 전체 펼침 상태로 보여준다.
+                # 기존 expandToDepth(1)은 그룹 아래 하위 폴더가 접힌 채 남아서
+                # 사용자가 앱을 켤 때마다 다시 열어야 했다.
                 self.buffer_tree.expandAll()
+            except Exception:
+                pass
             self.buffer_tree.blockSignals(False)
 
             # 활성 버퍼 복원

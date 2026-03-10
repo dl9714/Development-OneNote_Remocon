@@ -63,13 +63,13 @@
       }
     },
     "_default": {
-      "saved_at": 1769535315.5894117,
+      "saved_at": 1773159211.0891368,
       "state": {
         "single": {
           "edit": {
             "current_file": null,
             "edit_content": "",
-            "cmb_selected": ""
+            "cmb_selected": "Code_Changes_1_요청완료.txt"
           },
           "new": {
             "current_file": null,
@@ -87,7 +87,7 @@
             "edit": {
               "current_file": null,
               "edit_content": "",
-              "cmb_selected": ""
+              "cmb_selected": "Code_Changes_1_요청완료.txt"
             },
             "new": {
               "current_file": null,
@@ -104,7 +104,7 @@
             "edit": {
               "current_file": null,
               "edit_content": "",
-              "cmb_selected": ""
+              "cmb_selected": "Code_Changes_1_요청완료.txt"
             },
             "new": {
               "current_file": null,
@@ -127,6 +127,6 @@
   },
   "version": 2,
   "active_buffer": "_default",
-  "saved_at": 1769539791.125601,
-  "project_key": "c:\\users\\dl971\\desktop\\project-py\\py-util-development\\development-onenote_remocon"
+  "saved_at": 1773159215.620969,
+  "project_key": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
 }
