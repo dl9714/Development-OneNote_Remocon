@@ -1,7 +1,7 @@
 {
   "window_geometry": {
-    "x": 303,
-    "y": 142,
+    "x": 122,
+    "y": 124,
     "width": 1157,
     "height": 785
   },
@@ -10,10 +10,10 @@
     "left": "AAAA/wAAAAEAAAACAAABLwAAAQUA/////wEAAAABAA=="
   },
   "connection_signature": {
-    "handle": 8328460,
-    "pid": 56340,
+    "handle": 1052176,
+    "pid": 15012,
     "class_name": "Framework::CFrame",
-    "title": "소비자사업 제작연성-시장연성. - OneNote",
+    "title": "업무 관제탑_exe. - OneNote",
     "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
     "exe_name": "onenote.exe"
   },
@@ -2440,40 +2440,6 @@
                 {
                   "children": [
                     {
-                      "children": [
-                        {
-                          "id": "1c314710-bb93-4c6b-92a4-adfe6f1c9eec",
-                          "name": "생산성도구-도구-클립보드",
-                          "target": {
-                            "section_text": "생산성도구-도구-클립보드",
-                            "sig": {
-                              "class_name": "Framework::CFrame",
-                              "exe_name": "onenote.exe",
-                              "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                              "handle": 9899582,
-                              "pid": 25868,
-                              "title": "제목 없음 - OneNote"
-                            }
-                          },
-                          "type": "section"
-                        },
-                        {
-                          "id": "de2726ff-71c4-4285-b6a2-92949947a9aa",
-                          "name": "생산성도구-도구-클립보드",
-                          "target": {
-                            "section_text": "생산성도구-도구-클립보드",
-                            "sig": {
-                              "class_name": "Framework::CFrame",
-                              "exe_name": "onenote.exe",
-                              "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                              "handle": 9899582,
-                              "pid": 25868,
-                              "title": "제목 없음 - OneNote"
-                            }
-                          },
-                          "type": "section"
-                        }
-                      ],
                       "id": "63d8bb2a-41e9-458d-8ddc-ad2453afc93a",
                       "name": "생산성도구-업무목표-미니프로젝트",
                       "target": {
@@ -2536,6 +2502,22 @@
                         }
                       },
                       "type": "notebook"
+                    },
+                    {
+                      "id": "1c314710-bb93-4c6b-92a4-adfe6f1c9eec",
+                      "name": "생산성도구-도구-클립보드",
+                      "target": {
+                        "section_text": "생산성도구-도구-클립보드",
+                        "sig": {
+                          "class_name": "Framework::CFrame",
+                          "exe_name": "onenote.exe",
+                          "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                          "handle": 9899582,
+                          "pid": 25868,
+                          "title": "제목 없음 - OneNote"
+                        }
+                      },
+                      "type": "section"
                     }
                   ],
                   "id": "ef392abf-99dd-460e-bd59-6ecaae3e9c4c",
@@ -3969,6 +3951,8 @@
       "children": []
     }
   ],
-  "active_buffer_id": "d8ae884e-c149-494c-bca3-2c3a99416c76",
+  "active_buffer_id": "bc8bae2d-b105-4331-867c-b5cd0bc25710",
+  "debug_hotpaths": false,
+  "debug_perf_logs": false,
   "last_backup_dir": "C:/Users/dl971/OneDrive/7.코딩/만든 프로그램 exe/py-Util-Development/OneNote_Remocon/OneNote_Remocon_아카이빙"
 }
