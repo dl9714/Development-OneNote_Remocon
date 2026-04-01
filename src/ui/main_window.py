@@ -8,11 +8,19 @@ import traceback
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 import base64
 import hashlib
 import copy
 import unicodedata
+import subprocess
+import re
+from urllib.parse import urlparse, parse_qs
+
+try:
+    import winreg
+except ImportError:  # pragma: no cover - Windows 전용
+    winreg = None
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -72,6 +80,61 @@ AGG_BUFFER_NAME = "종합"
 # OneNote: 전체 전자필기장 자동등록 그룹
 AUTO_ONENOTE_GROUP_ID = "group-onenote-auto"
 AUTO_ONENOTE_GROUP_NAME = "OneNote(자동등록)"
+
+# OneNote: 백스테이지(열기 화면) 자동화 텍스트/필터
+ONENOTE_OPEN_NOTEBOOK_VIEW_TEXTS = (
+    "전자 필기장 열기",
+    "전자필기장 열기",
+    "open notebook",
+)
+ONENOTE_FILE_MENU_TEXTS = ("파일", "file")
+ONENOTE_OPEN_MENU_TEXTS = ("열기", "open")
+ONENOTE_RECENT_MENU_TEXTS = ("최근 항목", "recent")
+ONENOTE_SEARCH_TEXTS = ("검색", "search")
+ONENOTE_NOTEBOOK_ITEM_CONTROL_TYPES = (
+    "ListItem",
+    "TreeItem",
+    "DataItem",
+    "Button",
+    "Hyperlink",
+    "Custom",
+)
+ONENOTE_NOTEBOOK_SKIP_EXACT_TEXTS = {
+    "정보",
+    "새로 만들기",
+    "열기",
+    "복사본 저장",
+    "인쇄",
+    "공유",
+    "내보내기",
+    "보내기",
+    "최근 항목",
+    "검색",
+    "개인",
+    "폴더",
+    "info",
+    "new",
+    "open",
+    "save a copy",
+    "print",
+    "share",
+    "export",
+    "send",
+    "recent",
+    "search",
+    "personal",
+    "folder",
+}
+ONENOTE_NOTEBOOK_SKIP_CONTAINS = (
+    "shared with",
+    "just me",
+    "전자 필기장 관리",
+    "manage notebooks",
+    "onedrive(",
+    "onedrive (",
+    "switch account",
+    "계정 전환",
+)
 
 # ----------------- 0.05 정렬 헬퍼 -----------------
 def _name_sort_key(text: Any) -> str:
@@ -805,6 +868,11 @@ def _normalize_text(s: Optional[str]) -> str:
     return " ".join(((s or "").strip().split())).lower()
 
 
+def _normalize_notebook_name_key(s: Optional[str]) -> str:
+    text = unicodedata.normalize("NFKC", s or "").casefold()
+    return re.sub(r"[\s\-_]+", "", text)
+
+
 def select_section_by_text(
     onenote_window, text: str, tree_control: Optional[object] = None
 ) -> bool:
@@ -918,6 +986,680 @@ def select_notebook_by_text(
     except Exception as e:
         print(f"[ERROR] 전자필기장 선택 실패: {e}")
         return False
+
+
+def _safe_window_text(ctrl) -> str:
+    try:
+        return ctrl.window_text() or ""
+    except Exception:
+        return ""
+
+
+def _safe_control_type(ctrl) -> str:
+    try:
+        return ctrl.element_info.control_type or ""
+    except Exception:
+        return ""
+
+
+def _safe_rectangle(ctrl):
+    try:
+        return ctrl.rectangle()
+    except Exception:
+        return None
+
+
+def _safe_parent(ctrl):
+    try:
+        return ctrl.parent()
+    except Exception:
+        return None
+
+
+def _find_scrollable_ancestor(ctrl, max_depth: int = 8):
+    current = ctrl
+    fallback = None
+    for _ in range(max(1, max_depth)):
+        current = _safe_parent(current)
+        if current is None:
+            break
+        fallback = current
+        try:
+            if getattr(current, "iface_scroll", None) is not None:
+                return current
+        except Exception:
+            pass
+        if _safe_control_type(current) in ("List", "Tree"):
+            return current
+    return fallback
+
+
+def _wait_until(predicate, timeout: float = 1.5, interval: float = 0.05):
+    deadline = time.monotonic() + max(0.05, timeout)
+    while time.monotonic() < deadline:
+        try:
+            value = predicate()
+            if value:
+                return value
+        except Exception:
+            pass
+        time.sleep(interval)
+    return None
+
+
+def _iter_descendants_by_types(root, control_types):
+    for control_type in control_types:
+        try:
+            for item in root.descendants(control_type=control_type):
+                yield item
+        except Exception:
+            continue
+
+
+def _extract_primary_accessible_text(text: Any) -> str:
+    raw = "" if text is None else str(text)
+    raw = raw.replace("\r", "\n")
+    parts = [part.strip() for part in raw.split("\n") if part.strip()]
+    if not parts:
+        return raw.strip()
+    for part in parts:
+        norm = _normalize_text(part)
+        if norm in ("shared with: just me", "shared with just me", "just me"):
+            continue
+        return part
+    return parts[0]
+
+
+def _find_descendant_by_text(root, texts, control_types=None):
+    targets = {_normalize_text(t) for t in (texts or []) if t}
+    if not targets:
+        return None
+
+    search_types = control_types or (
+        "Text",
+        "Button",
+        "MenuItem",
+        "ListItem",
+        "TreeItem",
+        "Hyperlink",
+        "Group",
+        "Pane",
+        "Custom",
+    )
+    for item in _iter_descendants_by_types(root, search_types):
+        txt = _normalize_text(_safe_window_text(item))
+        if not txt:
+            continue
+        if txt in targets:
+            return item
+        for target in targets:
+            if target and (target in txt or txt in target):
+                return item
+    return None
+
+
+def _activate_ui_element(ctrl) -> bool:
+    try:
+        iface_invoke = getattr(ctrl, "iface_invoke", None)
+        if iface_invoke is not None:
+            iface_invoke.Invoke()
+            return True
+    except Exception:
+        pass
+
+    try:
+        if hasattr(ctrl, "double_click_input"):
+            ctrl.double_click_input()
+            return True
+    except Exception:
+        pass
+
+    try:
+        if hasattr(ctrl, "click_input"):
+            ctrl.click_input()
+            return True
+    except Exception:
+        pass
+
+    try:
+        if hasattr(ctrl, "select"):
+            ctrl.select()
+            keyboard.send_keys("{ENTER}")
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _is_onenote_open_notebook_view(onenote_window) -> bool:
+    title = _find_descendant_by_text(
+        onenote_window,
+        ONENOTE_OPEN_NOTEBOOK_VIEW_TEXTS,
+        control_types=("Text", "Button", "Pane", "Group", "Custom"),
+    )
+    if title:
+        return True
+
+    recent = _find_descendant_by_text(
+        onenote_window,
+        ONENOTE_RECENT_MENU_TEXTS,
+        control_types=("Button", "ListItem", "Text", "Hyperlink"),
+    )
+    search = _find_descendant_by_text(
+        onenote_window,
+        ONENOTE_SEARCH_TEXTS,
+        control_types=("Edit", "Button", "Text", "Custom"),
+    )
+    return bool(recent and search)
+
+
+def _ensure_onenote_open_notebook_view(onenote_window) -> bool:
+    ensure_pywinauto()
+    if not _pwa_ready:
+        return False
+
+    try:
+        onenote_window.set_focus()
+    except Exception:
+        pass
+
+    if _is_onenote_open_notebook_view(onenote_window):
+        return True
+
+    try:
+        keyboard.send_keys("^o")
+    except Exception:
+        pass
+    if _wait_until(lambda: _is_onenote_open_notebook_view(onenote_window), timeout=2.5, interval=0.1):
+        return True
+
+    file_item = _find_descendant_by_text(
+        onenote_window,
+        ONENOTE_FILE_MENU_TEXTS,
+        control_types=("Button", "MenuItem", "TabItem", "Hyperlink", "Text"),
+    )
+    if file_item and _activate_ui_element(file_item):
+        time.sleep(0.25)
+        open_item = _find_descendant_by_text(
+            onenote_window,
+            ONENOTE_OPEN_MENU_TEXTS,
+            control_types=("Button", "MenuItem", "ListItem", "Hyperlink", "Text"),
+        )
+        if open_item:
+            _activate_ui_element(open_item)
+            if _wait_until(lambda: _is_onenote_open_notebook_view(onenote_window), timeout=2.0, interval=0.1):
+                return True
+
+    try:
+        keyboard.send_keys("^o")
+    except Exception:
+        pass
+    return bool(
+        _wait_until(
+            lambda: _is_onenote_open_notebook_view(onenote_window),
+            timeout=1.5,
+            interval=0.1,
+        )
+    )
+
+
+def _collect_open_notebook_candidates(onenote_window):
+    ensure_pywinauto()
+    if not _pwa_ready:
+        return [], None
+
+    win_rect = _safe_rectangle(onenote_window)
+    if not win_rect:
+        return [], None
+
+    left_min = win_rect.left + 60
+    left_max = win_rect.left + int((win_rect.right - win_rect.left) * 0.85)
+    top_min = win_rect.top + 80
+    bottom_max = min(
+        win_rect.bottom - 10,
+        win_rect.top + int((win_rect.bottom - win_rect.top) * 0.72),
+    )
+
+    raw_candidates = []
+    seen = set()
+    for item in _iter_descendants_by_types(onenote_window, ONENOTE_NOTEBOOK_ITEM_CONTROL_TYPES):
+        raw_text = _safe_window_text(item)
+        primary_text = _extract_primary_accessible_text(raw_text)
+        norm_text = _normalize_text(primary_text)
+        if not norm_text:
+            continue
+        if norm_text in ONENOTE_NOTEBOOK_SKIP_EXACT_TEXTS:
+            continue
+        if any(skip in norm_text for skip in ONENOTE_NOTEBOOK_SKIP_CONTAINS):
+            continue
+
+        rect = _safe_rectangle(item)
+        if not rect:
+            continue
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width < 120 or height < 16 or height > 120:
+            continue
+        if rect.left < left_min or rect.left > left_max:
+            continue
+        if rect.top < top_min or rect.bottom > bottom_max:
+            continue
+
+        dedupe_key = (norm_text, rect.left // 6, rect.top // 6)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        parent = _safe_parent(item)
+        container = _find_scrollable_ancestor(item) or parent
+        container_rect = _safe_rectangle(container) if container else None
+        container_type = _safe_control_type(container) if container else ""
+        raw_candidates.append(
+            {
+                "item": item,
+                "text": primary_text,
+                "norm_text": norm_text,
+                "rect": rect,
+                "parent": parent,
+                "container": container,
+                "container_rect": container_rect,
+                "container_type": container_type,
+            }
+        )
+
+    if not raw_candidates:
+        return [], None
+
+    grouped = {}
+    for cand in raw_candidates:
+        container_rect = cand.get("container_rect")
+        if container_rect is None:
+            key = ("", 0, 0, 0, 0)
+        else:
+            key = (
+                cand.get("container_type") or "",
+                container_rect.left // 10,
+                container_rect.top // 10,
+                container_rect.right // 10,
+                container_rect.bottom // 10,
+            )
+        grouped.setdefault(key, []).append(cand)
+
+    best_group = None
+    best_score = None
+    for group in grouped.values():
+        uniq_count = len({cand["norm_text"] for cand in group})
+        list_like = sum(
+            1
+            for cand in group
+            if cand.get("container_type") in ("List", "Tree", "Pane", "Group", "Custom")
+        )
+        score = (uniq_count, list_like, -min(cand["rect"].top for cand in group))
+        if best_score is None or score > best_score:
+            best_score = score
+            best_group = group
+
+    final_candidates = best_group if best_group else raw_candidates
+    final_candidates.sort(key=lambda cand: (cand["rect"].top, cand["rect"].left, cand["text"]))
+    container = final_candidates[0].get("container") if final_candidates else None
+    return final_candidates, container
+
+
+def _scroll_open_notebook_candidates(container) -> bool:
+    if container is None:
+        return False
+
+    try:
+        container.set_focus()
+    except Exception:
+        pass
+
+    if _scroll_vertical_via_pattern(container, "down", small=True, repeats=4):
+        time.sleep(0.2)
+        return True
+
+    try:
+        _safe_wheel(container, -4)
+        time.sleep(0.2)
+        return True
+    except Exception:
+        pass
+
+    try:
+        keyboard.send_keys("{PGDN}")
+        time.sleep(0.2)
+        return True
+    except Exception:
+        return False
+
+
+def _find_next_unattempted_open_notebook(onenote_window, attempted_norms: Set[str]):
+    tried_snapshots = set()
+    last_candidates = []
+    container = None
+
+    for _ in range(24):
+        candidates, container = _collect_open_notebook_candidates(onenote_window)
+        last_candidates = candidates
+        if not candidates:
+            return None, [], container
+
+        for cand in candidates:
+            if cand["norm_text"] not in attempted_norms:
+                return cand, candidates, container
+
+        snapshot = tuple(cand["norm_text"] for cand in candidates[:20])
+        if not snapshot or snapshot in tried_snapshots:
+            break
+        tried_snapshots.add(snapshot)
+
+        if not _scroll_open_notebook_candidates(container):
+            break
+
+    return None, last_candidates, container
+
+
+def _open_one_notebook_from_backstage(
+    onenote_window, attempted_norms: Optional[Set[str]] = None
+) -> Optional[Dict[str, Any]]:
+    if not _ensure_onenote_open_notebook_view(onenote_window):
+        return None
+
+    attempted_norms = attempted_norms or set()
+    target, candidates, _container = _find_next_unattempted_open_notebook(
+        onenote_window, attempted_norms
+    )
+    if not candidates:
+        return {
+            "done": False,
+            "opened_text": "",
+            "visible_names": [],
+            "error": "전자 필기장 목록 항목을 찾지 못했습니다.",
+        }
+
+    snapshot = [cand["text"] for cand in candidates[:10]]
+    if target is None:
+        return {"done": True, "opened_text": "", "visible_names": snapshot}
+
+    if not _activate_ui_element(target["item"]):
+        return {
+            "done": False,
+            "opened_text": target["text"],
+            "visible_names": snapshot,
+            "attempted_norm": target["norm_text"],
+            "error": f"전자필기장 열기 실패: '{target['text']}'",
+        }
+
+    _wait_until(
+        lambda: not _is_onenote_open_notebook_view(onenote_window),
+        timeout=2.5,
+        interval=0.1,
+    )
+    time.sleep(0.35)
+    return {
+        "done": False,
+        "opened_text": target["text"],
+        "visible_names": snapshot,
+        "attempted_norm": target["norm_text"],
+    }
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + (text or "").replace("'", "''") + "'"
+
+
+def _run_powershell(script: str, timeout: int = 30) -> str:
+    full_script = (
+        "$ErrorActionPreference='Stop';"
+        "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);"
+        "$OutputEncoding=[Console]::OutputEncoding;"
+        + script
+    )
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            full_script,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=max(5, timeout),
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            (completed.stderr or completed.stdout or "").strip()
+            or f"PowerShell exit code {completed.returncode}"
+        )
+    return (completed.stdout or "").strip()
+
+
+def _load_json_output(raw_text: str):
+    text = (raw_text or "").strip()
+    if not text:
+        return None
+    return json.loads(text)
+
+
+def _iter_onedrive_notebook_shortcut_dirs() -> List[str]:
+    roots = []
+    candidates = [
+        os.environ.get("OneDrive"),
+        os.path.join(os.path.expanduser("~"), "OneDrive"),
+    ]
+    for base in candidates:
+        if not base or not os.path.isdir(base):
+            continue
+        for rel in ("문서", "Documents"):
+            path = os.path.join(base, rel)
+            if os.path.isdir(path) and path not in roots:
+                roots.append(path)
+    return roots
+
+
+def _read_internet_shortcut_url(path: str) -> str:
+    for encoding in ("utf-8-sig", "cp949", "utf-8", "latin-1"):
+        try:
+            with open(path, "r", encoding=encoding) as f:
+                for line in f:
+                    if line.startswith("URL="):
+                        return line[4:].strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _looks_like_onenote_shortcut_url(url: str) -> bool:
+    lower = (url or "").strip().lower()
+    if not lower:
+        return False
+    return (
+        "callerscenarioid=onenote-prod" in lower
+        or lower.startswith("onenote:")
+        or ("onedrive.live.com/redir.aspx" in lower and "onenote" in lower)
+    )
+
+
+def _extract_onedrive_cid(url: str) -> str:
+    try:
+        parsed = urlparse(url or "")
+        query = parse_qs(parsed.query)
+        cid = (query.get("cid") or [""])[0].strip()
+        return cid.lower()
+    except Exception:
+        return ""
+
+
+def _encode_onenote_protocol_segment(text: str) -> str:
+    segment = (text or "").strip()
+    return (
+        segment.replace("%", "%25")
+        .replace("#", "%23")
+        .replace(" ", "%20")
+    )
+
+
+def _build_onenote_protocol_url(shortcut_path: str, web_url: str, notebook_name: str) -> str:
+    cid = _extract_onedrive_cid(web_url)
+    if not cid:
+        return ""
+
+    root_label = "문서"
+    for root in _iter_onedrive_notebook_shortcut_dirs():
+        try:
+            if os.path.commonpath([os.path.abspath(shortcut_path), os.path.abspath(root)]) == os.path.abspath(root):
+                root_label = os.path.basename(root.rstrip("\\/")) or root_label
+                break
+        except Exception:
+            continue
+
+    encoded_root = _encode_onenote_protocol_segment(root_label)
+    encoded_name = _encode_onenote_protocol_segment(notebook_name)
+    return f"onenote:https://d.docs.live.net/{cid}/{encoded_root}/{encoded_name}/"
+
+
+def _get_onenote_exe_path() -> str:
+    if winreg is None:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"onenote\shell\Open\command") as key:
+            command, _ = winreg.QueryValueEx(key, None)
+    except Exception:
+        return ""
+
+    command = str(command or "").strip()
+    if not command:
+        return ""
+
+    if command.startswith('"'):
+        end = command.find('"', 1)
+        if end > 1:
+            exe_path = command[1:end]
+        else:
+            exe_path = ""
+    else:
+        exe_path = command.split(" ", 1)[0].strip()
+
+    return exe_path if exe_path and os.path.isfile(exe_path) else ""
+
+
+def _collect_onenote_notebook_shortcuts() -> List[Dict[str, str]]:
+    results: Dict[str, Dict[str, str]] = {}
+    for root in _iter_onedrive_notebook_shortcut_dirs():
+        try:
+            names = sorted(os.listdir(root), key=_name_sort_key)
+        except Exception:
+            continue
+        for name in names:
+            if not name.lower().endswith(".url"):
+                continue
+            path = os.path.join(root, name)
+            if not os.path.isfile(path):
+                continue
+            url = _read_internet_shortcut_url(path)
+            if not _looks_like_onenote_shortcut_url(url):
+                continue
+            display_name = os.path.splitext(name)[0].strip()
+            norm_name = _normalize_notebook_name_key(display_name)
+            if not norm_name or norm_name in results:
+                continue
+            results[norm_name] = {
+                "name": display_name,
+                "path": path,
+                "url": url,
+            }
+    return list(results.values())
+
+
+def _get_open_notebook_names_via_com() -> List[str]:
+    script = """
+$one = New-Object -ComObject OneNote.Application
+$xml = ''
+$one.GetHierarchy('', 4, [ref]$xml)
+[xml]$doc = $xml
+$ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+$ns.AddNamespace('one', 'http://schemas.microsoft.com/office/onenote/2013/onenote')
+$names = @($doc.SelectNodes('//one:Notebook', $ns) | ForEach-Object { $_.GetAttribute('name') })
+$names | ConvertTo-Json -Compress
+"""
+    data = _load_json_output(_run_powershell(script, timeout=30))
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [str(x) for x in data if str(x).strip()]
+    return [str(data)] if str(data).strip() else []
+
+
+def _open_notebook_shortcut_via_shell(
+    shortcut_path: str, url: str, expected_name: str
+) -> Dict[str, Any]:
+    expected_key = _normalize_notebook_name_key(expected_name)
+    protocol_url = _build_onenote_protocol_url(shortcut_path, url, expected_name)
+    try:
+        open_keys = {
+            _normalize_notebook_name_key(name)
+            for name in _get_open_notebook_names_via_com()
+            if _normalize_notebook_name_key(name)
+        }
+    except Exception:
+        open_keys = set()
+
+    if expected_key and expected_key in open_keys:
+        return {"ok": True, "already": True, "name": expected_name, "error": ""}
+
+    launch_errors = []
+
+    if protocol_url:
+        exe_path = _get_onenote_exe_path()
+        try:
+            if exe_path:
+                subprocess.Popen([exe_path, "/hyperlink", protocol_url])
+            else:
+                os.startfile(protocol_url)
+        except Exception as e:
+            launch_errors.append(str(e))
+            try:
+                if exe_path:
+                    os.startfile(protocol_url)
+                else:
+                    _run_powershell(
+                        f"Start-Process -FilePath {_ps_quote(protocol_url)}",
+                        timeout=10,
+                    )
+            except Exception as e2:
+                launch_errors.append(str(e2))
+    else:
+        launch_errors.append("OneNote 앱 프로토콜 URL 생성 실패")
+
+    for _ in range(20):
+        time.sleep(0.5)
+        try:
+            open_keys = {
+                _normalize_notebook_name_key(name)
+                for name in _get_open_notebook_names_via_com()
+                if _normalize_notebook_name_key(name)
+            }
+        except Exception:
+            continue
+        if expected_key and expected_key in open_keys:
+            return {
+                "ok": True,
+                "already": False,
+                "name": expected_name,
+                "error": "",
+            }
+
+    return {
+        "ok": False,
+        "already": False,
+        "name": expected_name,
+        "error": "; ".join(msg for msg in launch_errors if msg) or "OneNote 앱에서 열기 실패",
+    }
 
 
 # ----------------- 9. 요소를 중앙으로 위치시키는 함수(최적화) - ensure 호출 -----------------
@@ -1194,6 +1936,339 @@ class WindowListWorker(QThread):
             self.done.emit([])
 
 
+class CenterAfterActivateWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, sig: Dict[str, Any], expected_text: str, parent=None):
+        super().__init__(parent)
+        self.sig = copy.deepcopy(sig or {})
+        self.expected_text = expected_text or ""
+
+    def run(self):
+        try:
+            ensure_pywinauto()
+            if not _pwa_ready:
+                self.done.emit(False, "")
+                return
+
+            win = reacquire_window_by_signature(self.sig)
+            if not win:
+                self.done.emit(False, "")
+                return
+
+            tree = _find_tree_or_list(win)
+            if not tree:
+                self.done.emit(False, "")
+                return
+
+            expected_norm = _normalize_text(self.expected_text)
+            # 즉시 중앙정렬 실패 시에만 아주 짧게 fallback 대기
+            deadline = time.monotonic() + 0.2
+            last_selected = None
+
+            while not self.isInterruptionRequested() and time.monotonic() < deadline:
+                selected_item = get_selected_tree_item_fast(tree)
+                if selected_item is not None:
+                    last_selected = selected_item
+                    try:
+                        selected_norm = _normalize_text(selected_item.window_text())
+                    except Exception:
+                        selected_norm = ""
+
+                    if expected_norm and selected_norm == expected_norm:
+                        _center_element_in_view(selected_item, tree)
+                        self.done.emit(True, selected_item.window_text())
+                        return
+
+                self.msleep(10)
+
+            if self.isInterruptionRequested():
+                return
+
+            if last_selected is not None:
+                _center_element_in_view(last_selected, tree)
+                try:
+                    last_text = last_selected.window_text()
+                except Exception:
+                    last_text = self.expected_text
+                self.done.emit(True, last_text)
+                return
+
+            self.done.emit(False, "")
+        except Exception as e:
+            print(f"[WARN][CENTER][WORKER] {e}")
+            self.done.emit(False, "")
+class FavoriteActivationWorker(QThread):
+    done = pyqtSignal(dict)
+    def __init__(
+        self,
+        sig: Dict[str, Any],
+        target: Dict[str, Any],
+        display_name: str,
+        auto_center_after_activate: bool,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.sig = copy.deepcopy(sig or {})
+        self.target = copy.deepcopy(target or {})
+        self.display_name = display_name or ""
+        self.auto_center_after_activate = bool(auto_center_after_activate)
+    def run(self):
+        result = {
+            "ok": False,
+            "display_name": self.display_name,
+            "window_info": None,
+            "target_kind": None,
+            "expected_center_text": "",
+            "error": "",
+        }
+        try:
+            ensure_pywinauto()
+            if not _pwa_ready:
+                result["error"] = "자동화 모듈이 로드되지 않았습니다."
+                self.done.emit(result)
+                return
+            win = reacquire_window_by_signature(self.sig)
+            if not win:
+                result["error"] = f"대상 창 '{self.display_name}'을(를) 찾을 수 없습니다."
+                self.done.emit(result)
+                return
+            try:
+                result["window_info"] = {
+                    "handle": win.handle,
+                    "title": win.window_text(),
+                    "class_name": win.class_name(),
+                    "pid": win.process_id(),
+                }
+            except Exception:
+                result["window_info"] = None
+            if not self.auto_center_after_activate:
+                result["ok"] = True
+                self.done.emit(result)
+                return
+            exe_name = (self.sig.get("exe_name") or "").lower()
+            sig_title = (self.sig.get("title") or "").lower()
+            if "onenote" not in exe_name and "onenote" not in sig_title:
+                result["ok"] = True
+                self.done.emit(result)
+                return
+            tree = _find_tree_or_list(win)
+            if not tree:
+                result["error"] = "OneNote 트리를 찾지 못했습니다."
+                self.done.emit(result)
+                return
+            notebook_text = self.target.get("notebook_text")
+            section_text = self.target.get("section_text")
+            ok = False
+            if notebook_text:
+                result["target_kind"] = "notebook"
+                result["expected_center_text"] = notebook_text
+                ok = select_notebook_by_text(
+                    win, notebook_text, tree, center_after_select=False
+                )
+            elif section_text:
+                result["target_kind"] = "section"
+                result["expected_center_text"] = section_text
+                ok = select_section_by_text(win, section_text, tree)
+            else:
+                result["target_kind"] = "notebook"
+                result["expected_center_text"] = self.display_name
+                ok = select_notebook_by_text(
+                    win, self.display_name, tree, center_after_select=False
+                )
+            if not ok:
+                try:
+                    win.set_focus()
+                except Exception:
+                    pass
+                if result["target_kind"] == "notebook":
+                    ok = select_notebook_by_text(
+                        win, result["expected_center_text"], tree, center_after_select=False
+                    )
+                elif result["target_kind"] == "section":
+                    ok = select_section_by_text(win, result["expected_center_text"], tree)
+            result["ok"] = ok
+            self.done.emit(result)
+        except Exception as e:
+            print(f"[WARN][ACTIVATE][WORKER] {e}")
+            result["error"] = str(e)
+            self.done.emit(result)
+
+
+class OpenAllNotebooksWorker(QThread):
+    progress = pyqtSignal(str)
+    done = pyqtSignal(dict)
+
+    def __init__(self, sig: Dict[str, Any], parent=None):
+        super().__init__(parent)
+        self.sig = copy.deepcopy(sig or {})
+
+    def run(self):
+        result = {
+            "ok": False,
+            "window_info": None,
+            "opened_count": 0,
+            "opened_names": [],
+            "remaining_names": [],
+            "error": "",
+        }
+        try:
+            ensure_pywinauto()
+            if not _pwa_ready:
+                result["error"] = "자동화 모듈이 로드되지 않았습니다."
+                self.done.emit(result)
+                return
+
+            win = reacquire_window_by_signature(self.sig)
+            if not win:
+                result["error"] = "연결된 OneNote 창을 다시 찾지 못했습니다."
+                self.done.emit(result)
+                return
+
+            try:
+                result["window_info"] = {
+                    "handle": win.handle,
+                    "title": win.window_text(),
+                    "class_name": win.class_name(),
+                    "pid": win.process_id(),
+                }
+            except Exception:
+                result["window_info"] = None
+
+            shortcut_targets = _collect_onenote_notebook_shortcuts()
+            if shortcut_targets:
+                try:
+                    open_names = {
+                        _normalize_notebook_name_key(name)
+                        for name in _get_open_notebook_names_via_com()
+                        if _normalize_notebook_name_key(name)
+                    }
+                except Exception as e:
+                    print(f"[WARN][OPEN_ALL_NOTEBOOKS][COM][LIST] {e}")
+                    open_names = set()
+
+                pending_targets = [
+                    t
+                    for t in shortcut_targets
+                    if _normalize_notebook_name_key(t.get("name")) not in open_names
+                ]
+
+                if not pending_targets:
+                    result["ok"] = True
+                    result["remaining_names"] = []
+                    self.done.emit(result)
+                    return
+
+                failed_names = []
+                failed_details = []
+
+                for target in pending_targets:
+                    if self.isInterruptionRequested():
+                        result["error"] = "사용자 중단"
+                        self.done.emit(result)
+                        return
+
+                    name = (target.get("name") or "").strip()
+                    path = (target.get("path") or "").strip()
+                    url = (target.get("url") or "").strip()
+                    if not name or (not path and not url):
+                        failed_names.append(name or "이름 없음")
+                        failed_details.append(f"{name or '이름 없음'}: 바로가기 정보 없음")
+                        continue
+
+                    try:
+                        step = _open_notebook_shortcut_via_shell(path, url, name)
+                    except Exception as e:
+                        step = {"ok": False, "already": False, "name": name, "error": str(e)}
+
+                    if step.get("ok"):
+                        result["opened_names"].append(name)
+                        result["opened_count"] += 1
+                        self.progress.emit(
+                            f"실제 OneNote 전체 열기 중... {result['opened_count']}개 - {name}"
+                        )
+                    else:
+                        failed_names.append(name)
+                        failed_details.append(
+                            f"{name}: {step.get('error') or '열기 실패'}"
+                        )
+
+                if failed_names:
+                    result["error"] = (
+                        f"바로가기 기반 열기 실패 {len(failed_names)}개 - "
+                        + "; ".join(failed_details[:3])
+                    )
+                    result["remaining_names"] = failed_names
+                    self.done.emit(result)
+                    return
+
+                result["ok"] = True
+                result["remaining_names"] = []
+                self.done.emit(result)
+                return
+
+            last_snapshot = None
+            stale_rounds = 0
+            attempted_norms: Set[str] = set()
+
+            for _ in range(200):
+                if self.isInterruptionRequested():
+                    result["error"] = "사용자 중단"
+                    self.done.emit(result)
+                    return
+
+                step = _open_one_notebook_from_backstage(win, attempted_norms)
+                if step is None:
+                    result["error"] = "OneNote의 '전자 필기장 열기' 화면을 찾지 못했습니다."
+                    self.done.emit(result)
+                    return
+
+                visible_names = step.get("visible_names") or []
+                if step.get("done"):
+                    result["ok"] = True
+                    result["remaining_names"] = []
+                    self.done.emit(result)
+                    return
+
+                attempted_norm = (step.get("attempted_norm") or "").strip()
+                current_snapshot = tuple(_normalize_text(name) for name in visible_names[:8])
+                if (not attempted_norm) and current_snapshot and current_snapshot == last_snapshot:
+                    stale_rounds += 1
+                else:
+                    stale_rounds = 0
+                last_snapshot = current_snapshot
+
+                if attempted_norm:
+                    attempted_norms.add(attempted_norm)
+
+                opened_text = (step.get("opened_text") or "").strip()
+                if opened_text:
+                    result["opened_names"].append(opened_text)
+                    result["opened_count"] += 1
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 중... {result['opened_count']}개 - {opened_text}"
+                    )
+
+                if step.get("error"):
+                    result["error"] = step["error"]
+                    result["remaining_names"] = visible_names
+                    self.done.emit(result)
+                    return
+
+                if stale_rounds >= 2:
+                    result["error"] = "전자필기장 목록이 더 이상 변하지 않아 중단했습니다."
+                    result["remaining_names"] = visible_names
+                    self.done.emit(result)
+                    return
+
+            result["error"] = "안전 제한(200개)에 도달해 중단했습니다."
+            self.done.emit(result)
+        except Exception as e:
+            print(f"[WARN][OPEN_ALL_NOTEBOOKS][WORKER] {e}")
+            result["error"] = str(e)
+            self.done.emit(result)
+
+
 class OtherWindowSelectionDialog(QDialog):
     def __init__(self, my_pid: int, parent=None):
         super().__init__(parent)
@@ -1278,6 +2353,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._reconnect_worker = None
         self._scanner_worker = None
         self._pending_center_timer: Optional[QTimer] = None
+        self._center_worker: Optional[CenterAfterActivateWorker] = None
+        self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
+        self._open_all_notebooks_worker: Optional[OpenAllNotebooksWorker] = None
+        self._center_request_seq = 0
         self.onenote_windows_info: List[Dict] = []
         self.my_pid = os.getpid()
         self._auto_center_after_activate = True
@@ -1434,6 +2513,19 @@ class OneNoteScrollRemoconApp(QMainWindow):
         restore_action.triggered.connect(self._restore_full_settings)
         file_menu.addAction(restore_action)
 
+        special_menu = menubar.addMenu("&특수 기능")
+        self.open_all_notebooks_action = QAction(
+            "실제 OneNote 전자필기장 모두 열기", self
+        )
+        self.open_all_notebooks_action.setStatusTip(
+            "OneNote의 '전자 필기장 열기' 화면에서 아직 안 열린 전자필기장을 순서대로 엽니다."
+        )
+        self.open_all_notebooks_action.triggered.connect(
+            self._open_all_notebooks_from_connected_onenote
+        )
+        self.open_all_notebooks_action.setEnabled(False)
+        special_menu.addAction(self.open_all_notebooks_action)
+
         # --- 스타일시트 정의 (생략) ---
         COLOR_BACKGROUND = "#2E2E2E"
         COLOR_PRIMARY_TEXT = "#E0E0E0"
@@ -1571,7 +2663,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         buffer_layout.setContentsMargins(0, 0, 0, 0)
         buffer_layout.setSpacing(8)
 
-        buffer_group = QGroupBox("프로젝트 영역")
+        buffer_group = QGroupBox("프로젝트/등록 영역")
         buffer_group_layout = QVBoxLayout(buffer_group)
 
         # 즐겨찾기 버퍼 상단 툴바: 추가, 이름변경
@@ -1589,15 +2681,17 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
 
         self.btn_register_all_notebooks = QToolButton()
-        self.btn_register_all_notebooks.setText("원노트 전체등록")
-        self.btn_register_all_notebooks.setToolTip("현재 연결된 OneNote 창에서 전자필기장/섹션을 한 번에 버퍼로 등록")
+        self.btn_register_all_notebooks.setText("종합(전필장 전체등록)")
+        self.btn_register_all_notebooks.setToolTip(
+            "실제 OneNote를 여는 기능이 아닙니다. 현재 연결된 OneNote 창의 노트북 이름을 '종합' 버퍼에 등록합니다."
+        )
         self.btn_register_all_notebooks.clicked.connect(self._register_all_notebooks_from_current_onenote)
         self.btn_register_all_notebooks.setEnabled(False)  # 종합 버퍼에서만 활성화
+        self.btn_register_all_notebooks.setVisible(False)  # 종합 버퍼에서만 표시
 
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer_group)
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer)
         buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
-        buffer_toolbar_top_layout.addWidget(self.btn_register_all_notebooks)
         buffer_toolbar_top_layout.addStretch(1)
         buffer_group_layout.addLayout(buffer_toolbar_top_layout)
 
@@ -1689,8 +2783,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         tb2_layout.addWidget(self.btn_expand_all)
         tb2_layout.addWidget(self.btn_collapse_all)
 
+        tb3_layout = QHBoxLayout()
+        tb3_layout.addStretch(1)
+        tb3_layout.addWidget(self.btn_register_all_notebooks)
+        tb3_layout.addStretch(1)
+
         fav_layout.addLayout(tb1_layout)
         fav_layout.addLayout(tb2_layout)
+        fav_layout.addLayout(tb3_layout)
 
         self.fav_tree = FavoritesTree()
         self.fav_tree.setItemDelegate(self._tree_name_edit_delegate)
@@ -1789,7 +2889,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         connection_layout.addWidget(self.onenote_list_widget)
         right_layout.addWidget(connection_group)
 
-        actions_group = QGroupBox("자동화 기능")
+        actions_group = QGroupBox("현재 열린 항목 제어")
         actions_layout = QVBoxLayout(actions_group)
 
         self.center_button = QPushButton("현재 선택된 전자필기장 중앙으로 정렬")
@@ -1940,7 +3040,15 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def closeEvent(self, event):
         # 실행 중 QThread 정리 (종료 시 'Destroyed while thread is still running' 방지)
-        for attr in ["_reconnect_worker", "_scanner_worker", "_scan_worker", "_window_list_worker"]:
+        for attr in [
+            "_reconnect_worker",
+            "_scanner_worker",
+            "_scan_worker",
+            "_window_list_worker",
+            "_center_worker",
+            "_favorite_activation_worker",
+            "_open_all_notebooks_worker",
+        ]:
             t = getattr(self, attr, None)
             try:
                 if t is not None and hasattr(t, "isRunning") and t.isRunning():
@@ -1978,6 +3086,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.center_button.setEnabled(is_connected)
         self.search_input.setEnabled(is_connected)
         self.search_button.setEnabled(is_connected)
+        open_all_busy = bool(
+            self._open_all_notebooks_worker
+            and self._open_all_notebooks_worker.isRunning()
+        )
+        if hasattr(self, "open_all_notebooks_action"):
+            self.open_all_notebooks_action.setEnabled(is_connected and not open_all_busy)
 
     def _start_auto_reconnect(self):
         self.refresh_button.setEnabled(False)
@@ -2197,6 +3311,98 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.update_status_and_ui(
                     "실패: 선택 항목을 찾거나 정렬하지 못했습니다.", True
                 )
+
+    def _open_all_notebooks_from_connected_onenote(self):
+        if (
+            self._open_all_notebooks_worker is not None
+            and self._open_all_notebooks_worker.isRunning()
+        ):
+            self.update_status_and_ui("이미 실제 OneNote 전체 열기 작업이 실행 중입니다.", True)
+            return
+
+        win = getattr(self, "onenote_window", None)
+        hwnd = getattr(win, "handle", None) if win is not None else None
+        if callable(hwnd):
+            try:
+                hwnd = hwnd()
+            except Exception:
+                hwnd = None
+        if not hwnd:
+            self.update_status_and_ui(
+                "OneNote 창이 연결되지 않았습니다. 먼저 OneNote 창을 연결하세요.",
+                False,
+            )
+            return
+
+        ensure_pywinauto()
+        if not _pwa_ready:
+            self.update_status_and_ui("오류: 자동화 모듈이 로드되지 않았습니다.", True)
+            return
+
+        try:
+            win.set_focus()
+        except Exception:
+            pass
+
+        sig = build_window_signature(win)
+        if not sig:
+            self.update_status_and_ui("오류: OneNote 창 정보를 읽지 못했습니다.", True)
+            return
+
+        worker = OpenAllNotebooksWorker(sig, self)
+        self._open_all_notebooks_worker = worker
+        self.update_status_and_ui("실제 OneNote 전체 열기 준비 중...", True)
+
+        def _on_progress(message: str):
+            if self._open_all_notebooks_worker is worker:
+                self.connection_status_label.setText(message)
+
+        def _on_done(result: Dict[str, Any]):
+            if self._open_all_notebooks_worker is not worker:
+                return
+
+            self._open_all_notebooks_worker = None
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
+
+            connected = self._apply_connected_window_info(result.get("window_info"))
+            is_connected = connected or bool(getattr(self, "onenote_window", None))
+            opened_count = int(result.get("opened_count") or 0)
+            remaining = result.get("remaining_names") or []
+            error = (result.get("error") or "").strip()
+
+            if result.get("ok"):
+                if opened_count > 0:
+                    self.update_status_and_ui(
+                        f"실제 OneNote 전체 열기 완료: {opened_count}개",
+                        is_connected,
+                    )
+                else:
+                    self.update_status_and_ui(
+                        "열어야 할 전자필기장이 더 이상 없습니다.",
+                        is_connected,
+                    )
+                return
+
+            if remaining:
+                remain_preview = ", ".join(remaining[:3])
+                if len(remaining) > 3:
+                    remain_preview += " ..."
+                suffix = f" 남은 후보: {remain_preview}"
+            else:
+                suffix = ""
+            detail = error or "실제 OneNote 전체 열기에 실패했습니다."
+            self.update_status_and_ui(
+                f"{detail} (시도 {opened_count}개).{suffix}",
+                is_connected,
+            )
+
+        worker.progress.connect(_on_progress)
+        worker.done.connect(_on_done)
+        worker.finished.connect(lambda: None)
+        worker.start()
 
     def _search_and_select_section(self):
         """입력창의 텍스트로 섹션을 검색하고 선택 및 중앙 정렬합니다."""
@@ -3015,6 +4221,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     self.btn_add_group.setEnabled(True)  # 원하면 그룹도 허용
                     if hasattr(self, "btn_register_all_notebooks"):
                         self.btn_register_all_notebooks.setEnabled(True)
+                        self.btn_register_all_notebooks.setVisible(True)
                 else:
                     data_to_load = payload.get("data", []) or []
                     self._load_favorites_into_center_tree(data_to_load)
@@ -3024,6 +4231,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     self.btn_add_section_current.setEnabled(True)
                     if hasattr(self, "btn_register_all_notebooks"):
                         self.btn_register_all_notebooks.setEnabled(False)
+                        self.btn_register_all_notebooks.setVisible(False)
                     self.btn_add_group.setEnabled(True)
             finally:
                 self.setUpdatesEnabled(True)
@@ -3039,6 +4247,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._save_favorites()
             if hasattr(self, "btn_register_all_notebooks"):
                 self.btn_register_all_notebooks.setEnabled(False)
+                self.btn_register_all_notebooks.setVisible(False)
             self.btn_add_section_current.setEnabled(False)
             self.btn_add_group.setEnabled(False)
             self.active_buffer_id = None
@@ -4002,51 +5211,76 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             pass
         self._pending_center_timer = None
+        worker = self._center_worker
+        self._center_worker = None
+        if worker is not None:
+            try:
+                if worker.isRunning():
+                    worker.requestInterruption()
+                    worker.wait(150)
+            except Exception:
+                pass
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
 
-    def _schedule_center_after_activate(self, delay_ms: int = 25, expected_text: Optional[str] = None):
+    def _cancel_pending_favorite_activation(self):
+        worker = self._favorite_activation_worker
+        self._favorite_activation_worker = None
+        if worker is not None:
+            try:
+                if worker.isRunning():
+                    worker.requestInterruption()
+                    worker.wait(150)
+            except Exception:
+                pass
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
+
+    def _apply_connected_window_info(self, info: Optional[Dict[str, Any]]) -> bool:
+        if not info or not info.get("handle"):
+            return False
+        try:
+            self.onenote_window = Desktop(backend="uia").window(handle=info["handle"])
+            if not self.onenote_window.is_visible():
+                raise ElementNotFoundError
+            save_connection_info(self.onenote_window)
+            self._cache_tree_control()
+            return True
+        except Exception:
+            return False
+
+    def _schedule_center_after_activate(self, sig: Dict[str, Any], expected_text: str):
         self._cancel_pending_center_after_activate()
-        if expected_text:
-            expected_norm = _normalize_text(expected_text)
-            deadline = time.monotonic() + 0.9
-            self._pending_center_timer = QTimer(self)
-            self._pending_center_timer.setSingleShot(False)
-
-            def _try_center():
-                try:
-                    tree = self.tree_control or _find_tree_or_list(self.onenote_window)
-                    if tree and self.tree_control is None:
-                        self.tree_control = tree
-                    if not tree:
-                        if time.monotonic() >= deadline:
-                            self._cancel_pending_center_after_activate()
-                        return
-                    selected_item = get_selected_tree_item_fast(tree)
-                    selected_norm = (
-                        _normalize_text(selected_item.window_text()) if selected_item else ""
-                    )
-                    if selected_norm == expected_norm:
-                        self._cancel_pending_center_after_activate()
-                        scroll_selected_item_to_center(self.onenote_window, tree)
-                        return
-                    if time.monotonic() >= deadline:
-                        self._cancel_pending_center_after_activate()
-                        if selected_item is not None:
-                            scroll_selected_item_to_center(self.onenote_window, tree)
-                except Exception:
-                    self._cancel_pending_center_after_activate()
-
-            self._pending_center_timer.timeout.connect(_try_center)
-            _try_center()
-            if self._pending_center_timer is not None:
-                self._pending_center_timer.start(max(15, delay_ms))
+        if not sig or not expected_text:
             return
 
-        self._pending_center_timer = QTimer(self)
-        self._pending_center_timer.setSingleShot(True)
-        self._pending_center_timer.timeout.connect(
-            lambda: scroll_selected_item_to_center(self.onenote_window, self.tree_control)
-        )
-        self._pending_center_timer.start(max(0, delay_ms))
+        self._center_request_seq += 1
+        request_seq = self._center_request_seq
+        worker = CenterAfterActivateWorker(sig, expected_text, self)
+        self._center_worker = worker
+
+        def _on_done(ok: bool, selected_name: str):
+            if self._center_worker is not worker:
+                return
+
+            self._center_worker = None
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
+
+            if ok and selected_name:
+                print(f"[DBG][CENTER][DONE] selected='{selected_name}' req={request_seq}")
+            else:
+                print(f"[DBG][CENTER][SKIP] req={request_seq}")
+
+        worker.done.connect(_on_done)
+        worker.finished.connect(lambda: None)
+        worker.start()
 
     def _activate_favorite_section(self, item: QTreeWidgetItem):
         ensure_pywinauto()
@@ -4068,104 +5302,69 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 "오류: 즐겨찾기에 대상 창 정보가 없습니다.",
                 self.center_button.isEnabled(),
             )
+            self._cancel_pending_favorite_activation()
             return
 
-        win = reacquire_window_by_signature(sig)
-        if not win:
-            self.update_status_and_ui(
-                f"실패: 대상 창 '{display_name}'을(를) 찾을 수 없습니다.",
-                self.center_button.isEnabled(),
-            )
-            return
+        self._cancel_pending_favorite_activation()
+        self._cancel_pending_center_after_activate()
+        worker = FavoriteActivationWorker(
+            sig=sig,
+            target=target,
+            display_name=display_name,
+            auto_center_after_activate=self._auto_center_after_activate,
+            parent=self,
+        )
+        self._favorite_activation_worker = worker
 
-        try:
-            win.set_focus()
-        except Exception:
-            pass
+        def _on_done(result: Dict[str, Any]):
+            if self._favorite_activation_worker is not worker:
+                return
+            self._favorite_activation_worker = None
+            try:
+                worker.deleteLater()
+            except Exception:
+                pass
 
-        try:
-            info = {
-                "handle": win.handle,
-                "title": win.window_text(),
-                "class_name": win.class_name(),
-                "pid": win.process_id(),
-            }
-            connected = self._perform_connection(info)
-        except Exception:
-            connected = False
+            connected = self._apply_connected_window_info(result.get("window_info"))
+            ok = bool(result.get("ok"))
+            target_kind = result.get("target_kind")
+            expected_center_text = result.get("expected_center_text")
 
-        if connected and self._auto_center_after_activate:
-            # 연속 더블클릭 시 앞선 중앙정렬 예약이 뒤늦게 실행되지 않도록 먼저 취소
-            self._cancel_pending_center_after_activate()
+            if connected and ok:
+                is_name_restored = False
+                current_name = item.text(0)
+                restored_name = current_name
+                if current_name.startswith("(구) "):
+                    restored_name = current_name[4:]
+                    item.setText(0, restored_name)
+                    self._save_favorites()
+                    is_name_restored = True
 
-            exe_name = (sig.get("exe_name") or "").lower()
-            if "onenote" in exe_name or "onenote" in (sig.get("title") or "").lower():
-                # ✅ 1) notebook_text 우선 (원노트 전체등록에서 주로 이걸 씀)
-                notebook_text = target.get("notebook_text")
-                section_text = target.get("section_text")
-                ok = False
-                target_kind = None
-                expected_center_text = None
-                if notebook_text:
-                    print(f"[DBG][ACT] notebook_text='{notebook_text}'")
-                    target_kind = "notebook"
-                    ok = select_notebook_by_text(
-                        self.onenote_window,
-                        notebook_text,
-                        self.tree_control,
-                        center_after_select=False,
-                    )
-                    expected_center_text = notebook_text
-                elif section_text:
-                    print(f"[DBG][ACT] section_text='{section_text}'")
-                    target_kind = "section"
-                    ok = select_section_by_text(self.onenote_window, section_text, self.tree_control)
-                    expected_center_text = section_text
+                if target_kind in ("section", "notebook") and expected_center_text:
+                    self._schedule_center_after_activate(sig, expected_center_text)
                 else:
-                    # ✅ 2) fallback: 표시 이름을 노트북으로 간주하고 시도 (전체등록이 target 누락해도 동작)
-                    print(f"[DBG][ACT] fallback text='{display_name}'")
-                    target_kind = "notebook"
-                    ok = select_notebook_by_text(
-                        self.onenote_window, display_name, self.tree_control, center_after_select=False
-                    )
-                    expected_center_text = display_name
+                    self._cancel_pending_center_after_activate()
 
-                if ok:
-                    # --- [START] 이름 복원 로직 추가 ---
-                    is_name_restored = False
-                    current_name = item.text(0)
-                    restored_name = current_name
-                    if current_name.startswith("(구) "):
-                        restored_name = current_name[4:]  # "(구) " 제거
-                        item.setText(0, restored_name)
-                        self._save_favorites()
-                        is_name_restored = True
-                    # --- [END] 이름 복원 로직 추가 ---
-
-                    # 고정 지연으로 미루지 말고,
-                    # 실제 목표 항목이 선택된 순간 바로 중앙정렬한다.
-                    if target_kind in ("section", "notebook") and expected_center_text:
-                        self._schedule_center_after_activate(25, expected_text=expected_center_text)
-                    else:
-                        self._cancel_pending_center_after_activate()
-
-                    if is_name_restored:
-                        self.update_status_and_ui(f"활성화: '{restored_name}' (이름 복원)", True)
-                    else:
-                        self.update_status_and_ui(f"활성화: '{display_name}'", True)
+                if is_name_restored:
+                    self.update_status_and_ui(f"활성화: '{restored_name}' (이름 복원)", True)
                 else:
-                    # --- 실패 시 로직 (기존과 동일) ---
-                    current_name = item.text(0)
-                    if not current_name.startswith("(구) "):
-                        new_name = f"(구) {current_name}"
-                        item.setText(0, new_name)
-                        self._save_favorites()
-                        self.update_status_and_ui(f"섹션 찾기 실패: '{new_name}'(으)로 변경됨", True)
-                    else:
-                        self.update_status_and_ui(f"섹션 찾기 실패: '{display_name}' 을 찾을 수 없음", True)
+                    self.update_status_and_ui(f"활성화: '{display_name}'", True)
                 return
 
-        self.update_status_and_ui(f"활성화: '{display_name}'", True)
+            current_name = item.text(0)
+            if not current_name.startswith("(구) "):
+                new_name = f"(구) {current_name}"
+                item.setText(0, new_name)
+                self._save_favorites()
+                fail_msg = result.get("error") or f"섹션 찾기 실패: '{new_name}'"
+                self.update_status_and_ui(fail_msg, True)
+            else:
+                fail_msg = result.get("error") or f"섹션 찾기 실패: '{display_name}' 을 찾을 수 없음"
+                self.update_status_and_ui(fail_msg, True)
+
+        worker.done.connect(_on_done)
+        worker.finished.connect(lambda: None)
+        worker.start()
 
 
 # ----------------- 17. 엔트리 포인트 -----------------
