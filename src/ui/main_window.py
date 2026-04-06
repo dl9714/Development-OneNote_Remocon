@@ -15,6 +15,7 @@ import copy
 import unicodedata
 import subprocess
 import re
+import difflib
 from urllib.parse import urlparse, parse_qs
 
 try:
@@ -177,18 +178,70 @@ DEFAULT_SETTINGS = {
     "debug_perf_logs": False,
 }
 
+_JSON_TEXT_CACHE: Dict[str, Dict[str, Any]] = {}
+_SETTINGS_OBJECT_CACHE: Dict[str, Dict[str, Any]] = {}
+_PROCESS_IMAGE_PATH_CACHE: Dict[int, Dict[str, Any]] = {}
+_PROCESS_IMAGE_PATH_CACHE_TTL_SEC = 5.0
+_OPEN_NOTEBOOK_RECORDS_CACHE: Dict[str, Any] = {
+    "expires_at": 0.0,
+    "records": [],
+}
+_OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC = 0.75
+
+
+def _get_file_signature(path: str) -> Optional[tuple]:
+    try:
+        st = os.stat(path)
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
+def _update_json_text_cache(
+    path: str,
+    text: str,
+    *,
+    file_sig: Optional[tuple] = None,
+) -> None:
+    _JSON_TEXT_CACHE[path] = {
+        "text": text,
+        "sig": file_sig if file_sig is not None else _get_file_signature(path),
+    }
+
+
+def _update_settings_object_cache(path: str, data: Dict[str, Any]) -> None:
+    _SETTINGS_OBJECT_CACHE[path] = {
+        "sig": _get_file_signature(path),
+        "data": copy.deepcopy(data),
+    }
+
+
+def _clear_open_notebook_records_cache() -> None:
+    _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = 0.0
+    _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = []
+
+
 def _dump_json_text(obj: Dict[str, Any]) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 def _write_json_text(path: str, text: str) -> bool:
     """내용이 바뀐 경우에만 .bak 백업 후 원자적으로 저장합니다."""
-    old_text = None
-    try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                old_text = f.read()
-    except Exception:
-        old_text = None
+    file_sig = _get_file_signature(path)
+    cache_entry = _JSON_TEXT_CACHE.get(path) or {}
+    cached_text = cache_entry.get("text")
+    cached_sig = cache_entry.get("sig")
+    if cached_text == text and cached_sig == file_sig:
+        return False
+
+    old_text = cached_text if cached_sig == file_sig else None
+    if old_text is None:
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    old_text = f.read()
+                _update_json_text_cache(path, old_text, file_sig=file_sig)
+        except Exception:
+            old_text = None
     if old_text == text:
         return False
     # 기존 파일은 .bak으로 백업 (마이그레이션 실패/되돌리기 대비)
@@ -202,6 +255,7 @@ def _write_json_text(path: str, text: str) -> bool:
     with open(tmp_path, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp_path, path)
+    _update_json_text_cache(path, text)
     return True
 
 def _write_json(path: str, obj: Dict[str, Any]) -> bool:
@@ -314,11 +368,18 @@ def load_settings() -> Dict[str, Any]:
     # 설정 파일 경로를 실행 파일 위치 기준으로 가져옴
     settings_path = _get_settings_file_path()
 
+    file_sig = _get_file_signature(settings_path)
+    cache_entry = _SETTINGS_OBJECT_CACHE.get(settings_path)
+    if file_sig is not None and cache_entry and cache_entry.get("sig") == file_sig:
+        return copy.deepcopy(cache_entry.get("data") or DEFAULT_SETTINGS)
+
     if not os.path.exists(settings_path):
         return DEFAULT_SETTINGS.copy()
     try:
         with open(settings_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw_text = f.read()
+        _update_json_text_cache(settings_path, raw_text, file_sig=file_sig)
+        data = json.loads(raw_text)
 
         # 하위 호환성을 위한 마이그레이션 로직
         migrated = _migrate_favorites_buffers_inplace(data)
@@ -334,6 +395,7 @@ def load_settings() -> Dict[str, Any]:
             except Exception as e:
                 print(f"[WARN] 마이그레이션 저장 실패(무시): {e}")
 
+        _update_settings_object_cache(settings_path, settings)
         return settings
     except Exception as e:
         print(f"[ERROR] 설정 파일 로드 실패: {e}")
@@ -348,7 +410,9 @@ def save_settings(data: Dict[str, Any]) -> bool:
         payload.pop("favorites", None)
         # ✅ 저장 직전에 항상 Default/종합 구조 강제 보정
         _ensure_default_and_aggregate_inplace(payload)
-        return _write_json(settings_path, payload)
+        changed = _write_json(settings_path, payload)
+        _update_settings_object_cache(settings_path, payload)
+        return changed
     except Exception as e:
         print(f"[ERROR] 설정 파일 저장 실패: {e}")
         return False
@@ -447,6 +511,25 @@ def _find_first_normal_buffer_id(nodes: List[Dict[str, Any]]) -> Optional[str]:
                     return cid
         return None
     return _walk(nodes)
+
+
+def _find_buffer_node_by_id(nodes: Any, buffer_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not buffer_id or not isinstance(nodes, list):
+        return None
+
+    stack = list(reversed(nodes))
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type")
+        if node_type == "buffer" and node.get("id") == buffer_id:
+            return node
+        if node_type == "group":
+            children = node.get("children")
+            if isinstance(children, list) and children:
+                stack.extend(reversed(children))
+    return None
 
 
 def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -634,6 +717,11 @@ def get_process_image_path(pid: int) -> Optional[str]:
     if not pid:
         return None
 
+    now = time.monotonic()
+    cached = _PROCESS_IMAGE_PATH_CACHE.get(pid)
+    if cached and now < float(cached.get("expires_at", 0.0)):
+        return cached.get("path")
+
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
     # 64비트 안전: use_last_error로 WinAPI 에러 사용 가능
@@ -658,6 +746,10 @@ def get_process_image_path(pid: int) -> Optional[str]:
 
     hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not hProcess:
+        _PROCESS_IMAGE_PATH_CACHE[pid] = {
+            "expires_at": now + _PROCESS_IMAGE_PATH_CACHE_TTL_SEC,
+            "path": None,
+        }
         return None
     try:
         # 1차 버퍼
@@ -667,13 +759,22 @@ def get_process_image_path(pid: int) -> Optional[str]:
             buf = ctypes.create_unicode_buffer(buf_len.value)
             ok = QueryFullProcessImageNameW(hProcess, 0, buf, ctypes.byref(buf_len))
             if ok:
-                return buf.value
+                path = buf.value
+                _PROCESS_IMAGE_PATH_CACHE[pid] = {
+                    "expires_at": now + _PROCESS_IMAGE_PATH_CACHE_TTL_SEC,
+                    "path": path,
+                }
+                return path
             # 버퍼 부족 시 한 번 정도 키워 봄
             err = ctypes.get_last_error()
             # ERROR_INSUFFICIENT_BUFFER = 122
             if err == 122 and size < 4096:
                 size *= 2
                 continue
+            _PROCESS_IMAGE_PATH_CACHE[pid] = {
+                "expires_at": now + _PROCESS_IMAGE_PATH_CACHE_TTL_SEC,
+                "path": None,
+            }
             return None
     finally:
         CloseHandle(hProcess)
@@ -1576,7 +1677,48 @@ def _collect_onenote_notebook_shortcuts() -> List[Dict[str, str]]:
     return list(results.values())
 
 
-def _get_open_notebook_names_via_com() -> List[str]:
+def _get_open_notebook_names_via_com(
+    refresh: bool = False,
+    max_age_sec: float = _OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC,
+) -> List[str]:
+    records = _get_open_notebook_records_via_com(
+        refresh=refresh, max_age_sec=max_age_sec
+    )
+    return [
+        str(record.get("name") or "").strip()
+        for record in records
+        if str(record.get("name") or "").strip()
+    ]
+
+
+def _normalize_notebook_record(raw: Any) -> Optional[Dict[str, str]]:
+    if not isinstance(raw, dict):
+        return None
+
+    notebook_id = str(raw.get("id") or raw.get("ID") or "").strip()
+    name = str(raw.get("name") or "").strip()
+    path = str(raw.get("path") or "").strip()
+
+    if not notebook_id and not name and not path:
+        return None
+
+    return {
+        "id": notebook_id,
+        "name": name,
+        "path": path,
+    }
+
+
+def _get_open_notebook_records_via_com(
+    refresh: bool = False,
+    max_age_sec: float = _OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC,
+) -> List[Dict[str, str]]:
+    now = time.monotonic()
+    cache_records = _OPEN_NOTEBOOK_RECORDS_CACHE.get("records") or []
+    cache_expires_at = float(_OPEN_NOTEBOOK_RECORDS_CACHE.get("expires_at") or 0.0)
+    if not refresh and now < cache_expires_at:
+        return [dict(record) for record in cache_records]
+
     script = """
 $one = New-Object -ComObject OneNote.Application
 $xml = ''
@@ -1584,15 +1726,139 @@ $one.GetHierarchy('', 4, [ref]$xml)
 [xml]$doc = $xml
 $ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
 $ns.AddNamespace('one', 'http://schemas.microsoft.com/office/onenote/2013/onenote')
-$names = @($doc.SelectNodes('//one:Notebook', $ns) | ForEach-Object { $_.GetAttribute('name') })
-$names | ConvertTo-Json -Compress
+$items = @(
+  $doc.SelectNodes('//one:Notebook', $ns) | ForEach-Object {
+    [pscustomobject]@{
+      id = $_.GetAttribute('ID')
+      name = $_.GetAttribute('name')
+      path = $_.GetAttribute('path')
+    }
+  }
+)
+$items | ConvertTo-Json -Compress
 """
     data = _load_json_output(_run_powershell(script, timeout=30))
     if data is None:
+        _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = []
+        _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = now + max(0.0, max_age_sec)
         return []
-    if isinstance(data, list):
-        return [str(x) for x in data if str(x).strip()]
-    return [str(data)] if str(data).strip() else []
+    if isinstance(data, dict):
+        data = [data]
+
+    records: List[Dict[str, str]] = []
+    if not isinstance(data, list):
+        _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = []
+        _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = now + max(0.0, max_age_sec)
+        return records
+
+    for entry in data:
+        record = _normalize_notebook_record(entry)
+        if record and record.get("name"):
+            records.append(record)
+
+    _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = [dict(record) for record in records]
+    _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = now + max(0.0, max_age_sec)
+    return [dict(record) for record in records]
+
+
+def _pick_notebook_name_suggestion(
+    requested_name: str, records: List[Dict[str, str]]
+) -> str:
+    requested_key = _normalize_notebook_name_key(requested_name)
+    if not requested_key:
+        return ""
+
+    best_name = ""
+    best_score = 0.0
+    for record in records:
+        name = str(record.get("name") or "").strip()
+        name_key = _normalize_notebook_name_key(name)
+        if not name_key:
+            continue
+
+        score = difflib.SequenceMatcher(None, requested_key, name_key).ratio()
+        if requested_key in name_key or name_key in requested_key:
+            score = max(score, 0.93)
+        if score > best_score:
+            best_score = score
+            best_name = name
+
+    return best_name if best_score >= 0.72 else ""
+
+
+def _resolve_notebook_target_for_activation(
+    target: Dict[str, Any], fallback_name: str = ""
+) -> Dict[str, Any]:
+    requested_name = str((target or {}).get("notebook_text") or fallback_name or "").strip()
+    requested_id = str((target or {}).get("notebook_id") or "").strip()
+    result = {
+        "requested_name": requested_name,
+        "resolved_name": requested_name,
+        "notebook_id": requested_id,
+        "renamed": False,
+        "should_abort": False,
+        "com_failed": False,
+        "error": "",
+    }
+
+    try:
+        records = _get_open_notebook_records_via_com()
+    except Exception as e:
+        result["com_failed"] = True
+        result["error"] = str(e)
+        return result
+
+    if not records:
+        return result
+
+    requested_key = _normalize_notebook_name_key(requested_name)
+    records_by_key: Dict[str, List[Dict[str, str]]] = {}
+    for record in records:
+        record_key = _normalize_notebook_name_key(record.get("name"))
+        if record_key:
+            records_by_key.setdefault(record_key, []).append(record)
+
+    matched_record = None
+    if requested_id:
+        matched_record = next(
+            (record for record in records if (record.get("id") or "") == requested_id),
+            None,
+        )
+
+    if matched_record is None and requested_key:
+        exact_matches = records_by_key.get(requested_key) or []
+        if exact_matches:
+            matched_record = exact_matches[0]
+
+    if matched_record is not None:
+        resolved_name = str(matched_record.get("name") or requested_name).strip()
+        resolved_id = str(matched_record.get("id") or requested_id).strip()
+        result["resolved_name"] = resolved_name or requested_name
+        result["notebook_id"] = resolved_id
+        if requested_name and resolved_name:
+            result["renamed"] = (
+                _normalize_notebook_name_key(requested_name)
+                != _normalize_notebook_name_key(resolved_name)
+            )
+        return result
+
+    suggestion = _pick_notebook_name_suggestion(requested_name, records)
+    shown_name = requested_name or fallback_name or "알 수 없는 전자필기장"
+    if suggestion:
+        hint = (
+            f"전자필기장 '{shown_name}'을(를) 찾지 못했습니다. "
+            f"이름이 바뀌었을 수 있습니다. 현재 열려 있는 비슷한 이름: '{suggestion}'."
+        )
+    else:
+        hint = (
+            f"전자필기장 '{shown_name}'을(를) 찾지 못했습니다. "
+            "이름이 바뀌었거나 현재 열려 있지 않을 수 있습니다. "
+            "이름을 바꿨다면 다시 등록해 주세요."
+        )
+
+    result["should_abort"] = True
+    result["error"] = hint
+    return result
 
 
 def _open_notebook_shortcut_via_shell(
@@ -1603,7 +1869,7 @@ def _open_notebook_shortcut_via_shell(
     try:
         open_keys = {
             _normalize_notebook_name_key(name)
-            for name in _get_open_notebook_names_via_com()
+            for name in _get_open_notebook_names_via_com(refresh=True)
             if _normalize_notebook_name_key(name)
         }
     except Exception:
@@ -1616,6 +1882,7 @@ def _open_notebook_shortcut_via_shell(
 
     if protocol_url:
         exe_path = _get_onenote_exe_path()
+        _clear_open_notebook_records_cache()
         try:
             if exe_path:
                 subprocess.Popen([exe_path, "/hyperlink", protocol_url])
@@ -1641,7 +1908,7 @@ def _open_notebook_shortcut_via_shell(
         try:
             open_keys = {
                 _normalize_notebook_name_key(name)
-                for name in _get_open_notebook_names_via_com()
+                for name in _get_open_notebook_names_via_com(refresh=True)
                 if _normalize_notebook_name_key(name)
             }
         except Exception:
@@ -1777,6 +2044,8 @@ def save_connection_info(window_element):
     try:
         info = build_window_signature(window_element)
         current_settings = load_settings()
+        if current_settings.get("connection_signature") == info:
+            return
         current_settings["connection_signature"] = info
         save_settings(current_settings)
     except Exception as e:
@@ -2020,6 +2289,8 @@ class FavoriteActivationWorker(QThread):
             "window_info": None,
             "target_kind": None,
             "expected_center_text": "",
+            "resolved_name": "",
+            "resolved_notebook_id": "",
             "error": "",
         }
         try:
@@ -2061,10 +2332,26 @@ class FavoriteActivationWorker(QThread):
             section_text = self.target.get("section_text")
             ok = False
             if notebook_text:
+                notebook_info = _resolve_notebook_target_for_activation(
+                    self.target, self.display_name
+                )
                 result["target_kind"] = "notebook"
-                result["expected_center_text"] = notebook_text
+                result["resolved_name"] = (
+                    notebook_info.get("resolved_name") or notebook_text
+                )
+                result["resolved_notebook_id"] = (
+                    notebook_info.get("notebook_id") or ""
+                )
+                if notebook_info.get("should_abort"):
+                    result["error"] = notebook_info.get("error") or ""
+                    self.done.emit(result)
+                    return
+                result["expected_center_text"] = result["resolved_name"] or notebook_text
                 ok = select_notebook_by_text(
-                    win, notebook_text, tree, center_after_select=False
+                    win,
+                    result["expected_center_text"],
+                    tree,
+                    center_after_select=False,
                 )
             elif section_text:
                 result["target_kind"] = "section"
@@ -2140,7 +2427,7 @@ class OpenAllNotebooksWorker(QThread):
                 try:
                     open_names = {
                         _normalize_notebook_name_key(name)
-                        for name in _get_open_notebook_names_via_com()
+                        for name in _get_open_notebook_names_via_com(refresh=True)
                         if _normalize_notebook_name_key(name)
                     }
                 except Exception as e:
@@ -2366,6 +2653,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         #       저장 시 반드시 item.setData()로 payload를 다시 주입한다.
         self.active_buffer_node = None  # Dict payload
         self.active_buffer_item = None  # QTreeWidgetItem
+        self._active_buffer_settings_node = None  # Dict node in self.settings
+        self._buffer_item_index: Dict[str, QTreeWidgetItem] = {}
+        self._first_buffer_item: Optional[QTreeWidgetItem] = None
         self._aggregate_cache_valid = False
         self._aggregate_cache = []
         self._aggregate_display_cache_sig = None
@@ -3487,18 +3777,27 @@ class OneNoteScrollRemoconApp(QMainWindow):
             found_data = []
             buf_name = "None"
 
-            iterator = QTreeWidgetItemIterator(self.buffer_tree)
-            while iterator.value():
-                item = iterator.value()
-                payload = item.data(0, ROLE_DATA) or {}
-                if payload.get("id") == active_id:
-                    buf_name = item.text(0)
-                    if active_id == AGG_BUFFER_ID:
-                        found_data = self._build_aggregate_buffer()
-                    else:
-                        found_data = payload.get("data", [])
-                    break
-                iterator += 1
+            found_item = self._buffer_item_index.get(active_id) if active_id else None
+            if found_item is not None:
+                payload = found_item.data(0, ROLE_DATA) or {}
+                buf_name = found_item.text(0)
+                if active_id == AGG_BUFFER_ID:
+                    found_data = self._build_aggregate_buffer()
+                else:
+                    found_data = payload.get("data", [])
+            else:
+                iterator = QTreeWidgetItemIterator(self.buffer_tree)
+                while iterator.value():
+                    item = iterator.value()
+                    payload = item.data(0, ROLE_DATA) or {}
+                    if payload.get("id") == active_id:
+                        buf_name = item.text(0)
+                        if active_id == AGG_BUFFER_ID:
+                            found_data = self._build_aggregate_buffer()
+                        else:
+                            found_data = payload.get("data", [])
+                        break
+                    iterator += 1
 
             # 강제 리빌드
             self._rebuild_modules_from_buffer(buf_name, found_data)
@@ -3550,6 +3849,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         self.buffer_tree.blockSignals(True)
         self.buffer_tree.clear()
+        self._buffer_item_index = {}
+        self._first_buffer_item = None
+        self._active_buffer_settings_node = None
 
         buffers_data = self.settings.get("favorites_buffers", [])
 
@@ -3580,16 +3882,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 # 시작 시 프로젝트 영역은 항상 전체 펼침 상태로 보여준다.
                 # 기존 expandToDepth(1)은 그룹 아래 하위 폴더가 접힌 채 남아서
                 # 사용자가 앱을 켤 때마다 다시 열어야 했다.
-                self.buffer_tree.expandAll()
+                self._expand_buffer_groups_always(reason="startup")
             except Exception:
                 pass
             self.buffer_tree.blockSignals(False)
 
             # 활성 버퍼 복원
             active_id = self.settings.get("active_buffer_id")
-            found_item = None
+            found_item = self._buffer_item_index.get(active_id) if active_id else None
 
-            if active_id:
+            if active_id and not found_item:
                 # 트리를 순회하며 ID 찾기
                 iterator = QTreeWidgetItemIterator(self.buffer_tree)
                 while iterator.value():
@@ -3601,6 +3903,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     iterator += 1
             
             # 못 찾았으면 첫 번째 버퍼 선택
+            if not found_item:
+                found_item = self._first_buffer_item
             if not found_item:
                 iterator = QTreeWidgetItemIterator(self.buffer_tree)
                 while iterator.value():
@@ -3648,6 +3952,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 item.setIcon(0, icon)
             
         item.setData(0, ROLE_DATA, payload)
+        item_id = payload.get("id")
+        if item_id:
+            self._buffer_item_index[item_id] = item
+            if node_type == "buffer" and self._first_buffer_item is None:
+                self._first_buffer_item = item
         
         # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
         if payload.get("locked"):
@@ -3683,6 +3992,49 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._dbg_hot(f"[DBG][FAV][EXPAND_GROUPS][FAIL]{tag} {e}")
             except Exception:
                 pass
+
+    def _expand_buffer_groups_always(self, *, reason: str = "") -> None:
+        try:
+            root = self.buffer_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount())]
+            expanded = 0
+            while stack:
+                it = stack.pop()
+                if it.childCount() > 0:
+                    self.buffer_tree.expandItem(it)
+                    expanded += 1
+                    for j in range(it.childCount()):
+                        stack.append(it.child(j))
+            tag = f" reason={reason}" if reason else ""
+            self._dbg_hot(f"[DBG][BUF][EXPAND_GROUPS]{tag} expanded={expanded}")
+        except Exception as e:
+            try:
+                tag = f" reason={reason}" if reason else ""
+                self._dbg_hot(f"[DBG][BUF][EXPAND_GROUPS][FAIL]{tag} {e}")
+            except Exception:
+                pass
+
+    def _rebuild_buffer_item_index(self) -> None:
+        self._buffer_item_index = {}
+        self._first_buffer_item = None
+        try:
+            root = self.buffer_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount())]
+            while stack:
+                item = stack.pop()
+                payload = item.data(0, ROLE_DATA) or {}
+                item_id = payload.get("id")
+                if item_id:
+                    self._buffer_item_index[item_id] = item
+                    if (
+                        item.data(0, ROLE_TYPE) == "buffer"
+                        and self._first_buffer_item is None
+                    ):
+                        self._first_buffer_item = item
+                for i in range(item.childCount()):
+                    stack.append(item.child(i))
+        except Exception as e:
+            self._dbg_hot(f"[DBG][BUF][INDEX][FAIL] {e}")
 
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
@@ -3804,6 +4156,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             # PyQt의 item.data()로 얻은 dict는 "수정해도 item 내부에 반영되지" 않는 경우가 있다.
             # 따라서 활성 버퍼의 QTreeWidgetItem에도 동일 데이터를 강제 주입한다.
             if self.active_buffer_item is None and self.active_buffer_id:
+                self.active_buffer_item = self._buffer_item_index.get(self.active_buffer_id)
+            if self.active_buffer_item is None and self.active_buffer_id:
                 # 예외 상황 대비: ID로 다시 찾아서 연결
                 iterator = QTreeWidgetItemIterator(self.buffer_tree)
                 while iterator.value():
@@ -3822,8 +4176,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
             self._fav_last_persisted_hash = current_hash
             # 그리고 전체 버퍼 구조 저장
-            self._save_buffer_structure()
-            self._dbg_hot("[DBG][FAV][SAVE] SSOT synchronized and persisted")
+            settings_buffer = self._active_buffer_settings_node
+            if settings_buffer is None:
+                settings_buffer = _find_buffer_node_by_id(
+                    self.settings.get("favorites_buffers", []),
+                    self.active_buffer_id,
+                )
+                self._active_buffer_settings_node = settings_buffer
+            if settings_buffer is not None:
+                settings_buffer["data"] = data
+                self.settings["active_buffer_id"] = self.active_buffer_id
+                self._save_settings_to_file()
+                self._dbg_hot("[DBG][FAV][SAVE] Active buffer data persisted without full structure rebuild")
+            else:
+                self._save_buffer_structure()
+                self._dbg_hot("[DBG][FAV][SAVE] Fallback full buffer structure persist")
 
         except Exception as e:
             print(f"[ERROR] 즐겨찾기 저장 실패: {e}")
@@ -3831,6 +4198,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def _save_buffer_structure(self):
         """버퍼 트리의 구조(그룹/버퍼)를 settings에 저장합니다."""
         self._invalidate_aggregate_cache()
+        self._rebuild_buffer_item_index()
         root = self.buffer_tree.invisibleRootItem()
         structure = []
         for i in range(root.childCount()):
@@ -3845,12 +4213,20 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         if structure_sig is not None and structure_sig == getattr(self, "_last_saved_buffer_structure_sig", None):
             self.settings["favorites_buffers"] = structure
+            self._active_buffer_settings_node = _find_buffer_node_by_id(
+                self.settings.get("favorites_buffers", []),
+                self.active_buffer_id,
+            )
             return
 
         self.settings["favorites_buffers"] = structure
         # ✅ 저장 직전에 구조 강제 보정(순서/락/종합 유지)
         _ensure_default_and_aggregate_inplace(self.settings)
         self._last_saved_buffer_structure_sig = structure_sig
+        self._active_buffer_settings_node = _find_buffer_node_by_id(
+            self.settings.get("favorites_buffers", []),
+            self.active_buffer_id,
+        )
         self._save_settings_to_file()
 
     def _serialize_buffer_item(self, item: QTreeWidgetItem) -> Dict:
@@ -4193,6 +4569,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.active_buffer_id = payload.get("id")
             self.active_buffer_node = payload  # Dict payload(스냅샷)
             self.active_buffer_item = item
+            self._active_buffer_settings_node = _find_buffer_node_by_id(
+                self.settings.get("favorites_buffers", []),
+                self.active_buffer_id,
+            )
             self.settings["active_buffer_id"] = self.active_buffer_id
             
             self.setUpdatesEnabled(False)
@@ -4252,6 +4632,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.btn_add_group.setEnabled(False)
             self.active_buffer_id = None
             self.active_buffer_item = None
+            self._active_buffer_settings_node = None
             self._load_favorites_into_center_tree([])
 
             # ✅ 버퍼가 아닌(그룹/빈) 상태에서도 Undo 컨텍스트를 리셋 (이전 버퍼 스냅샷 혼입 방지)
@@ -4405,16 +4786,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.active_buffer_id = None
                 self.active_buffer_item = None
                 self.active_buffer_node = None
+                self._active_buffer_settings_node = None
                 self.settings["active_buffer_id"] = None
 
-                found_item = None
-                it = QTreeWidgetItemIterator(self.buffer_tree)
-                while it.value():
-                    cand = it.value()
-                    if cand.data(0, ROLE_TYPE) == "buffer":
-                        found_item = cand
-                        break
-                    it += 1
+                found_item = self._first_buffer_item
                 print(f"[DBG][BUF][DEL] next buffer found_item={found_item}")
                 if found_item:
                     self.buffer_tree.setCurrentItem(found_item)
@@ -4979,6 +5354,15 @@ class OneNoteScrollRemoconApp(QMainWindow):
             print(f"[DBG][ONENOTE_REG][ALL] sig build FAIL: {e}")
             sig = {}
 
+        notebook_records_by_key: Dict[str, List[Dict[str, str]]] = {}
+        try:
+            for record in _get_open_notebook_records_via_com(refresh=True):
+                record_key = _normalize_notebook_name_key(record.get("name"))
+                if record_key:
+                    notebook_records_by_key.setdefault(record_key, []).append(record)
+        except Exception as e:
+            print(f"[WARN][ONENOTE_REG][ALL][COM] {e}")
+
         # 5) 현재 종합 버퍼의 2패널(모듈영역=fav_tree)에 notebook 노드로 넣고 저장
         try:
             root = self.fav_tree.invisibleRootItem()
@@ -4996,14 +5380,20 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 root.addChild(it)
             # notebook 노드 삽입
             for nb_name in notebooks:
+                target = {"sig": sig, "notebook_text": nb_name}
+                matched_records = notebook_records_by_key.get(
+                    _normalize_notebook_name_key(nb_name), []
+                )
+                if len(matched_records) == 1 and matched_records[0].get("id"):
+                    target["notebook_id"] = matched_records[0]["id"]
                 node = {
                     "type": "notebook",
                     "id": str(uuid.uuid4()),
                     "name": nb_name,
-                    "target": {"sig": sig, "notebook_text": nb_name},
+                    "target": target,
                 }
                 self._append_fav_node(root, node)
-            self.fav_tree.expandAll()
+            self._expand_fav_groups_always(reason="register_all_notebooks")
             self._save_favorites()
             
             # SSOT 검증 로직 추가
@@ -5240,6 +5630,146 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception:
                 pass
 
+    def _sync_favorite_notebook_target(
+        self,
+        item: Optional[QTreeWidgetItem],
+        resolved_name: str,
+        resolved_notebook_id: str,
+    ) -> Dict[str, Any]:
+        current_name = ""
+        if item is not None:
+            try:
+                current_name = item.text(0) or ""
+            except Exception:
+                current_name = ""
+
+        result = {
+            "display_name": current_name,
+            "changed": False,
+            "name_changed": False,
+            "was_stale": False,
+        }
+        if item is None:
+            return result
+
+        try:
+            payload = item.data(0, ROLE_DATA) or {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            target = payload.get("target") or {}
+            if not isinstance(target, dict):
+                target = {}
+
+            display_name = current_name
+            stale_prefixes = ("(구) ", "(old) ")
+            for prefix in stale_prefixes:
+                if display_name.startswith(prefix):
+                    display_name = display_name[len(prefix):]
+                    result["was_stale"] = True
+                    break
+
+            clean_name = display_name
+            resolved_name = (resolved_name or "").strip()
+            resolved_notebook_id = (resolved_notebook_id or "").strip()
+
+            if resolved_name and clean_name != resolved_name:
+                clean_name = resolved_name
+                result["name_changed"] = True
+
+            if current_name != clean_name:
+                item.setText(0, clean_name)
+                result["changed"] = True
+
+            if resolved_name and target.get("notebook_text") != resolved_name:
+                target["notebook_text"] = resolved_name
+                result["changed"] = True
+
+            if resolved_notebook_id and target.get("notebook_id") != resolved_notebook_id:
+                target["notebook_id"] = resolved_notebook_id
+                result["changed"] = True
+
+            payload["target"] = target
+            item.setData(0, ROLE_DATA, payload)
+            result["display_name"] = clean_name or current_name
+
+            if result["changed"]:
+                self._save_favorites()
+        except Exception:
+            print("[ERR][FAV][SYNC] exception")
+            traceback.print_exc()
+
+        return result
+
+    def _handle_favorite_activation_result(
+        self,
+        item: Optional[QTreeWidgetItem],
+        sig: Dict[str, Any],
+        display_name: str,
+        result: Dict[str, Any],
+    ) -> None:
+        try:
+            connected = self._apply_connected_window_info(result.get("window_info"))
+            ok = bool(result.get("ok"))
+            target_kind = result.get("target_kind")
+            expected_center_text = result.get("expected_center_text")
+            resolved_name = str(result.get("resolved_name") or "").strip()
+            resolved_notebook_id = str(result.get("resolved_notebook_id") or "").strip()
+
+            if connected and ok:
+                notebook_sync = {
+                    "display_name": display_name,
+                    "changed": False,
+                    "name_changed": False,
+                    "was_stale": False,
+                }
+                if target_kind == "notebook":
+                    notebook_sync = self._sync_favorite_notebook_target(
+                        item, resolved_name, resolved_notebook_id
+                    )
+
+                if target_kind in ("section", "notebook") and expected_center_text:
+                    self._schedule_center_after_activate(sig, expected_center_text)
+                else:
+                    self._cancel_pending_center_after_activate()
+
+                final_name = notebook_sync.get("display_name") or display_name
+                if notebook_sync.get("was_stale"):
+                    self.update_status_and_ui(
+                        f"활성화: '{final_name}' (이름 복원)", True
+                    )
+                elif notebook_sync.get("name_changed"):
+                    self.update_status_and_ui(
+                        f"활성화: '{final_name}' (이름 갱신)", True
+                    )
+                else:
+                    self.update_status_and_ui(f"활성화: '{final_name}'", True)
+                return
+
+            current_name = ""
+            if item is not None:
+                try:
+                    current_name = item.text(0) or ""
+                except Exception:
+                    current_name = ""
+
+            stale_prefixes = ("(구) ", "(old) ")
+            if item is not None and not any(
+                current_name.startswith(prefix) for prefix in stale_prefixes
+            ):
+                new_name = f"(구) {current_name}"
+                item.setText(0, new_name)
+                self._save_favorites()
+                fail_msg = result.get("error") or f"항목 찾기 실패: '{new_name}'"
+                self.update_status_and_ui(fail_msg, True)
+            else:
+                fail_msg = result.get("error") or f"항목 찾기 실패: '{display_name}'"
+                self.update_status_and_ui(fail_msg, True)
+        except Exception as e:
+            print("[ERR][FAV][ACTIVATE][RESULT] exception")
+            traceback.print_exc()
+            self.update_status_and_ui(f"즐겨찾기 처리 중 오류: {e}", True)
+
     def _apply_connected_window_info(self, info: Optional[Dict[str, Any]]) -> bool:
         if not info or not info.get("handle"):
             return False
@@ -5324,6 +5854,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 worker.deleteLater()
             except Exception:
                 pass
+            return self._handle_favorite_activation_result(
+                item=item,
+                sig=sig,
+                display_name=display_name,
+                result=result,
+            )
 
             connected = self._apply_connected_window_info(result.get("window_info"))
             ok = bool(result.get("ok"))
@@ -5386,5 +5922,22 @@ if __name__ == "__main__":
             ex._on_fav_item_double_clicked(item, col)
 
     ex.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section)
+
+    def _toggle_group_and_activate_section_safe(item, col):
+        try:
+            _toggle_group_and_activate_section(item, col)
+        except Exception:
+            print("[ERR][FAV][DBLCLK][STANDALONE] exception")
+            traceback.print_exc()
+            try:
+                ex.update_status_and_ui("즐겨찾기 실행 중 오류가 발생했습니다.", True)
+            except Exception:
+                pass
+
+    try:
+        ex.fav_tree.itemDoubleClicked.disconnect(_toggle_group_and_activate_section)
+    except Exception:
+        pass
+    ex.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section_safe)
 
     sys.exit(app.exec())

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import os
 """
 커스텀 위젯 모듈
 
@@ -10,6 +11,9 @@ from PyQt6.QtCore import pyqtSignal, Qt, QSize
 import traceback
 from src.constants import ROLE_TYPE
 from typing import Optional
+
+
+TREE_WIDGET_KEY_DEBUG = os.environ.get("ONENOTE_REMOCON_DEBUG_KEYS") == "1"
 
 
 class FavoritesTree(QTreeWidget):
@@ -51,7 +55,8 @@ class FavoritesTree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setIndentation(16)
-        self.setAnimated(True)
+        self.setUniformRowHeights(True)
+        self.setAnimated(False)
         self.setExpandsOnDoubleClick(True)
 
     def dropEvent(self, event):
@@ -105,13 +110,15 @@ class FavoritesTree(QTreeWidget):
             mods_obj = event.modifiers()
             # PyQt6: modifiers가 enum/flags라 int()가 바로 안 되는 케이스가 있어 .value로 정수화
             mods_val = mods_obj.value if hasattr(mods_obj, "value") else mods_obj
-            print(
-                f"[DBG][TREE][KEY] cls={self.__class__.__name__} key={event.key()} mods={int(mods_val)} hasFocus={self.hasFocus()}"
-            )
+            if TREE_WIDGET_KEY_DEBUG:
+                print(
+                    f"[DBG][TREE][KEY] cls={self.__class__.__name__} key={event.key()} mods={int(mods_val)} hasFocus={self.hasFocus()}"
+                )
 
             # Delete 키
             if event.key() == Qt.Key.Key_Delete:
-                print(f"[DBG][TREE][DEL] emit deleteRequested from {self.__class__.__name__}")
+                if TREE_WIDGET_KEY_DEBUG:
+                    print(f"[DBG][TREE][DEL] emit deleteRequested from {self.__class__.__name__}")
                 self.deleteRequested.emit()
                 event.accept()
                 return
@@ -136,15 +143,18 @@ class FavoritesTree(QTreeWidget):
             # Undo / Redo
             if event.key() == Qt.Key.Key_Z:
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-                    print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Shift+Z)")
+                    if TREE_WIDGET_KEY_DEBUG:
+                        print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Shift+Z)")
                     self.redoRequested.emit()
                 else:
-                    print("[DBG][TREE][UNDO] emit undoRequested (Ctrl+Z)")
+                    if TREE_WIDGET_KEY_DEBUG:
+                        print("[DBG][TREE][UNDO] emit undoRequested (Ctrl+Z)")
                     self.undoRequested.emit()
                 event.accept()
                 return
             if event.key() == Qt.Key.Key_Y:
-                print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Y)")
+                if TREE_WIDGET_KEY_DEBUG:
+                    print("[DBG][TREE][UNDO] emit redoRequested (Ctrl+Y)")
                 self.redoRequested.emit()
                 event.accept()
                 return

@@ -18,6 +18,7 @@ _boot("process start")
 import sys
 _boot("import sys done")
 import os
+import traceback
 
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -84,6 +85,23 @@ def main():
         window._on_fav_item_double_clicked(item, col)
 
     window.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section)
+
+    def _toggle_group_and_activate_section_safe(item, col):
+        try:
+            _toggle_group_and_activate_section(item, col)
+        except Exception as e:
+            print("[ERR][FAV][DBLCLK][MAIN] exception")
+            traceback.print_exc()
+            try:
+                window.update_status_and_ui(f"즐겨찾기 실행 중 오류: {e}", True)
+            except Exception:
+                pass
+
+    try:
+        window.fav_tree.itemDoubleClicked.disconnect(_toggle_group_and_activate_section)
+    except Exception:
+        pass
+    window.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section_safe)
 
     sys.exit(app.exec())
 
