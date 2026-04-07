@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QWidget,
     QLineEdit,
+    QListWidgetItem,
 )
 from PyQt6.QtCore import (
     QThread,
@@ -608,10 +609,11 @@ mouse = None
 keyboard = None
 
 _pwa_ready = False
+_pwa_import_error = ""
 
 
 def ensure_pywinauto():
-    global _pwa_ready, Desktop, WindowNotFoundError, ElementNotFoundError, TimeoutError, UIAWrapper, UIAElementInfo, mouse, keyboard
+    global _pwa_ready, _pwa_import_error, Desktop, WindowNotFoundError, ElementNotFoundError, TimeoutError, UIAWrapper, UIAElementInfo, mouse, keyboard
     # NameError 수정: _ppa_ready -> _pwa_ready
     if _pwa_ready:
         return
@@ -638,8 +640,10 @@ def ensure_pywinauto():
         mouse = _mouse
         keyboard = _keyboard
         _pwa_ready = True
-    except ImportError:
-        pass
+        _pwa_import_error = ""
+    except ImportError as e:
+        _pwa_import_error = str(e)
+        print(f"[WARN][PWA] import failed: {_pwa_import_error}")
 
 
 # ----------------- 0.2 Win32 빠른 창 열거 -----------------
@@ -937,12 +941,13 @@ def get_selected_tree_item_fast(tree_control):
         pass
 
     try:
-        for item in tree_control.descendants(control_type="TreeItem"):
-            try:
-                if item.is_selected():
-                    return item
-            except Exception:
-                pass
+        for control_type in ("TreeItem", "ListItem"):
+            for item in tree_control.descendants(control_type=control_type):
+                try:
+                    if item.is_selected():
+                        return item
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -2232,7 +2237,7 @@ class CenterAfterActivateWorker(QThread):
 
             expected_norm = _normalize_text(self.expected_text)
             # 즉시 중앙정렬 실패 시에만 아주 짧게 fallback 대기
-            deadline = time.monotonic() + 0.2
+            deadline = time.monotonic() + 0.6
             last_selected = None
 
             while not self.isInterruptionRequested() and time.monotonic() < deadline:
@@ -2644,6 +2649,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
         self._open_all_notebooks_worker: Optional[OpenAllNotebooksWorker] = None
         self._center_request_seq = 0
+        self._last_list_connect_key = None
+        self._last_list_connect_at = 0.0
+        self._pending_onenote_list_selection_key = None
+        self._last_onenote_list_refresh_at = 0.0
         self.onenote_windows_info: List[Dict] = []
         self.my_pid = os.getpid()
         self._auto_center_after_activate = True
@@ -2667,6 +2676,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._settings_save_interval_ms = 180
         self._settings_save_pending = False
         self._settings_save_in_progress = False
+        self._onenote_list_refresh_timer = QTimer(self)
+        self._onenote_list_refresh_timer.setSingleShot(True)
+        self._onenote_list_refresh_timer.timeout.connect(
+            self._refresh_onenote_list_from_click
+        )
 
         # --- [START] 창 위치 복원 및 유효성 검사 로직 (수정됨) ---
         geo_settings = self.settings.get(
@@ -3173,6 +3187,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         self.onenote_list_widget = QListWidget()
         self.onenote_list_widget.addItem("자동 재연결 시도 중...")
+        self.onenote_list_widget.installEventFilter(self)
+        self.onenote_list_widget.viewport().installEventFilter(self)
         self.onenote_list_widget.itemDoubleClicked.connect(
             self.connect_and_center_from_list_item
         )
@@ -3383,6 +3399,82 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if hasattr(self, "open_all_notebooks_action"):
             self.open_all_notebooks_action.setEnabled(is_connected and not open_all_busy)
 
+    def _capture_onenote_list_selection_key(self):
+        item = None
+        try:
+            item = self.onenote_list_widget.currentItem()
+        except Exception:
+            item = None
+        if item is not None:
+            try:
+                raw = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(raw, dict):
+                    return (
+                        raw.get("handle"),
+                        raw.get("pid"),
+                        raw.get("title"),
+                    )
+            except Exception:
+                pass
+        return None
+
+    def _schedule_onenote_list_auto_refresh(self, delay_ms: int = 120):
+        if not hasattr(self, "onenote_list_widget"):
+            return
+        if self._scanner_worker and self._scanner_worker.isRunning():
+            return
+        now = time.monotonic()
+        if (now - self._last_onenote_list_refresh_at) < 0.4:
+            return
+        self._pending_onenote_list_selection_key = (
+            self._capture_onenote_list_selection_key()
+        )
+        self._onenote_list_refresh_timer.start(max(0, int(delay_ms)))
+
+    def _cancel_pending_onenote_list_auto_refresh(self):
+        if self._onenote_list_refresh_timer.isActive():
+            self._onenote_list_refresh_timer.stop()
+
+    def _refresh_onenote_list_from_click(self):
+        if self._scanner_worker and self._scanner_worker.isRunning():
+            return
+        self._last_onenote_list_refresh_at = time.monotonic()
+        self.refresh_onenote_list()
+
+    def _current_onenote_handle(self) -> Optional[int]:
+        win = getattr(self, "onenote_window", None)
+        if win is None:
+            return None
+        try:
+            handle = getattr(win, "handle", None)
+            if callable(handle):
+                handle = handle()
+            if handle:
+                return int(handle)
+        except Exception:
+            return None
+        return None
+
+    def eventFilter(self, obj, event):
+        try:
+            list_widget = getattr(self, "onenote_list_widget", None)
+            if list_widget is not None and obj is list_widget.viewport():
+                event_type = event.type()
+                if event_type == QEvent.Type.MouseButtonPress:
+                    app = QApplication.instance()
+                    delay_ms = 120
+                    if app is not None:
+                        try:
+                            delay_ms = int(app.doubleClickInterval()) + 30
+                        except Exception:
+                            delay_ms = 120
+                    self._schedule_onenote_list_auto_refresh(delay_ms=delay_ms)
+                elif event_type == QEvent.Type.MouseButtonDblClick:
+                    self._cancel_pending_onenote_list_auto_refresh()
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
+
     def _start_auto_reconnect(self):
         self.refresh_button.setEnabled(False)
         self._reconnect_worker = ReconnectWorker()
@@ -3424,6 +3516,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def refresh_onenote_list(self):
         if self._scanner_worker and self._scanner_worker.isRunning():
             return
+        self._last_onenote_list_refresh_at = time.monotonic()
+        if self._onenote_list_refresh_timer.isActive():
+            self._onenote_list_refresh_timer.stop()
 
         self.onenote_list_widget.clear()
         self.onenote_list_widget.addItem("OneNote 창을 검색 중입니다...")
@@ -3437,12 +3532,20 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def _on_onenote_list_ready(self, results: List[Dict]):
         self.onenote_windows_info = results
         self.onenote_list_widget.clear()
+        print(f"[DBG][LIST] onenote_windows={len(results)}")
+        selection_key = self._pending_onenote_list_selection_key
+        self._pending_onenote_list_selection_key = None
 
         if not results:
             self.onenote_list_widget.addItem("실행 중인 OneNote 창을 찾지 못했습니다.")
         else:
-            items = [f'{r["title"]}  [{r["class_name"]}]' for r in results]
-            self.onenote_list_widget.addItems(items)
+            for info in results:
+                item = QListWidgetItem(f'{info["title"]}  [{info["class_name"]}]')
+                item.setData(Qt.ItemDataRole.UserRole, copy.deepcopy(info))
+                self.onenote_list_widget.addItem(item)
+                item_key = (info.get("handle"), info.get("pid"), info.get("title"))
+                if selection_key and item_key == selection_key:
+                    self.onenote_list_widget.setCurrentItem(item)
 
         self.onenote_list_widget.setEnabled(True)
         self.refresh_button.setEnabled(True)
@@ -3456,37 +3559,145 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 pass
 
     def _perform_connection(self, info: Dict) -> bool:
+        t0 = time.perf_counter()
         ensure_pywinauto()
         if not _pwa_ready:
             self.update_status_and_ui("pywinauto가 준비되지 않았습니다.", False)
             return False
         try:
-            self.onenote_window = Desktop(backend="uia").window(handle=info["handle"])
-            if not self.onenote_window.is_visible():
+            print(
+                "[DBG][CONNECT] try",
+                f"handle={info.get('handle')}",
+                f"pid={info.get('pid')}",
+                f"class={info.get('class_name')}",
+                f"title={info.get('title')!r}",
+            )
+            target = None
+            handle = info.get("handle")
+            if handle:
+                try:
+                    target = Desktop(backend="uia").window(handle=handle)
+                    if not target.is_visible():
+                        target = None
+                except Exception:
+                    target = None
+            if target is None:
+                target = reacquire_window_by_signature(info)
+            if target is None:
                 raise ElementNotFoundError
 
+            self.onenote_window = target
             window_title = self.onenote_window.window_text()
             save_connection_info(self.onenote_window)
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            print(
+                f"[DBG][CONNECT] success title={window_title!r} "
+                f"elapsed_ms={elapsed_ms:.1f} at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
 
             status_text = f"연결됨: '{window_title}'"
             self.update_status_and_ui(status_text, True)
-            QTimer.singleShot(0, self._cache_tree_control)
+            self._cache_tree_control()
             return True
 
         except ElementNotFoundError:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            print(
+                "[DBG][CONNECT] fail: target not found/visible "
+                f"elapsed_ms={elapsed_ms:.1f} at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
             self.update_status_and_ui("연결 실패: 선택한 창이 보이지 않습니다.", False)
             self.refresh_onenote_list()
             return False
         except Exception as e:
+            elapsed_ms = (time.perf_counter() - t0) * 1000.0
+            print(
+                f"[DBG][CONNECT] exception elapsed_ms={elapsed_ms:.1f} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f} err={e}"
+            )
             self.update_status_and_ui(f"연결 실패: {e}", False)
             return False
 
     def connect_and_center_from_list_item(self, item):
-        row = self.onenote_list_widget.currentRow()
-        if 0 <= row < len(self.onenote_windows_info):
+        started_at = time.perf_counter()
+        self._cancel_pending_onenote_list_auto_refresh()
+        info = None
+        row = -1
+        item_text = ""
+
+        if item is None:
+            try:
+                item = self.onenote_list_widget.currentItem()
+            except Exception:
+                item = None
+
+        if item is not None:
+            try:
+                item_text = item.text() or ""
+            except Exception:
+                item_text = ""
+            try:
+                self.onenote_list_widget.setCurrentItem(item)
+            except Exception:
+                pass
+            try:
+                raw = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(raw, dict):
+                    info = raw
+            except Exception:
+                info = None
+            if info is None:
+                try:
+                    row = self.onenote_list_widget.row(item)
+                except Exception:
+                    row = -1
+        else:
+            row = self.onenote_list_widget.currentRow()
+
+        if info is None and 0 <= row < len(self.onenote_windows_info):
             info = self.onenote_windows_info[row]
-            if self._perform_connection(info):
-                QTimer.singleShot(50, self.center_selected_item_action)
+
+        print(
+            "[DBG][LIST][ACTIVATE]",
+            f"text={item_text!r}",
+            f"row={row}",
+            f"has_info={bool(info)}",
+            f"at_s={(time.perf_counter() - self._t_boot):.3f}",
+        )
+        if not info:
+            self.update_status_and_ui("OneNote 창 선택 정보를 읽지 못했습니다. 목록을 새로고침해 주세요.", False)
+            return
+
+        connect_key = (info.get("handle"), info.get("pid"), info.get("title"))
+        now = time.monotonic()
+        if (
+            self._last_list_connect_key == connect_key
+            and (now - self._last_list_connect_at) < 0.35
+        ):
+            print(f"[DBG][LIST][SKIP] duplicate key={connect_key!r}")
+            return
+        self._last_list_connect_key = connect_key
+        self._last_list_connect_at = now
+
+        current_handle = self._current_onenote_handle()
+        target_handle = info.get("handle")
+        if current_handle and target_handle and int(target_handle) == current_handle:
+            print(
+                "[DBG][LIST][FASTPATH] already_connected "
+                f"handle={current_handle} elapsed_ms={(time.perf_counter() - started_at) * 1000.0:.1f} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
+            self.center_selected_item_action(
+                debug_source="list_dblclick_same_window",
+                started_at=started_at,
+            )
+            return
+
+        if self._perform_connection(info):
+            self.center_selected_item_action(
+                debug_source="list_dblclick_connect",
+                started_at=started_at,
+            )
 
     def select_other_window(self):
         dialog = OtherWindowSelectionDialog(self.my_pid, self)
@@ -3577,8 +3788,24 @@ class OneNoteScrollRemoconApp(QMainWindow):
         print("[DBG][PRECHECK] PASS")
         return True
 
-    def center_selected_item_action(self):
+    def center_selected_item_action(
+        self,
+        checked: bool = False,
+        *,
+        debug_source: str = "button",
+        started_at: Optional[float] = None,
+    ):
+        op_started_at = started_at or time.perf_counter()
+        print(
+            f"[DBG][CENTER][START] source={debug_source} "
+            f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+        )
         if not self._pre_action_check():
+            print(
+                f"[DBG][CENTER][ABORT] source={debug_source} "
+                f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
             return
 
         if not self.tree_control:
@@ -3589,6 +3816,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         )
 
         if success:
+            print(
+                f"[DBG][CENTER][DONE] source={debug_source} success=True "
+                f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
             self.update_status_and_ui(f"성공: '{item_name}' 중앙 정렬 완료.", True)
         else:
             self.tree_control = _find_tree_or_list(self.onenote_window)
@@ -3596,8 +3828,18 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.onenote_window, self.tree_control
             )
             if success:
+                print(
+                    f"[DBG][CENTER][DONE] source={debug_source} success=True retry=1 "
+                    f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                    f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+                )
                 self.update_status_and_ui(f"성공: '{item_name}' 중앙 정렬 완료.", True)
             else:
+                print(
+                    f"[DBG][CENTER][DONE] source={debug_source} success=False "
+                    f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                    f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+                )
                 self.update_status_and_ui(
                     "실패: 선택 항목을 찾거나 정렬하지 못했습니다.", True
                 )
@@ -5790,27 +6032,41 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         self._center_request_seq += 1
         request_seq = self._center_request_seq
-        worker = CenterAfterActivateWorker(sig, expected_text, self)
-        self._center_worker = worker
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        self._pending_center_timer = timer
 
-        def _on_done(ok: bool, selected_name: str):
-            if self._center_worker is not worker:
+        def _start_worker():
+            if self._pending_center_timer is not timer:
                 return
 
-            self._center_worker = None
-            try:
-                worker.deleteLater()
-            except Exception:
-                pass
+            self._pending_center_timer = None
+            worker = CenterAfterActivateWorker(sig, expected_text, self)
+            self._center_worker = worker
 
-            if ok and selected_name:
-                print(f"[DBG][CENTER][DONE] selected='{selected_name}' req={request_seq}")
-            else:
-                print(f"[DBG][CENTER][SKIP] req={request_seq}")
+            def _on_done(ok: bool, selected_name: str):
+                if self._center_worker is not worker:
+                    return
 
-        worker.done.connect(_on_done)
-        worker.finished.connect(lambda: None)
-        worker.start()
+                self._center_worker = None
+                try:
+                    worker.deleteLater()
+                except Exception:
+                    pass
+
+                if ok and selected_name:
+                    print(
+                        f"[DBG][CENTER][DONE] selected='{selected_name}' req={request_seq}"
+                    )
+                else:
+                    print(f"[DBG][CENTER][SKIP] req={request_seq}")
+
+            worker.done.connect(_on_done)
+            worker.finished.connect(lambda: None)
+            worker.start()
+
+        timer.timeout.connect(_start_worker)
+        timer.start(120)
 
     def _activate_favorite_section(self, item: QTreeWidgetItem):
         ensure_pywinauto()
