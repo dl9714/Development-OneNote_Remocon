@@ -16,6 +16,7 @@ import unicodedata
 import subprocess
 import re
 import difflib
+from types import SimpleNamespace
 from urllib.parse import urlparse, parse_qs
 
 try:
@@ -187,7 +188,7 @@ _OPEN_NOTEBOOK_RECORDS_CACHE: Dict[str, Any] = {
     "expires_at": 0.0,
     "records": [],
 }
-_OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC = 0.75
+_OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC = 10.0
 
 
 def _get_file_signature(path: str) -> Optional[tuple]:
@@ -906,18 +907,94 @@ def _safe_wheel(scroll_container, steps: int):
 
 
 # ----------------- 7. 선택 항목을 가장 빠르게 얻기 -----------------
+def _wrapper_identity_key(ctrl):
+    try:
+        rect = ctrl.rectangle()
+        return (
+            _safe_window_text(ctrl),
+            _safe_control_type(ctrl),
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom,
+        )
+    except Exception:
+        return (id(ctrl),)
+
+
+def _control_depth_within_tree(ctrl, tree_control) -> int:
+    depth = 0
+    current = ctrl
+    for _ in range(20):
+        current = _safe_parent(current)
+        if current is None:
+            break
+        depth += 1
+        if current == tree_control:
+            break
+    return depth
+
+
+def _pick_best_tree_item_candidate(tree_control, candidates):
+    best = None
+    best_score = None
+    for item in candidates:
+        if item is None:
+            continue
+        try:
+            focus = 1 if item.has_keyboard_focus() else 0
+        except Exception:
+            focus = 0
+        try:
+            selected = 1 if item.is_selected() else 0
+        except Exception:
+            selected = 0
+        depth = _control_depth_within_tree(item, tree_control)
+        try:
+            rect = item.rectangle()
+            height = max(1, rect.bottom - rect.top)
+        except Exception:
+            height = 9999
+        score = (focus, depth, selected, -height)
+        if best_score is None or score > best_score:
+            best = item
+            best_score = score
+    return best
+
+
 def get_selected_tree_item_fast(tree_control):
     ensure_pywinauto()
     if not _pwa_ready:
         return None
+    candidates = []
+    seen = set()
+
+    def _push(item):
+        if item is None:
+            return
+        key = _wrapper_identity_key(item)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(item)
+
+    def _best_candidate():
+        if not candidates:
+            return None
+        return _pick_best_tree_item_candidate(tree_control, candidates)
 
     try:
         if hasattr(tree_control, "get_selection"):
             sel = tree_control.get_selection()
             if sel:
-                return sel[0]
+                for item in sel:
+                    _push(item)
     except Exception:
         pass
+
+    best = _best_candidate()
+    if best is not None:
+        return best
 
     try:
         iface_sel = getattr(tree_control, "iface_selection", None)
@@ -925,33 +1002,45 @@ def get_selected_tree_item_fast(tree_control):
             arr = iface_sel.GetSelection()
             length = getattr(arr, "Length", 0)
             if length and length > 0:
-                el = arr.GetElement(0)
-                return UIAWrapper(UIAElementInfo(el))
+                for idx in range(length):
+                    try:
+                        el = arr.GetElement(idx)
+                        _push(UIAWrapper(UIAElementInfo(el)))
+                    except Exception:
+                        continue
     except Exception:
         pass
+
+    best = _best_candidate()
+    if best is not None:
+        return best
 
     try:
         for item in tree_control.children():
             try:
                 if item.is_selected():
-                    return item
+                    _push(item)
             except Exception:
                 pass
     except Exception:
         pass
 
+    best = _best_candidate()
+    if best is not None:
+        return best
+
     try:
         for control_type in ("TreeItem", "ListItem"):
             for item in tree_control.descendants(control_type=control_type):
                 try:
-                    if item.is_selected():
-                        return item
+                    if item.is_selected() or item.has_keyboard_focus():
+                        _push(item)
                 except Exception:
                     pass
     except Exception:
         pass
 
-    return None
+    return _best_candidate()
 
 
 # ----------------- 8. 페이지/섹션 컨테이너(Tree/List) 찾기 - ensure 호출 -----------------
@@ -977,6 +1066,14 @@ def _normalize_text(s: Optional[str]) -> str:
 def _normalize_notebook_name_key(s: Optional[str]) -> str:
     text = unicodedata.normalize("NFKC", s or "").casefold()
     return re.sub(r"[\s\-_]+", "", text)
+
+
+def _strip_stale_favorite_prefix(text: Optional[str]) -> str:
+    raw = (text or "").strip()
+    for prefix in ("(구) ", "(old) "):
+        if raw.startswith(prefix):
+            return raw[len(prefix) :].strip()
+    return raw
 
 
 def select_section_by_text(
@@ -1115,6 +1212,10 @@ def _safe_rectangle(ctrl):
         return None
 
 
+def _make_rect_proxy(left: int, top: int, right: int, bottom: int):
+    return SimpleNamespace(left=left, top=top, right=right, bottom=bottom)
+
+
 def _safe_parent(ctrl):
     try:
         return ctrl.parent()
@@ -1138,6 +1239,57 @@ def _find_scrollable_ancestor(ctrl, max_depth: int = 8):
         if _safe_control_type(current) in ("List", "Tree"):
             return current
     return fallback
+
+
+def _find_center_anchor_element(selected_item):
+    item_rect = _safe_rectangle(selected_item)
+    if item_rect is None:
+        return selected_item, "item_rect_missing"
+
+    item_text = _extract_primary_accessible_text(_safe_window_text(selected_item))
+    target_norm = _normalize_text(item_text)
+    if not target_norm:
+        return selected_item, "item_no_text"
+
+    best = None
+    best_score = None
+    search_types = ("Text", "ListItem", "TreeItem", "Button", "Custom", "DataItem")
+    top_limit = item_rect.top + min(260, max(120, (item_rect.bottom - item_rect.top) // 3))
+
+    for cand in _iter_descendants_by_types(selected_item, search_types):
+        if cand is None or cand == selected_item:
+            continue
+        rect = _safe_rectangle(cand)
+        if rect is None:
+            continue
+
+        height = rect.bottom - rect.top
+        width = rect.right - rect.left
+        if height < 14 or height > 120 or width < 60:
+            continue
+        if rect.top < item_rect.top or rect.top > top_limit:
+            continue
+
+        cand_text = _extract_primary_accessible_text(_safe_window_text(cand))
+        cand_norm = _normalize_text(cand_text)
+        if not cand_norm:
+            continue
+
+        exact = 1 if cand_norm == target_norm else 0
+        partial = 1 if (target_norm in cand_norm or cand_norm in target_norm) else 0
+        if not exact and not partial:
+            continue
+
+        top_gap = abs(rect.top - item_rect.top)
+        score = (exact, partial, -top_gap, width, -height)
+        if best_score is None or score > best_score:
+            best = cand
+            best_score = score
+
+    if best is not None:
+        return best, "descendant_text"
+
+    return selected_item, "item"
 
 
 def _wait_until(predicate, timeout: float = 1.5, interval: float = 0.05):
@@ -1791,10 +1943,54 @@ def _pick_notebook_name_suggestion(
     return best_name if best_score >= 0.72 else ""
 
 
+def _collect_root_notebook_names_from_tree(tree_control, limit: int = 32) -> List[str]:
+    names: List[str] = []
+    seen = set()
+    if not tree_control:
+        return names
+    try:
+        roots = list(tree_control.children() or [])
+    except Exception:
+        roots = []
+
+    for item in roots:
+        try:
+            name = _extract_primary_accessible_text(item.window_text()).strip()
+        except Exception:
+            name = ""
+        key = _normalize_notebook_name_key(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+        if len(names) >= max(1, limit):
+            break
+    return names
+
+
+def _build_notebook_not_found_error(
+    requested_name: str, candidate_names: List[str]
+) -> str:
+    shown_name = requested_name or "알 수 없는 전자필기장"
+    records = [{"name": name} for name in (candidate_names or []) if name]
+    suggestion = _pick_notebook_name_suggestion(requested_name, records)
+    if suggestion:
+        return (
+            f"전자필기장 '{shown_name}'을(를) 찾지 못했습니다. "
+            f"이름이 바뀌었을 수 있습니다. 현재 열려 있는 비슷한 이름: '{suggestion}'."
+        )
+    return (
+        f"전자필기장 '{shown_name}'을(를) 찾지 못했습니다. "
+        "현재 연결된 OneNote에서 해당 전자필기장이 보이지 않습니다."
+    )
+
+
 def _resolve_notebook_target_for_activation(
     target: Dict[str, Any], fallback_name: str = ""
 ) -> Dict[str, Any]:
-    requested_name = str((target or {}).get("notebook_text") or fallback_name or "").strip()
+    requested_name = _strip_stale_favorite_prefix(
+        str((target or {}).get("notebook_text") or fallback_name or "").strip()
+    )
     requested_id = str((target or {}).get("notebook_id") or "").strip()
     result = {
         "requested_name": requested_name,
@@ -1863,6 +2059,42 @@ def _resolve_notebook_target_for_activation(
 
     result["should_abort"] = True
     result["error"] = hint
+    return result
+
+
+def _resolve_favorite_activation_target(
+    target: Dict[str, Any], display_name: str
+) -> Dict[str, Any]:
+    notebook_text = str((target or {}).get("notebook_text") or "").strip()
+    section_text = str((target or {}).get("section_text") or "").strip()
+    result = {
+        "ok": True,
+        "target_kind": None,
+        "expected_center_text": "",
+        "resolved_name": "",
+        "resolved_notebook_id": "",
+        "error": "",
+    }
+
+    if notebook_text:
+        notebook_info = _resolve_notebook_target_for_activation(target, display_name)
+        result["target_kind"] = "notebook"
+        result["resolved_name"] = notebook_info.get("resolved_name") or notebook_text
+        result["resolved_notebook_id"] = notebook_info.get("notebook_id") or ""
+        if notebook_info.get("should_abort"):
+            result["ok"] = False
+            result["error"] = notebook_info.get("error") or ""
+            return result
+        result["expected_center_text"] = result["resolved_name"] or notebook_text
+        return result
+
+    if section_text:
+        result["target_kind"] = "section"
+        result["expected_center_text"] = section_text
+        return result
+
+    result["target_kind"] = "notebook"
+    result["expected_center_text"] = _strip_stale_favorite_prefix(display_name)
     return result
 
 
@@ -1935,7 +2167,7 @@ def _open_notebook_shortcut_via_shell(
 
 
 # ----------------- 9. 요소를 중앙으로 위치시키는 함수(최적화) - ensure 호출 -----------------
-def _center_element_in_view(element_to_center, scroll_container):
+def _center_element_in_view(element_to_center, scroll_container, *, anchor_element=None):
     ensure_pywinauto()
     if not _pwa_ready:
         return
@@ -1950,19 +2182,84 @@ def _center_element_in_view(element_to_center, scroll_container):
             lambda: element_to_center.rectangle(), timeout=0.1, interval=0.015
         )
 
-        rect_container = scroll_container.rectangle()
-        rect_item = element_to_center.rectangle()
-        item_center_y = (rect_item.top + rect_item.bottom) / 2
-        container_center_y = (rect_container.top + rect_container.bottom) / 2
-        offset = item_center_y - container_center_y
+        effective_container = (
+            _find_scrollable_ancestor(element_to_center) or scroll_container
+        )
+
+        def _anchor_metrics(rect_container, rect_item, rect_anchor):
+            if rect_container is None or rect_item is None:
+                return rect_item, 0.0, "full"
+
+            if rect_anchor is not None:
+                anchor_height = max(1, rect_anchor.bottom - rect_anchor.top)
+                if 14 <= anchor_height <= 140:
+                    return (
+                        rect_anchor,
+                        (rect_anchor.top + rect_anchor.bottom) / 2,
+                        "anchor_element",
+                    )
+
+            container_height = max(1, rect_container.bottom - rect_container.top)
+            item_height = max(1, rect_item.bottom - rect_item.top)
+            row_height = max(44, min(88, int(container_height * 0.055)))
+            if item_height > max(220, int(container_height * 0.85)):
+                anchor_bottom = min(rect_item.bottom, rect_item.top + row_height)
+                anchor = _make_rect_proxy(
+                    rect_item.left,
+                    rect_item.top,
+                    rect_item.right,
+                    anchor_bottom,
+                )
+                return anchor, (rect_item.top + anchor_bottom) / 2, "top_slice"
+
+            return rect_item, (rect_item.top + rect_item.bottom) / 2, "full"
+
+        def _calc_offset():
+            rect_container = _safe_rectangle(effective_container)
+            rect_item = _safe_rectangle(element_to_center)
+            rect_anchor = _safe_rectangle(anchor_element) if anchor_element else None
+            if rect_container is None or rect_item is None:
+                return None, None, None, 0.0, "full"
+            anchor_rect, item_center_y, anchor_mode = _anchor_metrics(
+                rect_container, rect_item, rect_anchor
+            )
+            container_height = max(1, rect_container.bottom - rect_container.top)
+            top_bias = min(48, max(0, int(container_height * 0.08)))
+            bottom_bias = min(24, max(0, int(container_height * 0.04)))
+            visible_top = rect_container.top + top_bias
+            visible_bottom = rect_container.bottom - bottom_bias
+            container_center_y = (visible_top + visible_bottom) / 2
+            return (
+                rect_container,
+                rect_item,
+                anchor_rect,
+                item_center_y - container_center_y,
+                anchor_mode,
+            )
+
+        rect_container, rect_item, anchor_rect, offset, anchor_mode = _calc_offset()
+        print(
+            "[DBG][CENTER][GEOM]",
+            f"phase=initial",
+            f"anchor={anchor_mode}",
+            f"offset={offset:.1f}",
+            f"container={rect_container}",
+            f"item={rect_item}",
+            f"anchor_rect={anchor_rect}",
+        )
 
         if abs(offset) <= 10:
             return
 
         def step_for(dy):
-            return max(1, min(5, int(abs(dy) / 150)))
+            item_height = 28
+            if anchor_rect is not None:
+                item_height = min(96, max(20, anchor_rect.bottom - anchor_rect.top))
+            elif rect_item is not None:
+                item_height = min(96, max(20, rect_item.bottom - rect_item.top))
+            return max(1, min(8, int(abs(dy) / max(item_height, 20))))
 
-        for _ in range(3):
+        for _ in range(6):
             if abs(offset) <= 10:
                 break
 
@@ -1979,11 +2276,23 @@ def _center_element_in_view(element_to_center, scroll_container):
             # UX 개선을 위해 루프 간 대기를 기존 0.03s -> 0.01s로 단축
             time.sleep(0.01)
 
-            rect_container = scroll_container.rectangle()
-            rect_item = element_to_center.rectangle()
-            item_center_y = (rect_item.top + rect_item.bottom) / 2
-            container_center_y = (rect_container.top + rect_container.bottom) / 2
-            offset = item_center_y - container_center_y
+            (
+                rect_container,
+                rect_item,
+                anchor_rect,
+                offset,
+                anchor_mode,
+            ) = _calc_offset()
+
+        print(
+            "[DBG][CENTER][GEOM]",
+            f"phase=final",
+            f"anchor={anchor_mode}",
+            f"offset={offset:.1f}",
+            f"container={rect_container}",
+            f"item={rect_item}",
+            f"anchor_rect={anchor_rect}",
+        )
 
     except Exception as e:
         print(f"[WARN] 중앙 정렬 중 오류: {e}")
@@ -2003,10 +2312,42 @@ def scroll_selected_item_to_center(
 
         selected_item = get_selected_tree_item_fast(tree_control)
         if not selected_item:
+            print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None
 
         item_name = selected_item.window_text()
-        _center_element_in_view(selected_item, tree_control)
+        try:
+            has_focus = bool(selected_item.has_keyboard_focus())
+        except Exception:
+            has_focus = False
+        try:
+            is_selected = bool(selected_item.is_selected())
+        except Exception:
+            is_selected = False
+        depth = _control_depth_within_tree(selected_item, tree_control)
+        rect = _safe_rectangle(selected_item)
+        height = None if rect is None else max(1, rect.bottom - rect.top)
+        anchor_element, anchor_source = _find_center_anchor_element(selected_item)
+        anchor_text = _safe_window_text(anchor_element)
+        anchor_rect = _safe_rectangle(anchor_element)
+        anchor_height = None if anchor_rect is None else max(1, anchor_rect.bottom - anchor_rect.top)
+        print(
+            "[DBG][CENTER][TARGET]",
+            f"text={item_name!r}",
+            f"type={_safe_control_type(selected_item)!r}",
+            f"depth={depth}",
+            f"height={height}",
+            f"anchor_source={anchor_source}",
+            f"anchor_text={anchor_text!r}",
+            f"anchor_height={anchor_height}",
+            f"selected={is_selected}",
+            f"focus={has_focus}",
+        )
+        _center_element_in_view(
+            selected_item,
+            tree_control,
+            anchor_element=anchor_element,
+        )
         return True, item_name
     except (ElementNotFoundError, TimeoutError):
         return False, None
@@ -2333,40 +2674,36 @@ class FavoriteActivationWorker(QThread):
                 result["error"] = "OneNote 트리를 찾지 못했습니다."
                 self.done.emit(result)
                 return
-            notebook_text = self.target.get("notebook_text")
-            section_text = self.target.get("section_text")
+            target_info = _resolve_favorite_activation_target(
+                self.target, self.display_name
+            )
+            result["target_kind"] = target_info.get("target_kind")
+            result["expected_center_text"] = (
+                target_info.get("expected_center_text") or ""
+            )
+            result["resolved_name"] = target_info.get("resolved_name") or ""
+            result["resolved_notebook_id"] = (
+                target_info.get("resolved_notebook_id") or ""
+            )
+            if not target_info.get("ok", True):
+                result["error"] = target_info.get("error") or ""
+                self.done.emit(result)
+                return
             ok = False
-            if notebook_text:
-                notebook_info = _resolve_notebook_target_for_activation(
-                    self.target, self.display_name
-                )
-                result["target_kind"] = "notebook"
-                result["resolved_name"] = (
-                    notebook_info.get("resolved_name") or notebook_text
-                )
-                result["resolved_notebook_id"] = (
-                    notebook_info.get("notebook_id") or ""
-                )
-                if notebook_info.get("should_abort"):
-                    result["error"] = notebook_info.get("error") or ""
-                    self.done.emit(result)
-                    return
-                result["expected_center_text"] = result["resolved_name"] or notebook_text
+            if result["target_kind"] == "notebook":
                 ok = select_notebook_by_text(
                     win,
                     result["expected_center_text"],
                     tree,
                     center_after_select=False,
                 )
-            elif section_text:
-                result["target_kind"] = "section"
-                result["expected_center_text"] = section_text
-                ok = select_section_by_text(win, section_text, tree)
+            elif result["target_kind"] == "section":
+                ok = select_section_by_text(
+                    win, result["expected_center_text"], tree
+                )
             else:
-                result["target_kind"] = "notebook"
-                result["expected_center_text"] = self.display_name
                 ok = select_notebook_by_text(
-                    win, self.display_name, tree, center_after_select=False
+                    win, result["expected_center_text"], tree, center_after_select=False
                 )
             if not ok:
                 try:
@@ -2648,6 +2985,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._center_worker: Optional[CenterAfterActivateWorker] = None
         self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
         self._open_all_notebooks_worker: Optional[OpenAllNotebooksWorker] = None
+        self._retained_qthreads: List[QThread] = []
         self._center_request_seq = 0
         self._last_list_connect_key = None
         self._last_list_connect_at = 0.0
@@ -3346,6 +3684,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def closeEvent(self, event):
         # 실행 중 QThread 정리 (종료 시 'Destroyed while thread is still running' 방지)
+        busy_threads = []
         for attr in [
             "_reconnect_worker",
             "_scanner_worker",
@@ -3368,11 +3707,28 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     except Exception:
                         pass
                     try:
-                        t.wait(800)
+                        t.wait(1500)
+                    except Exception:
+                        pass
+                    try:
+                        if t.isRunning():
+                            busy_threads.append(attr)
                     except Exception:
                         pass
             except Exception:
                 pass
+
+        if busy_threads:
+            print(f"[WARN][THREAD][CLOSE] still_running={busy_threads}")
+            try:
+                self.update_status_and_ui(
+                    "백그라운드 작업 종료 중입니다. 잠시 후 다시 닫아주세요.",
+                    self.center_button.isEnabled(),
+                )
+            except Exception:
+                pass
+            event.ignore()
+            return
 
         try:
             self._save_window_state()
@@ -3454,6 +3810,329 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             return None
         return None
+
+    def _is_sig_same_as_connected_window(self, sig: Dict[str, Any]) -> bool:
+        if not sig or not getattr(self, "onenote_window", None):
+            return False
+
+        current_handle = self._current_onenote_handle()
+        try:
+            target_handle = int(sig.get("handle") or 0)
+        except Exception:
+            target_handle = 0
+        if current_handle and target_handle and current_handle == target_handle:
+            return True
+
+        try:
+            current_sig = build_window_signature(self.onenote_window)
+        except Exception:
+            current_sig = {}
+
+        current_pid = current_sig.get("pid")
+        target_pid = sig.get("pid")
+        current_class = current_sig.get("class_name") or ""
+        target_class = sig.get("class_name") or ""
+        current_exe = current_sig.get("exe_name") or ""
+        target_exe = sig.get("exe_name") or ""
+        if (
+            current_pid
+            and target_pid
+            and current_pid == target_pid
+            and (not current_class or not target_class or current_class == target_class)
+            and (not current_exe or not target_exe or current_exe == target_exe)
+        ):
+            return True
+
+        try:
+            if current_handle and len(self.onenote_windows_info or []) == 1:
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    def _try_activate_favorite_fastpath(
+        self,
+        item: QTreeWidgetItem,
+        sig: Dict[str, Any],
+        target: Dict[str, Any],
+        display_name: str,
+        *,
+        started_at: Optional[float] = None,
+    ) -> bool:
+        return self._try_activate_favorite_fastpath_v2(
+            item,
+            sig,
+            target,
+            display_name,
+            started_at=started_at,
+        )
+        target_info = _resolve_favorite_activation_target(target, display_name)
+        if not target_info.get("ok", True):
+            self.update_status_and_ui(
+                target_info.get("error") or "즐겨찾기 대상을 찾지 못했습니다.",
+                self.center_button.isEnabled(),
+            )
+            print(
+                "[DBG][FAV][FASTPATH]",
+                "resolve_abort",
+                f"error={target_info.get('error')!r}",
+            )
+            return True
+
+        direct_source = "same_window"
+        if self._is_sig_same_as_connected_window(sig):
+            win = self.onenote_window
+        else:
+            direct_source = "direct_connect"
+            win = None
+            handle = sig.get("handle")
+            if handle:
+                try:
+                    candidate = Desktop(backend="uia").window(handle=handle)
+                    if candidate.is_visible():
+                        win = candidate
+                except Exception:
+                    win = None
+            if win is None:
+                win = reacquire_window_by_signature(sig)
+            if win is None:
+                return False
+            self.onenote_window = win
+            try:
+                save_connection_info(self.onenote_window)
+            except Exception:
+                pass
+            self._cache_tree_control()
+
+        tree = self.tree_control or _find_tree_or_list(self.onenote_window)
+        self.tree_control = tree
+        if not tree:
+            return False
+
+        target_kind = target_info.get("target_kind")
+        expected_text = target_info.get("expected_center_text") or ""
+        print(
+            "[DBG][FAV][FASTPATH]",
+            direct_source,
+            f"kind={target_kind}",
+            f"text={expected_text!r}",
+            f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+        )
+
+        try:
+            self.onenote_window.set_focus()
+        except Exception:
+            pass
+
+        ok = False
+        if target_kind == "notebook":
+            ok = select_notebook_by_text(
+                self.onenote_window,
+                expected_text,
+                tree,
+                center_after_select=False,
+            )
+        elif target_kind == "section":
+            ok = select_section_by_text(self.onenote_window, expected_text, tree)
+
+        if not ok:
+            self._cache_tree_control()
+            tree = self.tree_control
+            if tree:
+                if target_kind == "notebook":
+                    ok = select_notebook_by_text(
+                        self.onenote_window,
+                        expected_text,
+                        tree,
+                        center_after_select=False,
+                    )
+                elif target_kind == "section":
+                    ok = select_section_by_text(
+                        self.onenote_window, expected_text, tree
+                    )
+
+        if not ok:
+            print(
+                "[DBG][FAV][FASTPATH]",
+                f"{direct_source}_select_failed",
+                f"kind={target_kind}",
+                f"text={expected_text!r}",
+            )
+            return False
+
+        if target_kind == "notebook":
+            self._sync_favorite_notebook_target(
+                item,
+                target_info.get("resolved_name") or "",
+                target_info.get("resolved_notebook_id") or "",
+            )
+
+        self.center_selected_item_action(
+            debug_source="fav_fastpath",
+            started_at=started_at,
+        )
+        return True
+
+    def _try_activate_favorite_fastpath_v2(
+        self,
+        item: QTreeWidgetItem,
+        sig: Dict[str, Any],
+        target: Dict[str, Any],
+        display_name: str,
+        *,
+        started_at: Optional[float] = None,
+    ) -> bool:
+        direct_source = "same_window"
+        if self._is_sig_same_as_connected_window(sig):
+            win = self.onenote_window
+        else:
+            direct_source = "direct_connect"
+            win = None
+            handle = sig.get("handle")
+            if handle:
+                try:
+                    candidate = Desktop(backend="uia").window(handle=handle)
+                    if candidate.is_visible():
+                        win = candidate
+                except Exception:
+                    win = None
+            if win is None:
+                win = reacquire_window_by_signature(sig)
+            if win is None:
+                return False
+            self.onenote_window = win
+            try:
+                save_connection_info(self.onenote_window)
+            except Exception:
+                pass
+            self._cache_tree_control()
+
+        tree = self.tree_control or _find_tree_or_list(self.onenote_window)
+        self.tree_control = tree
+        if not tree:
+            return False
+
+        notebook_text = _strip_stale_favorite_prefix(
+            str((target or {}).get("notebook_text") or "").strip()
+        )
+        section_text = str((target or {}).get("section_text") or "").strip()
+        display_text = _strip_stale_favorite_prefix(display_name)
+        target_kind = "section" if section_text else "notebook"
+        expected_text = section_text
+        resolved_name = ""
+        resolved_notebook_id = ""
+        resolution_mode = "quick"
+
+        def _attempt_select(kind: str, text: str) -> bool:
+            if not text:
+                return False
+            if kind == "section":
+                return select_section_by_text(self.onenote_window, text, tree)
+            return select_notebook_by_text(
+                self.onenote_window,
+                text,
+                tree,
+                center_after_select=False,
+            )
+
+        ok = False
+        if target_kind == "section":
+            ok = _attempt_select("section", expected_text)
+        else:
+            quick_candidates = []
+            for cand in (notebook_text, display_text):
+                if cand and cand not in quick_candidates:
+                    quick_candidates.append(cand)
+            for cand in quick_candidates:
+                if _attempt_select("notebook", cand):
+                    expected_text = cand
+                    ok = True
+                    break
+
+        if not ok:
+            requested_notebook_id = str((target or {}).get("notebook_id") or "").strip()
+            if target_kind == "notebook" and not requested_notebook_id:
+                visible_names = _collect_root_notebook_names_from_tree(tree)
+                if visible_names:
+                    quick_error = _build_notebook_not_found_error(
+                        notebook_text or display_text,
+                        visible_names,
+                    )
+                    self.update_status_and_ui(
+                        quick_error,
+                        self.center_button.isEnabled(),
+                    )
+                    print(
+                        "[DBG][FAV][FASTPATH]",
+                        "quick_abort",
+                        f"error={quick_error!r}",
+                        f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+                    )
+                    return True
+            target_info = _resolve_favorite_activation_target(target, display_name)
+            if not target_info.get("ok", True):
+                self.update_status_and_ui(
+                    target_info.get("error") or "즐겨찾기 대상을 찾지 못했습니다.",
+                    self.center_button.isEnabled(),
+                )
+                print(
+                    "[DBG][FAV][FASTPATH]",
+                    "resolve_abort",
+                    f"error={target_info.get('error')!r}",
+                    f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+                )
+                return True
+            target_kind = target_info.get("target_kind") or target_kind
+            expected_text = target_info.get("expected_center_text") or expected_text
+            resolved_name = target_info.get("resolved_name") or ""
+            resolved_notebook_id = target_info.get("resolved_notebook_id") or ""
+            resolution_mode = "resolved"
+
+        print(
+            "[DBG][FAV][FASTPATH]",
+            direct_source,
+            f"kind={target_kind}",
+            f"text={expected_text!r}",
+            f"mode={resolution_mode}",
+            f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+        )
+
+        try:
+            self.onenote_window.set_focus()
+        except Exception:
+            pass
+
+        if not ok:
+            ok = _attempt_select(target_kind, expected_text)
+
+        if not ok:
+            self._cache_tree_control()
+            tree = self.tree_control
+            if tree:
+                ok = _attempt_select(target_kind, expected_text)
+
+        if not ok:
+            print(
+                "[DBG][FAV][FASTPATH]",
+                f"{direct_source}_select_failed",
+                f"kind={target_kind}",
+                f"text={expected_text!r}",
+            )
+            return False
+
+        if target_kind == "notebook":
+            self._sync_favorite_notebook_target(
+                item,
+                resolved_name,
+                resolved_notebook_id,
+            )
+
+        self.center_selected_item_action(
+            debug_source="fav_fastpath",
+            started_at=started_at,
+        )
+        return True
 
     def eventFilter(self, obj, event):
         try:
@@ -5826,12 +6505,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def _on_fav_item_double_clicked(self, item: QTreeWidgetItem, col: int):
         if not item:
             return
+        started_at = time.perf_counter()
         node_type = item.data(0, ROLE_TYPE)
         print(f"[DBG][FAV][DBLCLK] type={node_type} text='{item.text(0)}'")
         # ✅ notebook 타입도 더블클릭 동작해야 함
         if node_type not in ("section", "notebook"):
             return
-        self._activate_favorite_section(item)
+        self._activate_favorite_section(item, started_at=started_at)
 
     # _activate_favorite_notebook 제거됨 (기능 통합)
 
@@ -5849,11 +6529,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             try:
                 if worker.isRunning():
                     worker.requestInterruption()
-                    worker.wait(150)
-            except Exception:
-                pass
-            try:
-                worker.deleteLater()
+                    worker.wait(500)
             except Exception:
                 pass
 
@@ -5864,13 +6540,31 @@ class OneNoteScrollRemoconApp(QMainWindow):
             try:
                 if worker.isRunning():
                     worker.requestInterruption()
-                    worker.wait(150)
+                    worker.wait(500)
             except Exception:
+                pass
+
+    def _retain_qthread_until_finished(self, worker: Optional[QThread], attr_name: str):
+        if worker is None:
+            return
+        self._retained_qthreads.append(worker)
+
+        def _cleanup():
+            try:
+                if getattr(self, attr_name, None) is worker:
+                    setattr(self, attr_name, None)
+            except Exception:
+                pass
+            try:
+                self._retained_qthreads.remove(worker)
+            except ValueError:
                 pass
             try:
                 worker.deleteLater()
             except Exception:
                 pass
+
+        worker.finished.connect(_cleanup)
 
     def _sync_favorite_notebook_target(
         self,
@@ -6043,16 +6737,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._pending_center_timer = None
             worker = CenterAfterActivateWorker(sig, expected_text, self)
             self._center_worker = worker
+            self._retain_qthread_until_finished(worker, "_center_worker")
 
             def _on_done(ok: bool, selected_name: str):
                 if self._center_worker is not worker:
                     return
-
-                self._center_worker = None
-                try:
-                    worker.deleteLater()
-                except Exception:
-                    pass
 
                 if ok and selected_name:
                     print(
@@ -6062,13 +6751,17 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     print(f"[DBG][CENTER][SKIP] req={request_seq}")
 
             worker.done.connect(_on_done)
-            worker.finished.connect(lambda: None)
             worker.start()
 
         timer.timeout.connect(_start_worker)
         timer.start(120)
 
-    def _activate_favorite_section(self, item: QTreeWidgetItem):
+    def _activate_favorite_section(
+        self,
+        item: QTreeWidgetItem,
+        *,
+        started_at: Optional[float] = None,
+    ):
         ensure_pywinauto()
         if not _pwa_ready:
             self.update_status_and_ui(
@@ -6093,6 +6786,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         self._cancel_pending_favorite_activation()
         self._cancel_pending_center_after_activate()
+        if self._try_activate_favorite_fastpath(
+            item,
+            sig,
+            target,
+            display_name,
+            started_at=started_at,
+        ):
+            return
         worker = FavoriteActivationWorker(
             sig=sig,
             target=target,
@@ -6101,15 +6802,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
             parent=self,
         )
         self._favorite_activation_worker = worker
+        self._retain_qthread_until_finished(worker, "_favorite_activation_worker")
 
         def _on_done(result: Dict[str, Any]):
             if self._favorite_activation_worker is not worker:
                 return
-            self._favorite_activation_worker = None
-            try:
-                worker.deleteLater()
-            except Exception:
-                pass
             return self._handle_favorite_activation_result(
                 item=item,
                 sig=sig,
@@ -6155,7 +6852,6 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.update_status_and_ui(fail_msg, True)
 
         worker.done.connect(_on_done)
-        worker.finished.connect(lambda: None)
         worker.start()
 
 
