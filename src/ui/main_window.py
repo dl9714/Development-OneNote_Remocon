@@ -4059,27 +4059,34 @@ class OneNoteScrollRemoconApp(QMainWindow):
                         notebook_text or display_text,
                         visible_names,
                     )
+                    stale_name = self._mark_favorite_item_stale(item, display_name)
+                    fail_msg = quick_error or f"항목 찾기 실패: '{stale_name or display_name}'"
                     self.update_status_and_ui(
-                        quick_error,
+                        fail_msg,
                         self.center_button.isEnabled(),
                     )
                     print(
                         "[DBG][FAV][FASTPATH]",
                         "quick_abort",
-                        f"error={quick_error!r}",
+                        f"error={fail_msg!r}",
                         f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
                     )
                     return True
             target_info = _resolve_favorite_activation_target(target, display_name)
             if not target_info.get("ok", True):
+                stale_name = self._mark_favorite_item_stale(item, display_name)
+                fail_msg = (
+                    target_info.get("error")
+                    or f"항목 찾기 실패: '{stale_name or display_name}'"
+                )
                 self.update_status_and_ui(
-                    target_info.get("error") or "즐겨찾기 대상을 찾지 못했습니다.",
+                    fail_msg,
                     self.center_button.isEnabled(),
                 )
                 print(
                     "[DBG][FAV][FASTPATH]",
                     "resolve_abort",
-                    f"error={target_info.get('error')!r}",
+                    f"error={fail_msg!r}",
                     f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
                 )
                 return True
@@ -6565,6 +6572,34 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 pass
 
         worker.finished.connect(_cleanup)
+
+    def _mark_favorite_item_stale(
+        self,
+        item: Optional[QTreeWidgetItem],
+        fallback_name: str,
+    ) -> str:
+        current_name = ""
+        if item is not None:
+            try:
+                current_name = item.text(0) or ""
+            except Exception:
+                current_name = ""
+
+        base_name = current_name or fallback_name or ""
+        stale_prefixes = ("(구) ", "(old) ")
+        if not base_name:
+            return ""
+        if any(base_name.startswith(prefix) for prefix in stale_prefixes):
+            return base_name
+
+        new_name = f"(구) {base_name}"
+        if item is not None:
+            try:
+                item.setText(0, new_name)
+                self._save_favorites()
+            except Exception:
+                pass
+        return new_name
 
     def _sync_favorite_notebook_target(
         self,
