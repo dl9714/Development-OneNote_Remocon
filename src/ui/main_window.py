@@ -8,7 +8,7 @@ import traceback
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Callable
 import base64
 import hashlib
 import copy
@@ -1120,9 +1120,13 @@ def select_section_by_text(
         return False
 
 
-def select_notebook_by_text(
-    onenote_window, text: str, tree_control: Optional[object] = None, *, center_after_select: bool = False
-) -> bool:
+def select_notebook_item_by_text(
+    onenote_window,
+    text: str,
+    tree_control: Optional[object] = None,
+    *,
+    center_after_select: bool = False,
+):
     """
     전자필기장(노트북) 이름으로 찾고 선택합니다.
     - root children 우선 탐색(전자필기장은 보통 루트에 있음)
@@ -1137,37 +1141,29 @@ def select_notebook_by_text(
             return False
         target_norm = _normalize_text(text)
 
-        def _select_and_center(item) -> bool:
+        def _select_and_center(item):
             try:
                 item.select()
             except Exception:
                 try:
                     item.click_input()
                 except Exception:
-                    return False
-            
+                    return None
+
             if center_after_select:
-                _center_element_in_view(item, tree_control)
-            return True
+                _center_element_in_view(
+                    item,
+                    tree_control,
+                    placement=_get_scroll_placement_for_selected_item(item, tree_control),
+                )
+            return item
 
         # 1) root-level children 우선
         try:
             for item in (tree_control.children() or []):
                 try:
                     if _normalize_text(item.window_text()) == target_norm:
-                        selected_item = None
-                        try:
-                            item.select()
-                            selected_item = item
-                        except Exception:
-                            try:
-                                item.click_input()
-                                selected_item = item
-                            except Exception:
-                                selected_item = None
-                        if center_after_select and selected_item is not None:
-                            _center_element_in_view(selected_item, tree_control)
-                        return True
+                        return _select_and_center(item)
                 except Exception:
                     continue
         except Exception:
@@ -1185,10 +1181,24 @@ def select_notebook_by_text(
             except Exception:
                 pass
 
-        return False
+        return None
     except Exception as e:
         print(f"[ERROR] 전자필기장 선택 실패: {e}")
-        return False
+        return None
+
+
+def select_notebook_by_text(
+    onenote_window, text: str, tree_control: Optional[object] = None, *, center_after_select: bool = False
+) -> bool:
+    return (
+        select_notebook_item_by_text(
+            onenote_window,
+            text,
+            tree_control,
+            center_after_select=center_after_select,
+        )
+        is not None
+    )
 
 
 def _safe_window_text(ctrl) -> str:
@@ -1290,6 +1300,74 @@ def _find_center_anchor_element(selected_item):
         return best, "descendant_text"
 
     return selected_item, "item"
+
+
+def _is_root_notebook_tree_item(selected_item, tree_control) -> bool:
+    if selected_item is None or tree_control is None:
+        return False
+
+    try:
+        if _safe_parent(selected_item) == tree_control:
+            return True
+    except Exception:
+        pass
+
+    try:
+        for child in tree_control.children() or []:
+            if child == selected_item:
+                return True
+    except Exception:
+        pass
+
+    try:
+        return _control_depth_within_tree(selected_item, tree_control) <= 1
+    except Exception:
+        return False
+
+
+def _get_scroll_placement_for_selected_item(selected_item, tree_control) -> str:
+    if _is_root_notebook_tree_item(selected_item, tree_control):
+        return "upper"
+    return "center"
+
+
+def _is_already_well_placed_in_view(
+    rect_container,
+    rect_item,
+    rect_anchor,
+    *,
+    placement: str,
+) -> bool:
+    if rect_container is None or rect_item is None:
+        return False
+
+    container_height = max(1, rect_container.bottom - rect_container.top)
+    top_bias = min(48, max(0, int(container_height * 0.08)))
+    bottom_bias = min(24, max(0, int(container_height * 0.04)))
+    visible_top = rect_container.top + top_bias
+    visible_bottom = rect_container.bottom - bottom_bias
+
+    if placement == "upper":
+        anchor_top = rect_anchor.top if rect_anchor is not None else rect_item.top
+        upper_band_bottom = visible_top + min(96, max(44, int(container_height * 0.22)))
+        return visible_top <= anchor_top <= upper_band_bottom
+
+    item_center_y = (
+        (rect_anchor.top + rect_anchor.bottom) / 2
+        if rect_anchor is not None
+        else (rect_item.top + rect_item.bottom) / 2
+    )
+    container_center_y = (visible_top + visible_bottom) / 2
+    return abs(item_center_y - container_center_y) <= 10
+
+
+def _resolve_alignment_target_for_selected_item(selected_item, tree_control):
+    placement = _get_scroll_placement_for_selected_item(selected_item, tree_control)
+    if placement == "upper":
+        return selected_item, "item_upper_fast", placement
+
+    anchor_element, anchor_source = _find_center_anchor_element(selected_item)
+    return anchor_element, anchor_source, placement
 
 
 def _wait_until(predicate, timeout: float = 1.5, interval: float = 0.05):
@@ -1674,12 +1752,21 @@ def _run_powershell(script: str, timeout: int = 30) -> str:
         "$OutputEncoding=[Console]::OutputEncoding;"
         + script
     )
+    startupinfo = None
+    creationflags = 0
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     completed = subprocess.run(
         [
             "powershell",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
+            "-WindowStyle",
+            "Hidden",
             "-Command",
             full_script,
         ],
@@ -1688,6 +1775,8 @@ def _run_powershell(script: str, timeout: int = 30) -> str:
         encoding="utf-8",
         errors="replace",
         timeout=max(5, timeout),
+        startupinfo=startupinfo,
+        creationflags=creationflags,
     )
     if completed.returncode != 0:
         raise RuntimeError(
@@ -2099,7 +2188,10 @@ def _resolve_favorite_activation_target(
 
 
 def _open_notebook_shortcut_via_shell(
-    shortcut_path: str, url: str, expected_name: str
+    shortcut_path: str,
+    url: str,
+    expected_name: str,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     expected_key = _normalize_notebook_name_key(expected_name)
     protocol_url = _build_onenote_protocol_url(shortcut_path, url, expected_name)
@@ -2116,6 +2208,11 @@ def _open_notebook_shortcut_via_shell(
         return {"ok": True, "already": True, "name": expected_name, "error": ""}
 
     launch_errors = []
+    if progress_callback:
+        try:
+            progress_callback(f"OneNote 실행 요청 중... {expected_name}")
+        except Exception:
+            pass
 
     if protocol_url:
         exe_path = _get_onenote_exe_path()
@@ -2142,6 +2239,14 @@ def _open_notebook_shortcut_via_shell(
 
     for _ in range(20):
         time.sleep(0.5)
+        wait_round = _ + 1
+        if progress_callback and (wait_round == 1 or wait_round % 4 == 0):
+            try:
+                progress_callback(
+                    f"OneNote 응답 대기 중... {expected_name} ({wait_round / 2:.1f}초)"
+                )
+            except Exception:
+                pass
         try:
             open_keys = {
                 _normalize_notebook_name_key(name)
@@ -2167,7 +2272,13 @@ def _open_notebook_shortcut_via_shell(
 
 
 # ----------------- 9. 요소를 중앙으로 위치시키는 함수(최적화) - ensure 호출 -----------------
-def _center_element_in_view(element_to_center, scroll_container, *, anchor_element=None):
+def _center_element_in_view(
+    element_to_center,
+    scroll_container,
+    *,
+    anchor_element=None,
+    placement: str = "center",
+):
     ensure_pywinauto()
     if not _pwa_ready:
         return
@@ -2177,9 +2288,12 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
         except AttributeError:
             return
 
-        # UX 개선을 위해 안정화 대기를 기존 0.3s -> 0.1s로 과감하게 축소
+        settle_timeout = 0.03 if placement == "upper" else 0.1
+        settle_interval = 0.01 if placement == "upper" else 0.015
         _wait_rect_settle(
-            lambda: element_to_center.rectangle(), timeout=0.1, interval=0.015
+            lambda: element_to_center.rectangle(),
+            timeout=settle_timeout,
+            interval=settle_interval,
         )
 
         effective_container = (
@@ -2228,12 +2342,18 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
             bottom_bias = min(24, max(0, int(container_height * 0.04)))
             visible_top = rect_container.top + top_bias
             visible_bottom = rect_container.bottom - bottom_bias
-            container_center_y = (visible_top + visible_bottom) / 2
+            if placement == "upper":
+                anchor_top = anchor_rect.top if anchor_rect is not None else rect_item.top
+                target_y = visible_top + min(28, max(10, int(container_height * 0.03)))
+                offset = anchor_top - target_y
+            else:
+                container_center_y = (visible_top + visible_bottom) / 2
+                offset = item_center_y - container_center_y
             return (
                 rect_container,
                 rect_item,
                 anchor_rect,
-                item_center_y - container_center_y,
+                offset,
                 anchor_mode,
             )
 
@@ -2241,12 +2361,18 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
         print(
             "[DBG][CENTER][GEOM]",
             f"phase=initial",
+            f"placement={placement}",
             f"anchor={anchor_mode}",
             f"offset={offset:.1f}",
             f"container={rect_container}",
             f"item={rect_item}",
             f"anchor_rect={anchor_rect}",
         )
+
+        if _is_already_well_placed_in_view(
+            rect_container, rect_item, anchor_rect, placement=placement
+        ):
+            return
 
         if abs(offset) <= 10:
             return
@@ -2259,7 +2385,8 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
                 item_height = min(96, max(20, rect_item.bottom - rect_item.top))
             return max(1, min(8, int(abs(dy) / max(item_height, 20))))
 
-        for _ in range(6):
+        max_loops = 3 if placement == "upper" else 6
+        for _ in range(max_loops):
             if abs(offset) <= 10:
                 break
 
@@ -2273,8 +2400,7 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
                 wheel_steps = -repeats if offset > 0 else repeats
                 _safe_wheel(scroll_container, wheel_steps)
 
-            # UX 개선을 위해 루프 간 대기를 기존 0.03s -> 0.01s로 단축
-            time.sleep(0.01)
+            time.sleep(0.005 if placement == "upper" else 0.01)
 
             (
                 rect_container,
@@ -2284,9 +2410,15 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
                 anchor_mode,
             ) = _calc_offset()
 
+            if _is_already_well_placed_in_view(
+                rect_container, rect_item, anchor_rect, placement=placement
+            ):
+                break
+
         print(
             "[DBG][CENTER][GEOM]",
             f"phase=final",
+            f"placement={placement}",
             f"anchor={anchor_mode}",
             f"offset={offset:.1f}",
             f"container={rect_container}",
@@ -2300,7 +2432,10 @@ def _center_element_in_view(element_to_center, scroll_container, *, anchor_eleme
 
 # ----------------- 10. 선택된 항목을 중앙으로 스크롤 -----------------
 def scroll_selected_item_to_center(
-    onenote_window, tree_control: Optional[object] = None
+    onenote_window,
+    tree_control: Optional[object] = None,
+    *,
+    selected_item=None,
 ):
     ensure_pywinauto()
     if not _pwa_ready:
@@ -2310,7 +2445,7 @@ def scroll_selected_item_to_center(
         if not tree_control:
             return False, None
 
-        selected_item = get_selected_tree_item_fast(tree_control)
+        selected_item = selected_item or get_selected_tree_item_fast(tree_control)
         if not selected_item:
             print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None
@@ -2327,7 +2462,9 @@ def scroll_selected_item_to_center(
         depth = _control_depth_within_tree(selected_item, tree_control)
         rect = _safe_rectangle(selected_item)
         height = None if rect is None else max(1, rect.bottom - rect.top)
-        anchor_element, anchor_source = _find_center_anchor_element(selected_item)
+        anchor_element, anchor_source, placement = _resolve_alignment_target_for_selected_item(
+            selected_item, tree_control
+        )
         anchor_text = _safe_window_text(anchor_element)
         anchor_rect = _safe_rectangle(anchor_element)
         anchor_height = None if anchor_rect is None else max(1, anchor_rect.bottom - anchor_rect.top)
@@ -2337,6 +2474,7 @@ def scroll_selected_item_to_center(
             f"type={_safe_control_type(selected_item)!r}",
             f"depth={depth}",
             f"height={height}",
+            f"placement={placement}",
             f"anchor_source={anchor_source}",
             f"anchor_text={anchor_text!r}",
             f"anchor_height={anchor_height}",
@@ -2347,6 +2485,7 @@ def scroll_selected_item_to_center(
             selected_item,
             tree_control,
             anchor_element=anchor_element,
+            placement=placement,
         )
         return True, item_name
     except (ElementNotFoundError, TimeoutError):
@@ -2554,10 +2693,17 @@ class WindowListWorker(QThread):
 class CenterAfterActivateWorker(QThread):
     done = pyqtSignal(bool, str)
 
-    def __init__(self, sig: Dict[str, Any], expected_text: str, parent=None):
+    def __init__(
+        self,
+        sig: Dict[str, Any],
+        expected_text: str,
+        target_kind: str = "",
+        parent=None,
+    ):
         super().__init__(parent)
         self.sig = copy.deepcopy(sig or {})
         self.expected_text = expected_text or ""
+        self.target_kind = (target_kind or "").strip().lower()
 
     def run(self):
         try:
@@ -2577,8 +2723,9 @@ class CenterAfterActivateWorker(QThread):
                 return
 
             expected_norm = _normalize_text(self.expected_text)
-            # 즉시 중앙정렬 실패 시에만 아주 짧게 fallback 대기
-            deadline = time.monotonic() + 0.6
+            deadline = time.monotonic() + (
+                0.28 if self.target_kind == "notebook" else 0.6
+            )
             last_selected = None
 
             while not self.isInterruptionRequested() and time.monotonic() < deadline:
@@ -2591,7 +2738,15 @@ class CenterAfterActivateWorker(QThread):
                         selected_norm = ""
 
                     if expected_norm and selected_norm == expected_norm:
-                        _center_element_in_view(selected_item, tree)
+                        anchor_element, _anchor_source, placement = _resolve_alignment_target_for_selected_item(
+                            selected_item, tree
+                        )
+                        _center_element_in_view(
+                            selected_item,
+                            tree,
+                            anchor_element=anchor_element,
+                            placement=placement,
+                        )
                         self.done.emit(True, selected_item.window_text())
                         return
 
@@ -2601,7 +2756,15 @@ class CenterAfterActivateWorker(QThread):
                 return
 
             if last_selected is not None:
-                _center_element_in_view(last_selected, tree)
+                anchor_element, _anchor_source, placement = _resolve_alignment_target_for_selected_item(
+                    last_selected, tree
+                )
+                _center_element_in_view(
+                    last_selected,
+                    tree,
+                    anchor_element=anchor_element,
+                    placement=placement,
+                )
                 try:
                     last_text = last_selected.window_text()
                 except Exception:
@@ -2782,6 +2945,11 @@ class OpenAllNotebooksWorker(QThread):
                     if _normalize_notebook_name_key(t.get("name")) not in open_names
                 ]
 
+                total_targets = len(pending_targets)
+                self.progress.emit(
+                    f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
+                )
+
                 if not pending_targets:
                     result["ok"] = True
                     result["remaining_names"] = []
@@ -2791,7 +2959,7 @@ class OpenAllNotebooksWorker(QThread):
                 failed_names = []
                 failed_details = []
 
-                for target in pending_targets:
+                for index, target in enumerate(pending_targets, start=1):
                     if self.isInterruptionRequested():
                         result["error"] = "사용자 중단"
                         self.done.emit(result)
@@ -2805,8 +2973,18 @@ class OpenAllNotebooksWorker(QThread):
                         failed_details.append(f"{name or '이름 없음'}: 바로가기 정보 없음")
                         continue
 
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 시도 - {name}"
+                    )
                     try:
-                        step = _open_notebook_shortcut_via_shell(path, url, name)
+                        step = _open_notebook_shortcut_via_shell(
+                            path,
+                            url,
+                            name,
+                            progress_callback=lambda msg, idx=index, total=total_targets: self.progress.emit(
+                                f"실제 OneNote 전체 열기 진행 중... {idx}/{total} - {msg}"
+                            ),
+                        )
                     except Exception as e:
                         step = {"ok": False, "already": False, "name": name, "error": str(e)}
 
@@ -2814,7 +2992,7 @@ class OpenAllNotebooksWorker(QThread):
                         result["opened_names"].append(name)
                         result["opened_count"] += 1
                         self.progress.emit(
-                            f"실제 OneNote 전체 열기 중... {result['opened_count']}개 - {name}"
+                            f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 완료 - {name}"
                         )
                     else:
                         failed_names.append(name)
@@ -4023,18 +4201,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
         resolved_name = ""
         resolved_notebook_id = ""
         resolution_mode = "quick"
+        selected_notebook_item = None
 
         def _attempt_select(kind: str, text: str) -> bool:
+            nonlocal selected_notebook_item
             if not text:
                 return False
             if kind == "section":
                 return select_section_by_text(self.onenote_window, text, tree)
-            return select_notebook_by_text(
+            selected_notebook_item = select_notebook_item_by_text(
                 self.onenote_window,
                 text,
                 tree,
                 center_after_select=False,
             )
+            return selected_notebook_item is not None
 
         ok = False
         if target_kind == "section":
@@ -4138,6 +4319,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.center_selected_item_action(
             debug_source="fav_fastpath",
             started_at=started_at,
+            skip_precheck=True,
+            allow_retry=(target_kind != "notebook"),
+            preselected_item=selected_notebook_item if target_kind == "notebook" else None,
+            preselected_tree_control=tree if target_kind == "notebook" else None,
         )
         return True
 
@@ -4480,13 +4665,17 @@ class OneNoteScrollRemoconApp(QMainWindow):
         *,
         debug_source: str = "button",
         started_at: Optional[float] = None,
+        skip_precheck: bool = False,
+        allow_retry: bool = True,
+        preselected_item=None,
+        preselected_tree_control=None,
     ):
         op_started_at = started_at or time.perf_counter()
         print(
             f"[DBG][CENTER][START] source={debug_source} "
             f"at_s={(time.perf_counter() - self._t_boot):.3f}"
         )
-        if not self._pre_action_check():
+        if not skip_precheck and not self._pre_action_check():
             print(
                 f"[DBG][CENTER][ABORT] source={debug_source} "
                 f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
@@ -4494,11 +4683,15 @@ class OneNoteScrollRemoconApp(QMainWindow):
             )
             return
 
-        if not self.tree_control:
+        if preselected_tree_control is not None:
+            self.tree_control = preselected_tree_control
+        elif not self.tree_control:
             self.tree_control = _find_tree_or_list(self.onenote_window)
 
         success, item_name = scroll_selected_item_to_center(
-            self.onenote_window, self.tree_control
+            self.onenote_window,
+            self.tree_control,
+            selected_item=preselected_item,
         )
 
         if success:
@@ -4508,7 +4701,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
             self.update_status_and_ui(f"성공: '{item_name}' 중앙 정렬 완료.", True)
-        else:
+        elif allow_retry:
             self.tree_control = _find_tree_or_list(self.onenote_window)
             success, item_name = scroll_selected_item_to_center(
                 self.onenote_window, self.tree_control
@@ -4526,9 +4719,15 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
                     f"at_s={(time.perf_counter() - self._t_boot):.3f}"
                 )
-                self.update_status_and_ui(
-                    "실패: 선택 항목을 찾거나 정렬하지 못했습니다.", True
-                )
+        else:
+            print(
+                f"[DBG][CENTER][DONE] source={debug_source} success=False retry=skip "
+                f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
+            self.update_status_and_ui(
+                "실패: 선택 항목을 찾거나 정렬하지 못했습니다.", True
+            )
 
     def _open_all_notebooks_from_connected_onenote(self):
         if (
@@ -6699,8 +6898,27 @@ class OneNoteScrollRemoconApp(QMainWindow):
                         item, resolved_name, resolved_notebook_id
                     )
 
+                aligned_now = False
+                if (
+                    target_kind == "notebook"
+                    and expected_center_text
+                    and getattr(self, "onenote_window", None) is not None
+                ):
+                    try:
+                        aligned_now, _ = scroll_selected_item_to_center(
+                            self.onenote_window,
+                            self.tree_control,
+                        )
+                    except Exception:
+                        aligned_now = False
+
                 if target_kind in ("section", "notebook") and expected_center_text:
-                    self._schedule_center_after_activate(sig, expected_center_text)
+                    if not aligned_now:
+                        self._schedule_center_after_activate(
+                            sig,
+                            expected_center_text,
+                            target_kind=target_kind,
+                        )
                 else:
                     self._cancel_pending_center_after_activate()
 
@@ -6754,13 +6972,20 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             return False
 
-    def _schedule_center_after_activate(self, sig: Dict[str, Any], expected_text: str):
+    def _schedule_center_after_activate(
+        self,
+        sig: Dict[str, Any],
+        expected_text: str,
+        *,
+        target_kind: str = "",
+    ):
         self._cancel_pending_center_after_activate()
         if not sig or not expected_text:
             return
 
         self._center_request_seq += 1
         request_seq = self._center_request_seq
+        target_kind = (target_kind or "").strip().lower()
         timer = QTimer(self)
         timer.setSingleShot(True)
         self._pending_center_timer = timer
@@ -6770,7 +6995,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 return
 
             self._pending_center_timer = None
-            worker = CenterAfterActivateWorker(sig, expected_text, self)
+            worker = CenterAfterActivateWorker(
+                sig,
+                expected_text,
+                target_kind=target_kind,
+                parent=self,
+            )
             self._center_worker = worker
             self._retain_qthread_until_finished(worker, "_center_worker")
 
@@ -6789,7 +7019,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             worker.start()
 
         timer.timeout.connect(_start_worker)
-        timer.start(120)
+        timer.start(40 if target_kind == "notebook" else 120)
 
     def _activate_favorite_section(
         self,
