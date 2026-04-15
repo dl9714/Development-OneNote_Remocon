@@ -59,7 +59,7 @@ from PyQt6.QtCore import (
     QRect,
     QByteArray,
 )
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QIcon, QAction, QBrush, QColor
 
 # widgets 모듈에서 커스텀 트리 위젯 임포트
 from src.ui.widgets import FavoritesTree, BufferTree, TreeNameEditDelegate
@@ -543,17 +543,26 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
     out: List[Dict[str, Any]] = []
     seen = set()
 
-    def _section_key(node: Dict[str, Any]) -> str:
+    def _freeze_key(value: Any):
+        if isinstance(value, dict):
+            try:
+                items = sorted(value.items(), key=lambda pair: str(pair[0]))
+            except Exception:
+                items = value.items()
+            return tuple((str(k), _freeze_key(v)) for k, v in items)
+        if isinstance(value, list):
+            return tuple(_freeze_key(v) for v in value)
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        return str(value)
+
+    def _section_key(node: Dict[str, Any]):
         t = node.get("target") or {}
         sig = t.get("sig") or {}
         ty = node.get("type", "section")
         # 섹션명 또는 노트북명 수집
         text = t.get("section_text") or t.get("notebook_text") or ""
-        try:
-            sig_s = json.dumps(sig, sort_keys=True, ensure_ascii=False)
-        except Exception:
-            sig_s = str(sig)
-        return f"{ty}|{sig_s}|{text}"
+        return (ty, _freeze_key(sig), text)
 
     def _walk_fav_nodes(nodes: Any):
         if not isinstance(nodes, list):
@@ -1066,6 +1075,11 @@ def _normalize_text(s: Optional[str]) -> str:
 def _normalize_notebook_name_key(s: Optional[str]) -> str:
     text = unicodedata.normalize("NFKC", s or "").casefold()
     return re.sub(r"[\s\-_]+", "", text)
+
+
+def _normalize_project_search_key(s: Optional[str]) -> str:
+    text = unicodedata.normalize("NFKC", s or "").casefold()
+    return re.sub(r"\s+", "", text)
 
 
 def _strip_stale_favorite_prefix(text: Optional[str]) -> str:
@@ -3179,13 +3193,38 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.active_buffer_node = None  # Dict payload
         self.active_buffer_item = None  # QTreeWidgetItem
         self._active_buffer_settings_node = None  # Dict node in self.settings
+        self._last_loaded_center_buffer_id = None
         self._buffer_item_index: Dict[str, QTreeWidgetItem] = {}
         self._first_buffer_item: Optional[QTreeWidgetItem] = None
+        self._buffer_search_highlight_bg = QBrush(QColor("#335c57"))
+        self._buffer_search_highlight_fg = QBrush(QColor("#e8fff8"))
+        self._buffer_search_clear_bg = QBrush()
+        self._buffer_search_clear_fg = QBrush()
+        self._buffer_search_index: List[Dict[str, Any]] = []
+        self._buffer_search_highlighted_by_id: Dict[int, QTreeWidgetItem] = {}
+        self._buffer_search_match_count = 0
+        self._buffer_search_pending_text = ""
+        self._buffer_search_pending_key = ""
+        self._buffer_search_last_applied_key = ""
+        self._buffer_search_last_first_match_id = 0
+        self._buffer_search_timer = QTimer(self)
+        self._buffer_search_timer.setSingleShot(True)
+        self._buffer_search_timer.timeout.connect(
+            lambda: self._highlight_project_buffers_from_module_search(
+                self._buffer_search_pending_text,
+                precomputed_query=self._buffer_search_pending_key,
+            )
+        )
+        self._buffer_save_timer = QTimer(self)
+        self._buffer_save_timer.setSingleShot(True)
+        self._buffer_save_timer.timeout.connect(self._save_buffer_structure)
+        self._buffer_save_interval_ms = 120
         self._aggregate_cache_valid = False
         self._aggregate_cache = []
         self._aggregate_display_cache_sig = None
         self._aggregate_display_cache = []
         self._aggregate_display_cache_kind = None
+        self._aggregate_display_cache_source_id = 0
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.timeout.connect(self._flush_pending_settings_save)
@@ -3532,7 +3571,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.buffer_tree.itemSelectionChanged.connect(
             lambda: getattr(self, "_boot_loading", False) or self._on_buffer_tree_selection_changed()
         )
-        self.buffer_tree.structureChanged.connect(self._save_buffer_structure)
+        self.buffer_tree.structureChanged.connect(self._request_buffer_structure_save)
         self.buffer_tree.renameRequested.connect(self._rename_buffer)
         self.buffer_tree.deleteRequested.connect(self._delete_buffer)
         
@@ -3592,16 +3631,23 @@ class OneNoteScrollRemoconApp(QMainWindow):
         tb1_layout.addWidget(self.btn_rename)
         tb1_layout.addStretch(1)
 
-        # 툴바 - 2행: 그룹 펼치기, 접기 (삭제 버튼은 하단으로 이동)
+        # 툴바 - 2행: 그룹 추가, 그룹 펼치기/접기 드롭다운
         tb2_layout = QHBoxLayout()
-        self.btn_expand_all = QToolButton()
-        self.btn_expand_all.setText("그룹 펼치기")
-        self.btn_collapse_all = QToolButton()
-        self.btn_collapse_all.setText("그룹 접기")
+        self.btn_group_expand_collapse = QToolButton()
+        self.btn_group_expand_collapse.setText("그룹 펼치기/접기")
+        self.btn_group_expand_collapse.setToolTip("그룹 펼치기 또는 그룹 접기를 선택합니다.")
+        self.btn_group_expand_collapse.setPopupMode(
+            QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.menu_group_expand_collapse = QMenu(self.btn_group_expand_collapse)
+        self.action_expand_all_groups = QAction("그룹 펼치기", self)
+        self.action_collapse_all_groups = QAction("그룹 접기", self)
+        self.menu_group_expand_collapse.addAction(self.action_expand_all_groups)
+        self.menu_group_expand_collapse.addAction(self.action_collapse_all_groups)
+        self.btn_group_expand_collapse.setMenu(self.menu_group_expand_collapse)
         tb2_layout.addWidget(self.btn_add_group)
         tb2_layout.addStretch(1)
-        tb2_layout.addWidget(self.btn_expand_all)
-        tb2_layout.addWidget(self.btn_collapse_all)
+        tb2_layout.addWidget(self.btn_group_expand_collapse)
 
         tb3_layout = QHBoxLayout()
         tb3_layout.addStretch(1)
@@ -3631,8 +3677,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._icon_dir = None
             self._icon_agg = None
 
-        self.btn_expand_all.clicked.connect(self.fav_tree.expandAll)
-        self.btn_collapse_all.clicked.connect(self.fav_tree.collapseAll)
+        self.action_expand_all_groups.triggered.connect(
+            lambda: self._expand_fav_groups_always(reason="toolbar")
+        )
+        self.action_collapse_all_groups.triggered.connect(self.fav_tree.collapseAll)
         self.fav_tree.itemDoubleClicked.connect(self._on_fav_item_double_clicked)
         self.fav_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.fav_tree.customContextMenuRequested.connect(self._on_fav_context_menu)
@@ -3790,6 +3838,28 @@ class OneNoteScrollRemoconApp(QMainWindow):
         right_layout.addWidget(search_group)
 
         right_layout.addStretch(1)
+
+        project_search_group = QGroupBox("프로젝트 검색")
+        project_search_group_layout = QVBoxLayout(project_search_group)
+        module_search_layout = QHBoxLayout()
+        self.module_project_search_input = QLineEdit()
+        self.module_project_search_input.setPlaceholderText(
+            "프로젝트/등록영역 버퍼 검색 (띄어쓰기 무시)..."
+        )
+        self.module_project_search_input.setClearButtonEnabled(True)
+        self.module_project_search_input.textChanged.connect(
+            self._schedule_project_buffer_search_highlight
+        )
+        self.btn_module_project_search_clear = QToolButton()
+        self.btn_module_project_search_clear.setText("검색 지우기")
+        self.btn_module_project_search_clear.clicked.connect(
+            self.module_project_search_input.clear
+        )
+        module_search_layout.addWidget(self.module_project_search_input, stretch=1)
+        module_search_layout.addWidget(self.btn_module_project_search_clear)
+        project_search_group_layout.addLayout(module_search_layout)
+        right_layout.addWidget(project_search_group)
+
         self.main_splitter.addWidget(right_panel)
 
         self.connection_status_label = QLabel(initial_status)
@@ -3915,6 +3985,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception:
                 pass
             self._save_favorites()
+            self._flush_pending_buffer_structure_save()
             self._flush_pending_settings_save()
             print("[DBG][FLUSH] Favorites saved on exit")
         except Exception as e:
@@ -4863,6 +4934,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_display_cache_sig = None
         self._aggregate_display_cache = []
         self._aggregate_display_cache_kind = None
+        self._aggregate_display_cache_source_id = 0
 
     def _get_sorted_aggregate_display_nodes(self, nodes, *, kind: str):
         """
@@ -4870,6 +4942,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         - kind='saved': 종합 버퍼에 직접 저장된 notebook/group 표시본
         - kind='built': 전체 버퍼에서 수집해 만든 fallback 표시본
         """
+        source_id = id(nodes)
+        if (
+            source_id
+            and source_id == getattr(self, "_aggregate_display_cache_source_id", 0)
+            and kind == getattr(self, "_aggregate_display_cache_kind", None)
+            and isinstance(getattr(self, "_aggregate_display_cache", None), list)
+        ):
+            return self._aggregate_display_cache
         sig = self._calc_nodes_signature(nodes)
         if (
             sig is not None
@@ -4882,6 +4962,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_display_cache_sig = sig
         self._aggregate_display_cache_kind = kind
         self._aggregate_display_cache = data
+        self._aggregate_display_cache_source_id = source_id
         return data
 
     def _build_aggregate_buffer(self):
@@ -4889,7 +4970,6 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if getattr(self, "_aggregate_cache_valid", False):
             return self._aggregate_cache
         data = _collect_all_sections_dedup(self.settings)
-        data = self._get_sorted_aggregate_display_nodes(data, kind="built")
         self._aggregate_cache = data
         self._aggregate_cache_valid = True
         return data
@@ -4903,6 +4983,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
             active_id = self.settings.get("active_buffer_id")
             found_data = []
             buf_name = "None"
+            if active_id and getattr(self, "_last_loaded_center_buffer_id", None) == active_id:
+                print(f"[BOOT][PERF] final restore skipped; active buffer already loaded: {active_id}")
+                return
 
             found_item = self._buffer_item_index.get(active_id) if active_id else None
             if found_item is not None:
@@ -4947,10 +5030,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         2패널(모듈/전자필기장 영역)을 복원합니다.
         """
         print(f"[BOOT][BUF_RESTORE] buffer='{buffer_name}' count={len(nodes)}")
-        self._clear_module_panel()
 
         if nodes:
             self._load_favorites_into_center_tree(nodes)
+        else:
+            self._clear_module_panel()
+        self._last_loaded_center_buffer_id = (
+            self.settings.get("active_buffer_id") if buffer_name != "None" else None
+        )
         
         # 활성 상태바 업데이트
         if buffer_name != "None":
@@ -4958,13 +5045,23 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def _clear_module_panel(self):
         """중앙 모듈(즐겨찾기) 패널을 완전히 비웁니다."""
+        was_updates_enabled = True
         try:
             self.fav_tree.blockSignals(True)
+            was_updates_enabled = self.fav_tree.updatesEnabled()
+            self.fav_tree.setUpdatesEnabled(False)
             self.fav_tree.clear()
+            self._last_loaded_center_buffer_id = None
             self._last_center_payload_hash = None # 해시 캐시 초기화
         except Exception:
             pass
         finally:
+            try:
+                self.fav_tree.setUpdatesEnabled(was_updates_enabled)
+                if was_updates_enabled:
+                    self.fav_tree.viewport().update()
+            except Exception:
+                pass
             self.fav_tree.blockSignals(False)
 
     # ----------------- 15. 즐겨찾기 로드/세이브 (계층형 버퍼 시스템 적용) -----------------
@@ -4978,6 +5075,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.buffer_tree.clear()
         self._buffer_item_index = {}
         self._first_buffer_item = None
+        self._buffer_search_index = []
+        self._buffer_search_highlighted_by_id = {}
+        self._buffer_search_match_count = 0
+        self._buffer_search_last_applied_key = ""
+        self._buffer_search_last_first_match_id = 0
         self._active_buffer_settings_node = None
 
         buffers_data = self.settings.get("favorites_buffers", [])
@@ -5046,6 +5148,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._on_buffer_tree_item_clicked(found_item, 0)
         finally:
             self._boot_loading = False
+            self._refresh_project_buffer_search_highlights()
 
     def _append_buffer_node(self, parent: QTreeWidgetItem, node: Dict[str, Any]) -> QTreeWidgetItem:
         item = QTreeWidgetItem(parent)
@@ -5084,6 +5187,17 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._buffer_item_index[item_id] = item
             if node_type == "buffer" and self._first_buffer_item is None:
                 self._first_buffer_item = item
+        if node_type == "buffer":
+            search_key = _normalize_project_search_key(item.text(0))
+            if search_key:
+                parents = []
+                parent_item = item.parent()
+                while parent_item is not None:
+                    parents.append(parent_item)
+                    parent_item = parent_item.parent()
+                self._buffer_search_index.append(
+                    {"item": item, "key": search_key, "parents": tuple(parents)}
+                )
         
         # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
         if payload.get("locked"):
@@ -5099,16 +5213,22 @@ class OneNoteScrollRemoconApp(QMainWindow):
         주의: fav_tree.expandAll()은 노드가 많을 때 렉을 유발할 수 있어,
         '자식이 있는 노드만 expandItem()' 하는 방식으로 그룹만 펼칩니다.
         """
+        changed = False
+        was_updates_enabled = True
         try:
             root = self.fav_tree.invisibleRootItem()
-            stack = [root.child(i) for i in range(root.childCount())]
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
             expanded = 0
+            was_updates_enabled = self.fav_tree.updatesEnabled()
+            self.fav_tree.setUpdatesEnabled(False)
             while stack:
                 it = stack.pop()
                 # 자식이 있으면 '그룹성 노드'로 간주
                 if it.childCount() > 0:
-                    self.fav_tree.expandItem(it)
-                    expanded += 1
+                    if not it.isExpanded():
+                        self.fav_tree.expandItem(it)
+                        expanded += 1
+                        changed = True
                     for j in range(it.childCount()):
                         stack.append(it.child(j))
             tag = f" reason={reason}" if reason else ""
@@ -5119,17 +5239,30 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._dbg_hot(f"[DBG][FAV][EXPAND_GROUPS][FAIL]{tag} {e}")
             except Exception:
                 pass
+        finally:
+            try:
+                self.fav_tree.setUpdatesEnabled(was_updates_enabled)
+                if changed and was_updates_enabled:
+                    self.fav_tree.viewport().update()
+            except Exception:
+                pass
 
     def _expand_buffer_groups_always(self, *, reason: str = "") -> None:
+        changed = False
+        was_updates_enabled = True
         try:
             root = self.buffer_tree.invisibleRootItem()
-            stack = [root.child(i) for i in range(root.childCount())]
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
             expanded = 0
+            was_updates_enabled = self.buffer_tree.updatesEnabled()
+            self.buffer_tree.setUpdatesEnabled(False)
             while stack:
                 it = stack.pop()
                 if it.childCount() > 0:
-                    self.buffer_tree.expandItem(it)
-                    expanded += 1
+                    if not it.isExpanded():
+                        self.buffer_tree.expandItem(it)
+                        expanded += 1
+                        changed = True
                     for j in range(it.childCount()):
                         stack.append(it.child(j))
             tag = f" reason={reason}" if reason else ""
@@ -5140,13 +5273,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._dbg_hot(f"[DBG][BUF][EXPAND_GROUPS][FAIL]{tag} {e}")
             except Exception:
                 pass
+        finally:
+            try:
+                self.buffer_tree.setUpdatesEnabled(was_updates_enabled)
+                if changed and was_updates_enabled:
+                    self.buffer_tree.viewport().update()
+            except Exception:
+                pass
 
     def _rebuild_buffer_item_index(self) -> None:
         self._buffer_item_index = {}
         self._first_buffer_item = None
+        self._buffer_search_index = []
         try:
             root = self.buffer_tree.invisibleRootItem()
-            stack = [root.child(i) for i in range(root.childCount())]
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
             while stack:
                 item = stack.pop()
                 payload = item.data(0, ROLE_DATA) or {}
@@ -5158,10 +5299,185 @@ class OneNoteScrollRemoconApp(QMainWindow):
                         and self._first_buffer_item is None
                     ):
                         self._first_buffer_item = item
-                for i in range(item.childCount()):
+                if item.data(0, ROLE_TYPE) == "buffer":
+                    search_key = _normalize_project_search_key(item.text(0))
+                    if search_key:
+                        parents = []
+                        parent = item.parent()
+                        while parent is not None:
+                            parents.append(parent)
+                            parent = parent.parent()
+                        self._buffer_search_index.append(
+                            {"item": item, "key": search_key, "parents": tuple(parents)}
+                        )
+                for i in range(item.childCount() - 1, -1, -1):
                     stack.append(item.child(i))
         except Exception as e:
             self._dbg_hot(f"[DBG][BUF][INDEX][FAIL] {e}")
+
+    def _set_buffer_search_highlight(self, item: QTreeWidgetItem, enabled: bool) -> None:
+        if item is None:
+            return
+        try:
+            if enabled:
+                item.setBackground(0, self._buffer_search_highlight_bg)
+                item.setForeground(0, self._buffer_search_highlight_fg)
+            else:
+                item.setBackground(0, self._buffer_search_clear_bg)
+                item.setForeground(0, self._buffer_search_clear_fg)
+        except Exception:
+            pass
+
+    def _clear_project_buffer_search_highlights(self) -> None:
+        was_updates_enabled = True
+        changed = False
+        try:
+            highlighted = list(self._buffer_search_highlighted_by_id.values())
+            was_updates_enabled = self.buffer_tree.updatesEnabled()
+            if highlighted:
+                self.buffer_tree.setUpdatesEnabled(False)
+                for item in highlighted:
+                    self._set_buffer_search_highlight(item, False)
+                changed = True
+            self._buffer_search_highlighted_by_id = {}
+            self._buffer_search_match_count = 0
+            self._buffer_search_last_applied_key = ""
+            self._buffer_search_last_first_match_id = 0
+            self._buffer_search_pending_key = ""
+        except Exception:
+            pass
+        finally:
+            try:
+                self.buffer_tree.setUpdatesEnabled(was_updates_enabled)
+                if changed and was_updates_enabled:
+                    self.buffer_tree.viewport().update()
+            except Exception:
+                pass
+
+    def _schedule_project_buffer_search_highlight(self, text: str = "") -> None:
+        self._buffer_search_pending_text = text or ""
+        self._buffer_search_pending_key = _normalize_project_search_key(text)
+        if not self._buffer_search_pending_key:
+            self._buffer_search_timer.stop()
+            self._clear_project_buffer_search_highlights()
+            return
+        self._buffer_search_timer.start(120)
+
+    def _highlight_project_buffers_from_module_search(
+        self,
+        text: str = "",
+        *,
+        update_status: bool = True,
+        scroll: bool = True,
+        precomputed_query: Optional[str] = None,
+    ) -> None:
+        query = precomputed_query if precomputed_query is not None else _normalize_project_search_key(text)
+        if not query:
+            self._clear_project_buffer_search_highlights()
+            return
+
+        if not self._buffer_search_index:
+            self._rebuild_buffer_item_index()
+
+        if query == self._buffer_search_last_applied_key:
+            return
+        self._buffer_search_last_applied_key = query
+
+        matches = []
+        matched_records = []
+        match_by_id: Dict[int, QTreeWidgetItem] = {}
+        first_match = None
+        changed_highlights = False
+        was_updates_enabled = True
+        try:
+            was_updates_enabled = self.buffer_tree.updatesEnabled()
+            for record in self._buffer_search_index:
+                item = record.get("item")
+                item_key = record.get("key") or ""
+                matched = bool(item is not None and item_key and query in item_key)
+                if matched:
+                    matches.append(item)
+                    matched_records.append(record)
+                    if first_match is None:
+                        first_match = item
+                    match_by_id[id(item)] = item
+
+            prev_by_id = self._buffer_search_highlighted_by_id
+            prev_ids = set(prev_by_id)
+            next_ids = set(match_by_id)
+            removed_ids = prev_ids - next_ids
+            added_ids = next_ids - prev_ids
+            changed_highlights = bool(removed_ids or added_ids)
+
+            if changed_highlights:
+                self.buffer_tree.setUpdatesEnabled(False)
+                for item_id in removed_ids:
+                    self._set_buffer_search_highlight(prev_by_id.get(item_id), False)
+                expanded_parent_ids = set()
+                for record in matched_records:
+                    item = record.get("item")
+                    if item is None or id(item) not in added_ids:
+                        continue
+                    self._set_buffer_search_highlight(item, True)
+                    for parent in record.get("parents") or ():
+                        parent_id = id(parent)
+                        if parent_id in expanded_parent_ids:
+                            continue
+                        expanded_parent_ids.add(parent_id)
+                        if not parent.isExpanded():
+                            self.buffer_tree.expandItem(parent)
+                self._buffer_search_highlighted_by_id = match_by_id
+        finally:
+            try:
+                self.buffer_tree.setUpdatesEnabled(was_updates_enabled)
+                if was_updates_enabled and (
+                    changed_highlights or self._buffer_search_match_count != len(matches)
+                ):
+                    self.buffer_tree.viewport().update()
+            except Exception:
+                pass
+
+        self._buffer_search_match_count = len(matches)
+        first_match_id = id(first_match) if first_match is not None else 0
+        if first_match is None:
+            self._buffer_search_last_first_match_id = 0
+        if (
+            scroll
+            and first_match is not None
+            and first_match_id != self._buffer_search_last_first_match_id
+        ):
+            try:
+                self.buffer_tree.scrollToItem(
+                    first_match,
+                    QAbstractItemView.ScrollHint.EnsureVisible,
+                )
+                self._buffer_search_last_first_match_id = first_match_id
+            except Exception:
+                pass
+        if update_status:
+            try:
+                self.connection_status_label.setText(
+                    f"프로젝트 검색: '{text}' - 버퍼 {len(matches)}개 강조"
+                )
+            except Exception:
+                pass
+
+    def _refresh_project_buffer_search_highlights(self) -> None:
+        search_input = getattr(self, "module_project_search_input", None)
+        if search_input is None:
+            return
+        query = _normalize_project_search_key(search_input.text())
+        if not query:
+            if self._buffer_search_highlighted_by_id:
+                self._clear_project_buffer_search_highlights()
+            return
+        self._buffer_search_last_applied_key = ""
+        self._highlight_project_buffers_from_module_search(
+            search_input.text(),
+            update_status=False,
+            scroll=False,
+            precomputed_query=query,
+        )
 
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
@@ -5172,15 +5488,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             new_hash = None
 
-        if getattr(self, "_last_center_payload_hash", None) == new_hash:
+        if new_hash is not None and getattr(self, "_last_center_payload_hash", None) == new_hash:
             return
-
-        self._last_center_payload_hash = new_hash
 
         # 로딩 중 clear/append 과정에서 structureChanged/itemChanged가 발생하면
         # 선택 버퍼가 바뀌는 타이밍에 "빈 데이터"가 저장되는 문제가 발생할 수 있다.
         # (재현: 버퍼 A에서 섹션 추가 → 버퍼 B 클릭 → 다시 A 클릭 시 A가 빈 목록으로 덮임)
         self.fav_tree.blockSignals(True)
+        was_updates_enabled = self.fav_tree.updatesEnabled()
         self.fav_tree.setUpdatesEnabled(False)
         try:
             self.fav_tree.clear()
@@ -5200,10 +5515,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
             #    - 예전에는 최초 1회만 펼쳤는데, 그 이후엔 항상 접힌 상태로 복원되어 사용성이 나빠짐
             #    - expandAll() 대신 '자식이 있는 노드만 expandItem' 방식으로 그룹만 펼쳐 성능도 방어
             self._expand_fav_groups_always(total_nodes=total_nodes, reason="rebuild")
+            self._last_center_payload_hash = new_hash
         finally:
-            self.fav_tree.setUpdatesEnabled(True)
+            self.fav_tree.setUpdatesEnabled(was_updates_enabled)
             self.fav_tree.blockSignals(False)
-            self.fav_tree.update()
+            if was_updates_enabled:
+                self.fav_tree.viewport().update()
 
     def _request_favorites_save(self, *_args):
         """
@@ -5221,9 +5538,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def _flush_pending_favorites_save(self):
         if not getattr(self, "_fav_save_pending", False):
-            return
+            return False
         self._fav_save_pending = False
         self._save_favorites()
+        return True
 
     def _save_favorites(self):
         """현재 활성화된 중앙 트리의 내용을 버퍼 트리의 해당 노드 데이터에 반영하고 저장합니다."""
@@ -5322,14 +5640,34 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception as e:
             print(f"[ERROR] 즐겨찾기 저장 실패: {e}")
 
+    def _request_buffer_structure_save(self, *_args):
+        if getattr(self, "_boot_loading", False):
+            return
+        self._buffer_save_timer.start(self._buffer_save_interval_ms)
+
+    def _flush_pending_buffer_structure_save(self) -> None:
+        try:
+            if self._buffer_save_timer.isActive():
+                self._buffer_save_timer.stop()
+                self._save_buffer_structure()
+        except Exception:
+            pass
+
     def _save_buffer_structure(self):
         """버퍼 트리의 구조(그룹/버퍼)를 settings에 저장합니다."""
         self._invalidate_aggregate_cache()
-        self._rebuild_buffer_item_index()
+        try:
+            if self._buffer_save_timer.isActive():
+                self._buffer_save_timer.stop()
+        except Exception:
+            pass
+        self._buffer_item_index = {}
+        self._first_buffer_item = None
+        self._buffer_search_index = []
         root = self.buffer_tree.invisibleRootItem()
         structure = []
         for i in range(root.childCount()):
-            structure.append(self._serialize_buffer_item(root.child(i)))
+            structure.append(self._serialize_buffer_item(root.child(i), rebuild_index=True))
         
         try:
             structure_sig = hashlib.md5(
@@ -5344,6 +5682,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.settings.get("favorites_buffers", []),
                 self.active_buffer_id,
             )
+            self._refresh_project_buffer_search_highlights()
             return
 
         self.settings["favorites_buffers"] = structure
@@ -5355,10 +5694,33 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.active_buffer_id,
         )
         self._save_settings_to_file()
+        self._refresh_project_buffer_search_highlights()
 
-    def _serialize_buffer_item(self, item: QTreeWidgetItem) -> Dict:
+    def _serialize_buffer_item(
+        self,
+        item: QTreeWidgetItem,
+        *,
+        rebuild_index: bool = False,
+    ) -> Dict:
         node_type = item.data(0, ROLE_TYPE)
         payload = item.data(0, ROLE_DATA) or {}
+        if rebuild_index:
+            item_id = payload.get("id")
+            if item_id:
+                self._buffer_item_index[item_id] = item
+                if node_type == "buffer" and self._first_buffer_item is None:
+                    self._first_buffer_item = item
+            if node_type == "buffer":
+                search_key = _normalize_project_search_key(item.text(0))
+                if search_key:
+                    parents = []
+                    parent_item = item.parent()
+                    while parent_item is not None:
+                        parents.append(parent_item)
+                        parent_item = parent_item.parent()
+                    self._buffer_search_index.append(
+                        {"item": item, "key": search_key, "parents": tuple(parents)}
+                    )
         
         node = {
             "type": node_type,
@@ -5371,7 +5733,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 node["locked"] = True
             children = []
             for i in range(item.childCount()):
-                children.append(self._serialize_buffer_item(item.child(i)))
+                children.append(
+                    self._serialize_buffer_item(
+                        item.child(i),
+                        rebuild_index=rebuild_index,
+                    )
+                )
             node["children"] = children
         else:
             # 버퍼인 경우, 현재 메모리 상의 데이터를 유지하거나
@@ -5434,6 +5801,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             try:
                 # 현재 메모리 설정을 파일로 강제 저장 (최신 상태 반영)
                 self._save_window_state() # 창 위치 등 업데이트
+                self._flush_pending_buffer_structure_save()
                 self._save_favorites()    # 즐겨찾기 업데이트
                 
                 # 백업 디렉토리 기억
@@ -5686,11 +6054,17 @@ class OneNoteScrollRemoconApp(QMainWindow):
         if node_type == "buffer":
             # 버퍼 전환 직전: 현재 중앙 트리 내용을 "이전 버퍼"에 반드시 저장
             # (그렇지 않으면 버퍼를 다시 클릭했을 때 섹션/그룹이 사라지는 현상 발생)
+            flushed_current_buffer = False
             try:
-                self._flush_pending_favorites_save()
+                flushed_current_buffer = self._flush_pending_favorites_save()
             except Exception:
                 pass
-            if self.active_buffer_id and payload and payload.get("id") != self.active_buffer_id:
+            if (
+                self.active_buffer_id
+                and payload
+                and payload.get("id") != self.active_buffer_id
+                and not flushed_current_buffer
+            ):
                 self._save_favorites()
             
             self.active_buffer_id = payload.get("id")
@@ -5740,17 +6114,19 @@ class OneNoteScrollRemoconApp(QMainWindow):
                         self.btn_register_all_notebooks.setEnabled(False)
                         self.btn_register_all_notebooks.setVisible(False)
                     self.btn_add_group.setEnabled(True)
+                self._last_loaded_center_buffer_id = self.active_buffer_id
             finally:
                 self.setUpdatesEnabled(True)
                 self.update()
         else:
             # 그룹 선택 시
             # 현재 버퍼 내용이 남아있을 수 있으므로 먼저 저장
+            flushed_current_buffer = False
             try:
-                self._flush_pending_favorites_save()
+                flushed_current_buffer = self._flush_pending_favorites_save()
             except Exception:
                 pass
-            if self.active_buffer_id:
+            if self.active_buffer_id and not flushed_current_buffer:
                 self._save_favorites()
             if hasattr(self, "btn_register_all_notebooks"):
                 self.btn_register_all_notebooks.setEnabled(False)
@@ -5760,6 +6136,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.active_buffer_id = None
             self.active_buffer_item = None
             self._active_buffer_settings_node = None
+            self._last_loaded_center_buffer_id = None
             self._load_favorites_into_center_tree([])
 
             # ✅ 버퍼가 아닌(그룹/빈) 상태에서도 Undo 컨텍스트를 리셋 (이전 버퍼 스냅샷 혼입 방지)
