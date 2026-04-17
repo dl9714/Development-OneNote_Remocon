@@ -55,6 +55,7 @@ pyinstaller --onedir ^
     --icon="%~dp0assets\app_icon.ico" ^
     --add-data "%~dp0assets\app_icon.ico;assets" ^
     --add-data "%~dp0assets\app_icon.png;assets" ^
+    --add-data "%~dp0OneNote_Remocon_Setting.json;." ^
     "%~dp0main.py"
 
 if errorlevel 1 (
@@ -62,6 +63,10 @@ if errorlevel 1 (
     echo [ERROR] 빌드에 실패했습니다.
     pause
     exit /b 1
+)
+
+if exist "%~dp0OneNote_Remocon_Setting.json" (
+    copy /Y "%~dp0OneNote_Remocon_Setting.json" "%CD%\dist\OneNote_Remocon\OneNote_Remocon_Setting.json" >nul
 )
 
 echo.

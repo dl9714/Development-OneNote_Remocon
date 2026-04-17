@@ -67,10 +67,15 @@ class FavoritesTree(QTreeWidget):
         """
         source_item = self.currentItem()
         target_item = self.itemAt(event.position().toPoint())
+        drop_position = self.dropIndicatorPosition()
 
         if not source_item:
             event.ignore()
             return
+
+        root_item = self.invisibleRootItem()
+        source_parent_before = source_item.parent() or root_item
+        source_row_before = source_parent_before.indexOfChild(source_item)
 
         super().dropEvent(event)
 
@@ -79,8 +84,12 @@ class FavoritesTree(QTreeWidget):
             source_type = source_item.data(0, ROLE_TYPE)
             target_type = target_item.data(0, ROLE_TYPE)
 
-            # 섹션(또는 버퍼)이 같은 타입 위로 드롭되면 형제로 이동
-            if source_type == target_type and source_type in ["section", "buffer"]:
+            # 전자필기장/섹션/버퍼가 같은 타입 위로 드롭되면 형제로 이동
+            if source_type == target_type and source_type in {
+                "section",
+                "buffer",
+                "notebook",
+            }:
                 moved_item = target_item.takeChild(
                     target_item.indexOfChild(source_item)
                 )
@@ -88,12 +97,24 @@ class FavoritesTree(QTreeWidget):
                 if moved_item:
                     parent_of_target = target_item.parent()
                     if not parent_of_target:
-                        parent_of_target = self.invisibleRootItem()
+                        parent_of_target = root_item
                     target_index = parent_of_target.indexOfChild(target_item)
-                    parent_of_target.insertChild(target_index + 1, moved_item)
+                    insert_index = target_index
+                    if (
+                        drop_position
+                        != QAbstractItemView.DropIndicatorPosition.AboveItem
+                    ):
+                        insert_index = target_index + 1
+                    parent_of_target.insertChild(insert_index, moved_item)
                     self.setCurrentItem(moved_item)
 
-        self.structureChanged.emit()
+        source_parent_after = source_item.parent() or root_item
+        source_row_after = source_parent_after.indexOfChild(source_item)
+        if (
+            source_parent_after is not source_parent_before
+            or source_row_after != source_row_before
+        ):
+            self.structureChanged.emit()
 
     def keyPressEvent(self, event):
         """

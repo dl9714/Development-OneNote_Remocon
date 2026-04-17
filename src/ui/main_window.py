@@ -16,6 +16,7 @@ import unicodedata
 import subprocess
 import re
 import difflib
+import html
 from types import SimpleNamespace
 from urllib.parse import urlparse, parse_qs
 
@@ -48,6 +49,10 @@ from PyQt6.QtWidgets import (
     QWidget,
     QLineEdit,
     QListWidgetItem,
+    QTabWidget,
+    QTextEdit,
+    QComboBox,
+    QScrollArea,
 )
 from PyQt6.QtCore import (
     QThread,
@@ -66,6 +71,8 @@ from src.ui.widgets import FavoritesTree, BufferTree, TreeNameEditDelegate
 
 # ----------------- 0. 전역 상수 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
+SETTINGS_PATH_POINTER_FILE = "OneNote_Remocon_Setting.path"
+SETTINGS_PATH_ENV = "ONENOTE_REMOCON_SETTINGS_PATH"
 APP_ICON_PATH = "assets/app_icon.ico"
 
 ONENOTE_CLASS_NAME = "ApplicationFrameWindow"
@@ -79,6 +86,10 @@ DEFAULT_GROUP_ID = "group-default-fixed"
 DEFAULT_GROUP_NAME = "Default"
 AGG_BUFFER_ID = "buffer-aggregate-all-sections"
 AGG_BUFFER_NAME = "종합"
+AGG_UNCLASSIFIED_GROUP_ID = "group-aggregate-uncategorized"
+AGG_UNCLASSIFIED_GROUP_NAME = "미분류 카테고리"
+AGG_CLASSIFIED_GROUP_ID = "group-aggregate-categorized"
+AGG_CLASSIFIED_GROUP_NAME = "카테고리 분류된 전자필기장"
 
 # OneNote: 전체 전자필기장 자동등록 그룹
 AUTO_ONENOTE_GROUP_ID = "group-onenote-auto"
@@ -152,21 +163,165 @@ def _name_sort_key(text: Any) -> str:
             return ""
 
 # ----------------- 0.0 설정 파일 경로 헬퍼 -----------------
+def _get_app_base_path() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def _get_default_settings_file_path() -> str:
+    return os.path.join(_get_app_base_path(), SETTINGS_FILE)
+
+
+def _settings_path_config_dir() -> str:
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return os.path.join(base, "OneNote_Remocon")
+
+
+def _settings_path_config_file() -> str:
+    return os.path.join(_settings_path_config_dir(), SETTINGS_PATH_POINTER_FILE)
+
+
+def _expand_external_settings_path(raw: str, base_dir: Optional[str] = None) -> str:
+    value = (raw or "").strip().strip('"').strip("'")
+    if not value:
+        return ""
+    value = os.path.expandvars(os.path.expanduser(value))
+    if not os.path.isabs(value) and base_dir:
+        value = os.path.join(base_dir, value)
+    return os.path.abspath(value)
+
+
+def _read_settings_path_pointer(path: str) -> str:
+    try:
+        if not os.path.exists(path):
+            return ""
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if not raw:
+            return ""
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                raw = data.get("settings_path") or data.get("path") or ""
+        except Exception:
+            pass
+        return _expand_external_settings_path(raw, os.path.dirname(path))
+    except Exception:
+        return ""
+
+
+def _get_external_settings_file_path() -> str:
+    env_path = _expand_external_settings_path(os.environ.get(SETTINGS_PATH_ENV, ""))
+    if env_path:
+        return env_path
+
+    user_pointer = _read_settings_path_pointer(_settings_path_config_file())
+    if user_pointer:
+        return user_pointer
+
+    local_pointer = _read_settings_path_pointer(
+        os.path.join(_get_app_base_path(), SETTINGS_PATH_POINTER_FILE)
+    )
+    if local_pointer:
+        return local_pointer
+
+    return ""
+
+
+def _set_external_settings_file_path(path: str) -> None:
+    resolved = _expand_external_settings_path(path)
+    if not resolved:
+        raise ValueError("설정 JSON 경로가 비어 있습니다.")
+    os.makedirs(_settings_path_config_dir(), exist_ok=True)
+    with open(_settings_path_config_file(), "w", encoding="utf-8") as f:
+        f.write(resolved)
+
+
+def _clear_external_settings_file_path() -> None:
+    try:
+        os.remove(_settings_path_config_file())
+    except FileNotFoundError:
+        pass
+
+
+def _settings_path_mode_label() -> str:
+    external = _get_external_settings_file_path()
+    if external:
+        return f"공용 JSON: {external}"
+    return f"기본 JSON: {_get_default_settings_file_path()}"
+
+
 def _get_settings_file_path() -> str:
     """
     설정 파일(쓰기 가능)의 경로를 반환합니다.
-    - PyInstaller로 패키징된 경우: 실행 파일(.exe)이 위치한 디렉토리
-    - 스크립트 실행인 경우: 현재 작업 디렉토리
+    우선순위:
+    1. ONENOTE_REMOCON_SETTINGS_PATH 환경변수
+    2. 사용자 공용 포인터(%APPDATA%/OneNote_Remocon/OneNote_Remocon_Setting.path)
+    3. 실행 위치의 로컬 포인터(OneNote_Remocon_Setting.path)
+    4. 기본값: EXE 위치 또는 프로젝트 루트의 OneNote_Remocon_Setting.json
     """
-    # sys.frozen은 PyInstaller에 의해 생성된 실행 파일인지 확인하는 일반적인 방법입니다.
-    if getattr(sys, "frozen", False):
-        # 실행 파일(.exe)이 있는 디렉토리
-        base_path = os.path.dirname(sys.executable)
-    else:
-        # 스크립트 실행 환경 (현재 작업 디렉토리)
-        base_path = os.path.abspath(".")
+    external = _get_external_settings_file_path()
+    if external:
+        return external
 
-    return os.path.join(base_path, SETTINGS_FILE)
+    return _get_default_settings_file_path()
+
+
+def _find_settings_seed_file(primary_path: str) -> Optional[str]:
+    """EXE 첫 실행 시 복사해 쓸 초기 설정 파일 후보를 찾습니다."""
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, SETTINGS_FILE))
+    candidates.append(_get_default_settings_file_path())
+    candidates.append(os.path.join(os.path.abspath("."), SETTINGS_FILE))
+    candidates.append(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", SETTINGS_FILE))
+    )
+
+    primary_abs = os.path.abspath(primary_path)
+    seen = set()
+    for path in candidates:
+        try:
+            path_abs = os.path.abspath(path)
+        except Exception:
+            continue
+        if path_abs in seen or path_abs == primary_abs:
+            continue
+        seen.add(path_abs)
+        if os.path.exists(path_abs):
+            return path_abs
+    return None
+
+
+def _settings_has_user_buffers(settings: Dict[str, Any]) -> bool:
+    """Default/종합만 있는 빈 설정인지, 실제 프로젝트 데이터가 있는지 구분합니다."""
+    nodes = settings.get("favorites_buffers")
+    if not isinstance(nodes, list):
+        return False
+
+    stack = list(nodes)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        node_type = node.get("type")
+        if node_type == "group":
+            if node.get("id") != DEFAULT_GROUP_ID:
+                return True
+            children = node.get("children")
+            if isinstance(children, list):
+                stack.extend(children)
+        elif node_type == "buffer":
+            data = node.get("data")
+            if node.get("id") != AGG_BUFFER_ID:
+                return True
+            if isinstance(data, list) and data:
+                return True
+        elif node_type in ("notebook", "section"):
+            return True
+    return False
 
 
 # ----------------- 0.0 설정 파일 로드/저장 유틸리티 (즐겨찾기 버퍼 구조 추가) -----------------
@@ -373,10 +528,38 @@ def load_settings() -> Dict[str, Any]:
     file_sig = _get_file_signature(settings_path)
     cache_entry = _SETTINGS_OBJECT_CACHE.get(settings_path)
     if file_sig is not None and cache_entry and cache_entry.get("sig") == file_sig:
-        return copy.deepcopy(cache_entry.get("data") or DEFAULT_SETTINGS)
+        cached = copy.deepcopy(cache_entry.get("data") or DEFAULT_SETTINGS)
+        _ensure_default_and_aggregate_inplace(cached)
+        return cached
 
     if not os.path.exists(settings_path):
-        return DEFAULT_SETTINGS.copy()
+        seed_path = _find_settings_seed_file(settings_path)
+        if seed_path:
+            try:
+                with open(seed_path, "r", encoding="utf-8") as f:
+                    raw_text = f.read()
+                data = json.loads(raw_text)
+                _migrate_favorites_buffers_inplace(data)
+                settings = DEFAULT_SETTINGS.copy()
+                settings.update(data)
+                _ensure_default_and_aggregate_inplace(settings)
+                try:
+                    _write_json(settings_path, settings)
+                except Exception as e:
+                    print(f"[WARN] 초기 설정 복사 실패(메모리 로드는 계속): {e}")
+                _update_settings_object_cache(settings_path, settings)
+                return settings
+            except Exception as e:
+                print(f"[WARN] 초기 설정 파일 로드 실패({seed_path}): {e}")
+
+        settings = DEFAULT_SETTINGS.copy()
+        _ensure_default_and_aggregate_inplace(settings)
+        try:
+            _write_json(settings_path, settings)
+        except Exception as e:
+            print(f"[WARN] 기본 설정 파일 생성 실패(메모리 로드는 계속): {e}")
+        _update_settings_object_cache(settings_path, settings)
+        return settings
     try:
         with open(settings_path, "r", encoding="utf-8") as f:
             raw_text = f.read()
@@ -390,6 +573,22 @@ def load_settings() -> Dict[str, Any]:
         settings.update(data)
         # ✅ 로드 직후에도 Default/종합 구조 강제
         _ensure_default_and_aggregate_inplace(settings)
+        if not _settings_has_user_buffers(settings):
+            seed_path = _find_settings_seed_file(settings_path)
+            if seed_path:
+                try:
+                    with open(seed_path, "r", encoding="utf-8") as f:
+                        seed_data = json.loads(f.read())
+                    _migrate_favorites_buffers_inplace(seed_data)
+                    seed_settings = DEFAULT_SETTINGS.copy()
+                    seed_settings.update(seed_data)
+                    _ensure_default_and_aggregate_inplace(seed_settings)
+                    if _settings_has_user_buffers(seed_settings):
+                        settings = seed_settings
+                        migrated = True
+                        print(f"[INFO] 빈 EXE 설정 대신 초기 설정 사용: {seed_path}")
+                except Exception as e:
+                    print(f"[WARN] 초기 설정 재로드 실패({seed_path}): {e}")
         if migrated:
             try:
                 _write_json(settings_path, settings)
@@ -401,7 +600,9 @@ def load_settings() -> Dict[str, Any]:
         return settings
     except Exception as e:
         print(f"[ERROR] 설정 파일 로드 실패: {e}")
-        return DEFAULT_SETTINGS.copy()
+        settings = DEFAULT_SETTINGS.copy()
+        _ensure_default_and_aggregate_inplace(settings)
+        return settings
 
 
 def save_settings(data: Dict[str, Any]) -> bool:
@@ -3196,17 +3397,23 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._last_loaded_center_buffer_id = None
         self._buffer_item_index: Dict[str, QTreeWidgetItem] = {}
         self._first_buffer_item: Optional[QTreeWidgetItem] = None
-        self._buffer_search_highlight_bg = QBrush(QColor("#335c57"))
-        self._buffer_search_highlight_fg = QBrush(QColor("#e8fff8"))
+        self._buffer_search_highlight_bg = QBrush(QColor("#6d5a1f"))
+        self._buffer_search_highlight_fg = QBrush(QColor("#fff3bf"))
         self._buffer_search_clear_bg = QBrush()
         self._buffer_search_clear_fg = QBrush()
         self._buffer_search_index: List[Dict[str, Any]] = []
+        self._buffer_search_last_match_records: List[Dict[str, Any]] = []
         self._buffer_search_highlighted_by_id: Dict[int, QTreeWidgetItem] = {}
+        self._module_search_index: List[Dict[str, Any]] = []
+        self._module_search_last_match_records: List[Dict[str, Any]] = []
+        self._module_search_highlighted_by_id: Dict[int, QTreeWidgetItem] = {}
         self._buffer_search_match_count = 0
+        self._module_search_match_count = 0
         self._buffer_search_pending_text = ""
         self._buffer_search_pending_key = ""
         self._buffer_search_last_applied_key = ""
         self._buffer_search_last_first_match_id = 0
+        self._module_search_last_first_match_id = 0
         self._buffer_search_timer = QTimer(self)
         self._buffer_search_timer.setSingleShot(True)
         self._buffer_search_timer.timeout.connect(
@@ -3225,6 +3432,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_display_cache = []
         self._aggregate_display_cache_kind = None
         self._aggregate_display_cache_source_id = 0
+        self._aggregate_classified_keys_cache_valid = False
+        self._aggregate_classified_keys_cache: Set[str] = set()
+        self._aggregate_reclassify_in_progress = False
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.timeout.connect(self._flush_pending_settings_save)
@@ -3283,8 +3493,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._fav_undo_stack: List[str] = []
         self._fav_redo_stack: List[str] = []
         self._fav_last_snapshot: Optional[str] = None
+        self._fav_undo_batch_final_snapshot: Optional[str] = None
         self._fav_undo_suspended: bool = False
         self._fav_last_persisted_hash: Optional[str] = None
+        self._last_center_payload_hash: Optional[str] = None
+        self._last_center_payload_snapshot: Optional[str] = None
+        self._last_center_payload_source_id: int = 0
         self._last_saved_buffer_structure_sig: Optional[str] = None
         self._fav_save_timer = QTimer(self)
         self._fav_save_timer.setSingleShot(True)
@@ -3329,22 +3543,29 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
     def _deferred_bootstrap(self):
         # 첫 페인트 이후에 돌리되, 작업 중 불필요한 리페인트/레이아웃을 줄인다.
-        self.setUpdatesEnabled(False)
-        # 2. 즐겨찾기 버퍼 및 즐겨찾기 로드
-        t0 = time.perf_counter()
-        self._load_buffers_and_favorites()
-        self._boot_mark(f"_load_buffers_and_favorites done (+{(time.perf_counter()-t0)*1000.0:.1f}ms)")
+        try:
+            # 2. 즐겨찾기 버퍼 및 즐겨찾기 로드
+            t0 = time.perf_counter()
+            self._load_buffers_and_favorites()
+            self._boot_mark(f"_load_buffers_and_favorites done (+{(time.perf_counter()-t0)*1000.0:.1f}ms)")
 
-        # OneNote/pywinauto 쪽은 여기서부터 시작해도 충분 (필요 시 내부에서 ensure_pywinauto()가 또 호출됨)
-        QTimer.singleShot(0, self.refresh_onenote_list)
-        QTimer.singleShot(0, self._start_auto_reconnect)
-        self._boot_mark("timers scheduled")
+            # OneNote/pywinauto 쪽은 여기서부터 시작해도 충분 (필요 시 내부에서 ensure_pywinauto()가 또 호출됨)
+            QTimer.singleShot(0, self.refresh_onenote_list)
+            QTimer.singleShot(0, self._start_auto_reconnect)
+            self._boot_mark("timers scheduled")
 
-        # FIX: 앱 시작 시 저장된 버퍼 기준으로 2패널 강제 리빌드
-        QTimer.singleShot(50, self._finish_boot_sequence)
-
-        self.setUpdatesEnabled(True)
-        self.update()
+            # FIX: 앱 시작 시 저장된 버퍼 기준으로 2패널 강제 리빌드
+            QTimer.singleShot(50, self._finish_boot_sequence)
+        except Exception as e:
+            print(f"[BOOT][ERROR] deferred bootstrap failed: {e}")
+            traceback.print_exc()
+            try:
+                self.connection_status_label.setText(f"부팅 로드 실패: {e}")
+            except Exception:
+                pass
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
 
         # 부팅 구간 로그 출력
         try:
@@ -3356,6 +3577,4885 @@ class OneNoteScrollRemoconApp(QMainWindow):
             pass
 
         self.connection_status_label.setText("준비됨 (자동 재연결 중...)")
+
+    def _ps_single_quoted(self, value: str) -> str:
+        return "'" + (value or "").replace("'", "''") + "'"
+
+    def _codex_codegen_values(self) -> Dict[str, str]:
+        profile = self._codex_target_from_fields()
+        title_input = getattr(self, "codex_request_title_input", None)
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        target_input = getattr(self, "codex_request_target_input", None)
+
+        title = title_input.text().strip() if title_input is not None else ""
+        body = body_editor.toPlainText().strip() if body_editor is not None else ""
+        target = target_input.text().strip() if target_input is not None else ""
+
+        return {
+            "title": title or "코덱스 작업",
+            "body": body or "코덱스가 OneNote COM API로 작성한 메모입니다.",
+            "target": target or profile.get("path", ""),
+            "notebook": profile.get("notebook", ""),
+            "section_group": profile.get("section_group", ""),
+            "section": profile.get("section", ""),
+            "section_group_id": (
+                profile.get("section_group_id")
+                or "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}"
+            ),
+            "section_id": (
+                profile.get("section_id")
+                or "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}"
+            ),
+        }
+
+    def _codex_target_discovery_script(self) -> str:
+        profile = self._codex_target_from_fields()
+        target_name = self._ps_single_quoted(profile.get("name", "새 대상"))
+        target_path = self._ps_single_quoted(profile.get("path", ""))
+        notebook = self._ps_single_quoted(profile.get("notebook", ""))
+        section_group = self._ps_single_quoted(profile.get("section_group", ""))
+        section = self._ps_single_quoted(profile.get("section", ""))
+
+        return f"""# OneNote COM: 작업 위치 자동 찾기
+# 출력된 결과는 앱의 '자동 찾기 결과 저장'으로 다시 불러올 수 있습니다.
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$targetName = {target_name}
+$targetPath = {target_path}
+$notebookName = {notebook}
+$sectionGroupName = {section_group}
+$sectionName = {section}
+
+$xml = ""
+$one.GetHierarchy(
+    "",
+    [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsSections,
+    [ref]$xml
+)
+
+[xml]$doc = $xml
+$nsUri = $doc.DocumentElement.NamespaceURI
+$ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+$ns.AddNamespace("one", $nsUri)
+
+$notebooks = @($doc.SelectNodes("//one:Notebook", $ns))
+$notebook = $null
+if (-not [string]::IsNullOrWhiteSpace($notebookName)) {{
+    $notebook = $notebooks |
+        Where-Object {{ $_.GetAttribute("name") -eq $notebookName }} |
+        Select-Object -First 1
+}}
+if ($null -eq $notebook -and $notebooks.Count -eq 1) {{
+    $notebook = $notebooks[0]
+}}
+
+$searchRoot = if ($null -ne $notebook) {{ $notebook }} else {{ $doc }}
+$sectionGroups = @($searchRoot.SelectNodes(".//one:SectionGroup", $ns))
+$sectionGroup = $null
+if (-not [string]::IsNullOrWhiteSpace($sectionGroupName)) {{
+    $sectionGroup = $sectionGroups |
+        Where-Object {{ $_.GetAttribute("name") -eq $sectionGroupName }} |
+        Select-Object -First 1
+}}
+
+$sectionRoot = if ($null -ne $sectionGroup) {{ $sectionGroup }} else {{ $searchRoot }}
+$sections = @($sectionRoot.SelectNodes(".//one:Section", $ns))
+$section = $null
+if (-not [string]::IsNullOrWhiteSpace($sectionName)) {{
+    $section = $sections |
+        Where-Object {{ $_.GetAttribute("name") -eq $sectionName }} |
+        Select-Object -First 1
+}}
+
+if ($null -eq $notebook -and -not [string]::IsNullOrWhiteSpace($notebookName)) {{
+    Write-Warning "전자필기장을 찾지 못했습니다: $notebookName"
+}}
+if ($null -eq $sectionGroup -and -not [string]::IsNullOrWhiteSpace($sectionGroupName)) {{
+    Write-Warning "섹션 그룹을 찾지 못했습니다: $sectionGroupName"
+}}
+if ($null -eq $section -and -not [string]::IsNullOrWhiteSpace($sectionName)) {{
+    Write-Warning "섹션을 찾지 못했습니다: $sectionName"
+}}
+
+$foundNotebookName = if ($null -ne $notebook) {{ $notebook.GetAttribute("name") }} else {{ $notebookName }}
+$foundSectionGroupName = if ($null -ne $sectionGroup) {{ $sectionGroup.GetAttribute("name") }} else {{ $sectionGroupName }}
+$foundSectionName = if ($null -ne $section) {{ $section.GetAttribute("name") }} else {{ $sectionName }}
+$pathParts = @($foundNotebookName, $foundSectionGroupName, $foundSectionName) |
+    Where-Object {{ -not [string]::IsNullOrWhiteSpace($_) }}
+$foundPath = [string]::Join(" > ", [string[]]$pathParts)
+
+$result = [ordered]@{{
+    name = $targetName
+    path = $(if (-not [string]::IsNullOrWhiteSpace($targetPath)) {{
+        $targetPath
+    }} else {{
+        $foundPath
+    }})
+    notebook = $foundNotebookName
+    section_group = $foundSectionGroupName
+    section = $foundSectionName
+    section_group_id = $(if ($null -ne $sectionGroup) {{ $sectionGroup.GetAttribute("ID") }} else {{ "" }})
+    section_id = $(if ($null -ne $section) {{ $section.GetAttribute("ID") }} else {{ "" }})
+}}
+
+$json = $result | ConvertTo-Json -Depth 4
+$json | Set-Clipboard
+$json
+"""
+
+    def _copy_codex_target_discovery_script_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_target_discovery_script())
+        try:
+            self.connection_status_label.setText(
+                "OneNote 작업 위치 자동 찾기 스크립트를 클립보드에 복사했습니다."
+            )
+        except Exception:
+            pass
+
+    def _codex_target_profile_from_json_text(self, text: str) -> Dict[str, str]:
+        raw = (text or "").strip()
+        if not raw:
+            raise ValueError("클립보드에 JSON이 없습니다.")
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            starts = [idx for idx in (raw.find("{"), raw.find("[")) if idx >= 0]
+            ends = [idx for idx in (raw.rfind("}"), raw.rfind("]")) if idx >= 0]
+            if not starts or not ends:
+                raise ValueError("JSON 시작/끝을 찾지 못했습니다.")
+            data = json.loads(raw[min(starts): max(ends) + 1])
+
+        if isinstance(data, dict) and isinstance(data.get("targets"), list):
+            data = data["targets"][0] if data["targets"] else {}
+        elif isinstance(data, list):
+            data = data[0] if data else {}
+        if not isinstance(data, dict):
+            raise ValueError("대상 JSON 객체가 아닙니다.")
+
+        current = self._codex_target_from_fields()
+
+        def pick(key: str, fallback_key: Optional[str] = None) -> str:
+            value = data.get(key)
+            if value is None and fallback_key:
+                value = data.get(fallback_key)
+            if value is None:
+                value = current.get(key, "")
+            return str(value or "").strip()
+
+        return {
+            "name": pick("name") or "새 대상",
+            "path": pick("path"),
+            "notebook": pick("notebook"),
+            "section_group": pick("section_group", "sectionGroup"),
+            "section": pick("section"),
+            "section_group_id": pick("section_group_id", "sectionGroupId"),
+            "section_id": pick("section_id", "sectionId"),
+        }
+
+    def _save_codex_target_from_clipboard_json(self) -> None:
+        try:
+            profile = self._codex_target_profile_from_json_text(
+                QApplication.clipboard().text()
+            )
+            self._populate_codex_target_fields(profile)
+            self._apply_codex_target_to_request()
+            self._save_codex_target_profile()
+        except Exception as e:
+            QMessageBox.warning(self, "자동 찾기 결과 적용 실패", str(e))
+
+    def _codex_target_profile_json_text(self) -> str:
+        return json.dumps(
+            {
+                "version": 1,
+                "targets": [self._codex_target_from_fields()],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    def _copy_codex_target_profile_json_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_target_profile_json_text())
+        try:
+            self.connection_status_label.setText(
+                "현재 코덱스 작업 위치 JSON을 클립보드에 복사했습니다."
+            )
+        except Exception:
+            pass
+
+    def _codex_all_targets_json_text(self) -> str:
+        return json.dumps(
+            {
+                "version": 1,
+                "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "targets": self._load_codex_targets(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    def _copy_codex_all_targets_json_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_all_targets_json_text())
+        try:
+            self.connection_status_label.setText("코덱스 작업 위치 전체 JSON을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_target_audit_report_text(self) -> str:
+        targets = self._load_codex_targets()
+        duplicate_keys: Dict[str, List[Dict[str, str]]] = {}
+        issues: List[str] = []
+        rows: List[str] = []
+
+        for target in targets:
+            name = target.get("name", "")
+            path = target.get("path", "")
+            section_id = target.get("section_id", "")
+            group_id = target.get("section_group_id", "")
+            key = section_id or path or name
+            duplicate_keys.setdefault(key, []).append(target)
+            if not path:
+                issues.append(f"- 작업 경로 없음: {name or '이름 없음'}")
+            if not section_id:
+                issues.append(f"- Section ID 없음: {name or path or '이름 없음'}")
+            if not group_id:
+                issues.append(f"- SectionGroup ID 없음: {name or path or '이름 없음'}")
+            rows.append(
+                f"| {name or '-'} | {path or '-'} | {section_id or '-'} | {group_id or '-'} |"
+            )
+
+        for key, grouped in duplicate_keys.items():
+            if key and len(grouped) > 1:
+                names = ", ".join(item.get("name", "이름 없음") for item in grouped)
+                issues.append(f"- 중복 후보 `{key}`: {names}")
+
+        issue_text = "\n".join(issues) if issues else "- 문제 없음"
+        return "\n".join(
+            [
+                "# 코덱스 작업 위치 진단",
+                "",
+                f"생성 시각: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"작업 위치 수: {len(targets)}",
+                "",
+                "## 문제",
+                "",
+                issue_text,
+                "",
+                "## 목록",
+                "",
+                "| 이름 | 경로 | Section ID | SectionGroup ID |",
+                "| --- | --- | --- | --- |",
+                *rows,
+                "",
+            ]
+        )
+
+    def _copy_codex_target_audit_report_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_target_audit_report_text())
+        try:
+            self.connection_status_label.setText("코덱스 작업 위치 진단 리포트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _save_codex_target_audit_report(self) -> None:
+        try:
+            os.makedirs(self._codex_requests_dir(), exist_ok=True)
+            path = os.path.join(
+                self._codex_requests_dir(),
+                f"{time.strftime('%Y%m%d-%H%M%S')}-codex-target-audit.md",
+            )
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._codex_target_audit_report_text())
+            self._refresh_codex_work_order_list(path)
+            QMessageBox.information(self, "작업 위치 진단 저장 완료", path)
+        except Exception as e:
+            QMessageBox.warning(self, "작업 위치 진단 저장 실패", str(e))
+
+    def _codex_targets_from_inventory_json_text(self, text: str) -> List[Dict[str, str]]:
+        raw = (text or "").strip()
+        if not raw:
+            raise ValueError("클립보드에 OneNote 인벤토리 JSON이 없습니다.")
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            starts = [idx for idx in (raw.find("{"), raw.find("[")) if idx >= 0]
+            ends = [idx for idx in (raw.rfind("}"), raw.rfind("]")) if idx >= 0]
+            if not starts or not ends:
+                raise ValueError("JSON 시작/끝을 찾지 못했습니다.")
+            data = json.loads(raw[min(starts): max(ends) + 1])
+
+        items = data.get("items") if isinstance(data, dict) else data
+        if not isinstance(items, list):
+            raise ValueError("인벤토리 JSON에 items 목록이 없습니다.")
+
+        section_group_ids: Dict[str, str] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type", "")).casefold() == "sectiongroup":
+                path = str(item.get("path", "")).strip()
+                item_id = str(item.get("id", "")).strip()
+                if path and item_id:
+                    section_group_ids[path] = item_id
+
+        targets: List[Dict[str, str]] = []
+        seen: Set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type", "")).casefold() != "section":
+                continue
+            path = str(item.get("path", "")).strip()
+            section_id = str(item.get("id", "")).strip()
+            if not path or not section_id:
+                continue
+            parts = [part.strip() for part in path.split(">") if part.strip()]
+            if not parts:
+                continue
+            notebook = parts[0]
+            section = parts[-1]
+            section_group = " > ".join(parts[1:-1])
+            group_path = " > ".join(parts[:-1])
+            dedupe_key = f"{path}|{section_id}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            targets.append(
+                {
+                    "name": f"인벤토리 - {section}",
+                    "path": path,
+                    "notebook": notebook,
+                    "section_group": section_group,
+                    "section": section,
+                    "section_group_id": section_group_ids.get(group_path, ""),
+                    "section_id": section_id,
+                }
+            )
+        return targets
+
+    def _codex_inventory_target_preview_text(self) -> str:
+        targets = self._codex_targets_from_inventory_json_text(QApplication.clipboard().text())
+        rows = [
+            f"| {idx} | {target.get('name', '')} | {target.get('path', '')} | "
+            f"{target.get('section_id', '')} |"
+            for idx, target in enumerate(targets, start=1)
+        ]
+        if not rows:
+            rows.append("| - | 후보 없음 | - | - |")
+        return "\n".join(
+            [
+                "# OneNote 인벤토리 작업 위치 후보",
+                "",
+                f"후보 수: {len(targets)}",
+                "",
+                "| 번호 | 이름 | 경로 | Section ID |",
+                "| ---: | --- | --- | --- |",
+                *rows,
+                "",
+            ]
+        )
+
+    def _copy_codex_inventory_target_preview_to_clipboard(self) -> None:
+        try:
+            QApplication.clipboard().setText(self._codex_inventory_target_preview_text())
+            try:
+                self.connection_status_label.setText(
+                    "OneNote 인벤토리 작업 위치 후보를 클립보드에 복사했습니다."
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "인벤토리 후보 생성 실패", str(e))
+
+    def _import_codex_targets_from_clipboard_inventory(self) -> None:
+        try:
+            incoming = self._codex_targets_from_inventory_json_text(
+                QApplication.clipboard().text()
+            )
+            if not incoming:
+                QMessageBox.information(self, "작업 위치 후보 없음", "등록할 섹션 후보를 찾지 못했습니다.")
+                return
+
+            targets = self._load_codex_targets()
+            existing_keys = {
+                (target.get("path", ""), target.get("section_id", ""))
+                for target in targets
+                if isinstance(target, dict)
+            }
+            added = 0
+            for target in incoming:
+                key = (target.get("path", ""), target.get("section_id", ""))
+                if key in existing_keys:
+                    continue
+                targets.append(target)
+                existing_keys.add(key)
+                added += 1
+
+            self._write_codex_targets(targets)
+            self._refresh_codex_target_combo()
+            self._update_codex_status_summary()
+            QMessageBox.information(
+                self,
+                "인벤토리 작업 위치 등록 완료",
+                f"새 작업 위치 {added}개를 등록했습니다.\n전체 후보: {len(incoming)}개",
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "인벤토리 작업 위치 등록 실패", str(e))
+
+    def _codex_onenote_inventory_script(self) -> str:
+        return """# OneNote COM: 전체 구조 인벤토리 JSON
+# 전자필기장/섹션그룹/섹션/페이지 목록을 평탄화해서 클립보드에 JSON으로 복사합니다.
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$xml = ""
+$one.GetHierarchy(
+    "",
+    [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsPages,
+    [ref]$xml
+)
+
+[xml]$doc = $xml
+$nsUri = $doc.DocumentElement.NamespaceURI
+$ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+$ns.AddNamespace("one", $nsUri)
+
+$items = New-Object System.Collections.Generic.List[object]
+
+function Add-OneNoteNode {
+    param(
+        [System.Xml.XmlNode]$Node,
+        [string[]]$PathParts
+    )
+
+    $local = $Node.LocalName
+    if ($local -notin @("Notebook", "SectionGroup", "Section", "Page")) {
+        return
+    }
+
+    $name = $Node.GetAttribute("name")
+    if ([string]::IsNullOrWhiteSpace($name) -and $local -eq "Page") {
+        $name = $Node.GetAttribute("name")
+    }
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        $name = "(이름 없음)"
+    }
+
+    $nextPath = @($PathParts + $name)
+    $items.Add([ordered]@{
+        type = $local
+        name = $name
+        id = $Node.GetAttribute("ID")
+        path = [string]::Join(" > ", [string[]]$nextPath)
+        isUnread = $Node.GetAttribute("isUnread")
+        lastModifiedTime = $Node.GetAttribute("lastModifiedTime")
+    })
+
+    foreach ($child in $Node.ChildNodes) {
+        if ($child.NodeType -eq [System.Xml.XmlNodeType]::Element) {
+            Add-OneNoteNode -Node $child -PathParts $nextPath
+        }
+    }
+}
+
+foreach ($notebook in @($doc.SelectNodes("//one:Notebook", $ns))) {
+    Add-OneNoteNode -Node $notebook -PathParts @()
+}
+
+$summary = [ordered]@{
+    generated_at = (Get-Date).ToString("s")
+    total = $items.Count
+    notebooks = @($items | Where-Object { $_.type -eq "Notebook" }).Count
+    section_groups = @($items | Where-Object { $_.type -eq "SectionGroup" }).Count
+    sections = @($items | Where-Object { $_.type -eq "Section" }).Count
+    pages = @($items | Where-Object { $_.type -eq "Page" }).Count
+    items = $items
+}
+
+$json = $summary | ConvertTo-Json -Depth 8
+$json | Set-Clipboard
+$json
+"""
+
+    def _copy_codex_onenote_inventory_script_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_onenote_inventory_script())
+        try:
+            self.connection_status_label.setText(
+                "OneNote 전체 구조 인벤토리 스크립트를 클립보드에 복사했습니다."
+            )
+        except Exception:
+            pass
+
+    def _codex_page_reader_script(self) -> str:
+        profile = self._codex_target_from_fields()
+        section_id = self._ps_single_quoted(profile.get("section_id", ""))
+        section_path = self._ps_single_quoted(profile.get("path", ""))
+        return f"""# OneNote COM: 현재 대상 섹션 페이지 읽기
+# 현재 코덱스 작업 위치의 Section ID 기준으로 페이지 목록과 선택 페이지 내용을 조회합니다.
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$sectionId = {section_id}
+$sectionPath = {section_path}
+$PageTitleContains = ""
+
+if ([string]::IsNullOrWhiteSpace($sectionId)) {{
+    throw "Section ID가 비어 있습니다. 먼저 코덱스 탭에서 작업 위치 자동 찾기를 실행하세요. 대상: $sectionPath"
+}}
+
+$hierarchyXml = ""
+$one.GetHierarchy(
+    $sectionId,
+    [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsPages,
+    [ref]$hierarchyXml
+)
+
+[xml]$doc = $hierarchyXml
+$nsUri = $doc.DocumentElement.NamespaceURI
+$ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+$ns.AddNamespace("one", $nsUri)
+
+$pages = @($doc.SelectNodes("//one:Page", $ns)) | ForEach-Object {{
+    [ordered]@{{
+        title = $_.GetAttribute("name")
+        id = $_.GetAttribute("ID")
+        lastModifiedTime = $_.GetAttribute("lastModifiedTime")
+    }}
+}}
+
+$selectedPage = $null
+if (-not [string]::IsNullOrWhiteSpace($PageTitleContains)) {{
+    $selectedPage = $pages |
+        Where-Object {{ $_.title -like "*$PageTitleContains*" }} |
+        Select-Object -First 1
+}}
+
+$pageContent = ""
+if ($null -ne $selectedPage) {{
+    $one.GetPageContent($selectedPage.id, [ref]$pageContent)
+}}
+
+$result = [ordered]@{{
+    generated_at = (Get-Date).ToString("s")
+    section_id = $sectionId
+    section_path = $sectionPath
+    page_count = @($pages).Count
+    pages = $pages
+    selected_page = $selectedPage
+    selected_page_xml = $pageContent
+}}
+
+$json = $result | ConvertTo-Json -Depth 8
+$json | Set-Clipboard
+$json
+"""
+
+    def _copy_codex_page_reader_script_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_page_reader_script())
+        try:
+            self.connection_status_label.setText(
+                "현재 대상 섹션 페이지 읽기 스크립트를 클립보드에 복사했습니다."
+            )
+        except Exception:
+            pass
+
+    def _codex_json_from_text(self, text: str) -> Any:
+        raw = (text or "").strip()
+        if not raw:
+            raise ValueError("JSON 텍스트가 비어 있습니다.")
+        try:
+            return json.loads(raw)
+        except Exception:
+            starts = [idx for idx in (raw.find("{"), raw.find("[")) if idx >= 0]
+            ends = [idx for idx in (raw.rfind("}"), raw.rfind("]")) if idx >= 0]
+            if not starts or not ends:
+                raise
+            return json.loads(raw[min(starts): max(ends) + 1])
+
+    def _codex_text_from_page_xml(self, xml_text: str) -> str:
+        if not xml_text:
+            return ""
+        chunks = re.findall(r"(?is)<[^:>]*:?T[^>]*>(.*?)</[^:>]*:?T>", xml_text)
+        if not chunks:
+            chunks = [re.sub(r"(?is)<[^>]+>", " ", xml_text)]
+        lines = []
+        for chunk in chunks:
+            plain = re.sub(r"(?is)<[^>]+>", " ", chunk)
+            plain = html.unescape(plain)
+            plain = re.sub(r"\s+", " ", plain).strip()
+            if plain:
+                lines.append(plain)
+        return "\n".join(lines)
+
+    def _codex_page_reader_result_summary_text(self, text: str = "") -> str:
+        data = self._codex_json_from_text(text or QApplication.clipboard().text())
+        if not isinstance(data, dict):
+            raise ValueError("페이지 읽기 결과 JSON 객체가 아닙니다.")
+
+        pages = data.get("pages", [])
+        if not isinstance(pages, list):
+            pages = []
+
+        rows = []
+        for idx, page in enumerate(pages, start=1):
+            if not isinstance(page, dict):
+                continue
+            rows.append(
+                f"| {idx} | {page.get('title', '') or '-'} | "
+                f"{page.get('lastModifiedTime', '') or '-'} | `{page.get('id', '')}` |"
+            )
+        if not rows:
+            rows.append("| - | 페이지 없음 | - | - |")
+
+        selected = data.get("selected_page")
+        selected_title = ""
+        if isinstance(selected, dict):
+            selected_title = str(selected.get("title", "") or "")
+        selected_text = self._codex_text_from_page_xml(str(data.get("selected_page_xml", "") or ""))
+
+        return "\n".join(
+            [
+                "# OneNote 페이지 읽기 결과 요약",
+                "",
+                f"생성 시각: {data.get('generated_at', '') or '-'}",
+                f"대상 섹션: {data.get('section_path', '') or data.get('section_id', '') or '-'}",
+                f"페이지 수: {data.get('page_count', len(pages))}",
+                f"선택 페이지: {selected_title or '-'}",
+                "",
+                "## 페이지 목록",
+                "",
+                "| 번호 | 제목 | 수정 시각 | Page ID |",
+                "| ---: | --- | --- | --- |",
+                *rows,
+                "",
+                "## 선택 페이지 텍스트",
+                "",
+                selected_text or "- 선택된 페이지 XML이 없거나 텍스트를 추출하지 못했습니다.",
+                "",
+            ]
+        )
+
+    def _copy_codex_page_reader_result_summary_to_clipboard(self) -> None:
+        try:
+            QApplication.clipboard().setText(self._codex_page_reader_result_summary_text())
+            try:
+                self.connection_status_label.setText("OneNote 페이지 읽기 결과 요약을 클립보드에 복사했습니다.")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "페이지 읽기 결과 요약 실패", str(e))
+
+    def _append_codex_page_reader_result_to_request_body(self) -> None:
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        if body_editor is None:
+            return
+        try:
+            summary = self._codex_page_reader_result_summary_text()
+        except Exception as e:
+            QMessageBox.warning(self, "페이지 읽기 결과 추가 실패", str(e))
+            return
+        current = body_editor.toPlainText().rstrip()
+        body_editor.setPlainText((current + "\n\n" + summary).strip())
+        self._update_codex_codegen_previews()
+        try:
+            self.connection_status_label.setText("페이지 읽기 결과 요약을 요청 본문에 추가했습니다.")
+        except Exception:
+            pass
+
+    def _codex_onenote_templates(self) -> Dict[str, str]:
+        values = self._codex_codegen_values()
+        title = self._ps_single_quoted(values["title"])
+        body = self._ps_single_quoted(values["body"])
+        target = self._ps_single_quoted(values["target"])
+        section_group_id = self._ps_single_quoted(values["section_group_id"])
+        section_id = self._ps_single_quoted(values["section_id"])
+        return {
+            "add_page": f"""# OneNote COM: 페이지 추가
+# 대상: {values["target"]}
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$sectionId = {section_id}
+$title = {title}
+$body = {body}
+$pageId = ""
+$one.CreateNewPage(
+    $sectionId,
+    [ref]$pageId,
+    [Microsoft.Office.Interop.OneNote.NewPageStyle]::npsBlankPageWithTitle
+)
+
+$pageXml = ""
+$one.GetPageContent($pageId, [ref]$pageXml)
+
+[xml]$doc = $pageXml
+$nsUri = $doc.DocumentElement.NamespaceURI
+$ns = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+$ns.AddNamespace("one", $nsUri)
+
+$titleNode = $doc.SelectSingleNode("//one:Title//one:T", $ns)
+if ($titleNode -ne $null) {{
+    $titleNode.InnerText = $title
+}}
+
+$outline = $doc.CreateElement("one", "Outline", $nsUri)
+$oeChildren = $doc.CreateElement("one", "OEChildren", $nsUri)
+foreach ($line in ($body -split "`r?`n")) {{
+    $oe = $doc.CreateElement("one", "OE", $nsUri)
+    $t = $doc.CreateElement("one", "T", $nsUri)
+    $t.InnerText = $line
+    [void]$oe.AppendChild($t)
+    [void]$oeChildren.AppendChild($oe)
+}}
+[void]$outline.AppendChild($oeChildren)
+[void]$doc.DocumentElement.AppendChild($outline)
+
+$one.UpdatePageContent($doc.OuterXml)
+$verifyXml = ""
+$one.GetPageContent($pageId, [ref]$verifyXml)
+if ($verifyXml -notlike "*$title*") {{
+    throw "페이지 생성 검증 실패: 제목을 찾지 못했습니다."
+}}
+$one.NavigateTo($pageId)
+""",
+            "add_section": f"""# OneNote COM: 새 섹션 생성
+# 대상: {values["target"]}
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$sectionGroupId = {section_group_id}
+$sectionName = {title}
+$newSectionId = ""
+$safeName = $sectionName -replace '[<>:"/\\\\|?*]', '-'
+if (-not $safeName.EndsWith(".one")) {{
+    $safeName = "$safeName.one"
+}}
+
+$one.OpenHierarchy(
+    $safeName,
+    $sectionGroupId,
+    [ref]$newSectionId,
+    [Microsoft.Office.Interop.OneNote.CreateFileType]::cftSection
+)
+
+$verifyXml = ""
+$one.GetHierarchy($sectionGroupId, [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsSections, [ref]$verifyXml)
+if ($verifyXml -notlike "*$sectionName*") {{
+    throw "섹션 생성 검증 실패: 새 섹션 이름을 찾지 못했습니다."
+}}
+$one.NavigateTo($newSectionId)
+""",
+            "add_section_group": f"""# OneNote COM: 새 섹션 그룹 생성
+# 대상: {values["target"]}
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$parentSectionGroupId = {section_group_id}
+$sectionGroupName = {title}
+$newSectionGroupId = ""
+
+$one.OpenHierarchy(
+    $sectionGroupName,
+    $parentSectionGroupId,
+    [ref]$newSectionGroupId,
+    [Microsoft.Office.Interop.OneNote.CreateFileType]::cftFolder
+)
+
+$verifyXml = ""
+$one.GetHierarchy($parentSectionGroupId, [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsSections, [ref]$verifyXml)
+if ($verifyXml -notlike "*$sectionGroupName*") {{
+    throw "섹션 그룹 생성 검증 실패: 새 섹션 그룹 이름을 찾지 못했습니다."
+}}
+$one.NavigateTo($newSectionGroupId)
+""",
+            "add_notebook": f"""# OneNote COM: 새 전자필기장 생성
+# 주의: 새 전자필기장은 저장 위치 경로가 필요하다. OneDrive 동기화 폴더 또는 로컬 경로를 먼저 확정한다.
+[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
+$one = New-Object -ComObject OneNote.Application
+
+$notebookPath = {target}
+$newNotebookId = ""
+if ([string]::IsNullOrWhiteSpace($notebookPath)) {{
+    throw "새 전자필기장을 만들 파일 시스템 경로가 필요합니다."
+}}
+
+$one.OpenHierarchy(
+    $notebookPath,
+    "",
+    [ref]$newNotebookId,
+    [Microsoft.Office.Interop.OneNote.CreateFileType]::cftNotebook
+)
+
+$one.NavigateTo($newNotebookId)
+""",
+        }
+
+    def _selected_codex_template_text(self) -> str:
+        combo = getattr(self, "codex_template_combo", None)
+        if combo is None:
+            return ""
+        key = combo.currentData()
+        return self._codex_onenote_templates().get(key, "")
+
+    def _update_codex_template_preview(self) -> None:
+        preview = getattr(self, "codex_template_preview", None)
+        if preview is None:
+            return
+        preview.setPlainText(self._selected_codex_template_text())
+
+    def _update_codex_codegen_previews(self) -> None:
+        self._update_codex_request_preview()
+        self._update_codex_template_preview()
+        self._update_codex_work_order_preview()
+        self._update_codex_status_summary()
+
+    def _copy_codex_template_to_clipboard(self) -> None:
+        text = self._selected_codex_template_text()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        try:
+            self.connection_status_label.setText("코덱스 OneNote 템플릿을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_skills_dir(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "skills")
+
+    def _codex_requests_dir(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "requests")
+
+    def _codex_request_draft_path(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "request-draft.json")
+
+    def _codex_skill_slug(self, name: str) -> str:
+        raw = (name or "").strip()
+        raw = re.sub(r'[<>:"/\\\\|?*]+', "-", raw)
+        raw = re.sub(r"\s+", "-", raw)
+        raw = raw.strip(".-")
+        return raw or "codex-skill"
+
+    def _codex_skill_order_index_path(self) -> str:
+        return os.path.join(self._codex_skills_dir(), "skill-order-index.md")
+
+    def _codex_skill_audit_path(self) -> str:
+        return os.path.join(self._codex_skills_dir(), "skill-audit.md")
+
+    def _codex_skill_templates(self) -> Dict[str, Dict[str, str]]:
+        return {
+            "writing": {
+                "name": "나의 기본 글쓰기 형식",
+                "trigger": "사용자가 정리된 글쓰기 형식으로 OneNote 페이지 작성을 요청할 때",
+                "body": """목표:
+- 사용자의 거친 메모를 읽기 쉬운 글로 정리한다.
+
+형식:
+- 제목: 핵심 주제를 짧게 쓴다.
+- 한 줄 요약: 결론을 먼저 쓴다.
+- 본문: 배경, 핵심 내용, 다음 행동 순서로 정리한다.
+- 체크포인트: 다시 확인할 항목을 bullet로 남긴다.
+
+작성 기준:
+- 사용자의 원래 표현을 최대한 보존하되 문장 흐름만 정리한다.
+- 불확실한 내용은 단정하지 말고 확인 필요로 표시한다.
+- OneNote에는 제목과 본문을 분리해서 작성한다.
+
+검증:
+- 생성된 페이지 제목과 본문을 `GetPageContent`로 확인한다.
+""",
+            },
+            "daily_log": {
+                "name": "업무일지 정리",
+                "trigger": "오늘 작업 내용, 업무 기록, 진행 상황을 OneNote에 남길 때",
+                "body": """목표:
+- 하루 동안 한 작업과 다음 행동을 빠르게 되돌아볼 수 있게 정리한다.
+
+형식:
+- 날짜:
+- 오늘 한 일:
+- 결정한 것:
+- 막힌 것:
+- 다음 행동:
+
+작성 기준:
+- 작업 결과와 미완료 항목을 분리한다.
+- 다음 행동은 바로 실행 가능한 동사형으로 쓴다.
+- 중요한 파일/프로젝트/스킬 주문번호가 있으면 함께 적는다.
+
+검증:
+- 페이지 제목에 날짜 또는 작업명이 들어갔는지 확인한다.
+""",
+            },
+            "meeting": {
+                "name": "회의록 정리",
+                "trigger": "회의 내용, 통화 내용, 논의 결과를 OneNote에 정리할 때",
+                "body": """목표:
+- 회의에서 결정된 내용과 후속 작업을 빠르게 찾을 수 있게 정리한다.
+
+형식:
+- 회의명:
+- 참석자:
+- 논의 요약:
+- 결정 사항:
+- 액션 아이템:
+- 보류/리스크:
+
+작성 기준:
+- 결정 사항과 의견을 섞지 않는다.
+- 액션 아이템에는 담당자, 마감, 확인 방법을 포함한다.
+- 근거가 부족한 내용은 보류/리스크로 분리한다.
+
+검증:
+- 액션 아이템이 별도 목록으로 남아 있는지 확인한다.
+""",
+            },
+            "idea": {
+                "name": "아이디어 정리",
+                "trigger": "아이디어, 기획, 개선안을 OneNote에서 발전시킬 때",
+                "body": """목표:
+- 떠오른 아이디어를 실행 가능한 형태로 바꾼다.
+
+형식:
+- 아이디어:
+- 왜 필요한가:
+- 사용자/상황:
+- 가능한 구현:
+- 예상 문제:
+- 다음 실험:
+
+작성 기준:
+- 막연한 표현을 구체적인 실험이나 작업 단위로 바꾼다.
+- 구현 아이디어와 검증 아이디어를 분리한다.
+- 당장 할 수 없는 것은 후보로만 남긴다.
+
+검증:
+- 다음 실험이 1개 이상 있는지 확인한다.
+""",
+            },
+            "study": {
+                "name": "학습 노트 정리",
+                "trigger": "강의, 문서, 공부 내용을 OneNote 학습 노트로 만들 때",
+                "body": """목표:
+- 학습 내용을 다시 보기 쉬운 구조로 압축한다.
+
+형식:
+- 주제:
+- 핵심 개념:
+- 예시:
+- 헷갈린 점:
+- 적용할 곳:
+- 복습 질문:
+
+작성 기준:
+- 정의, 예시, 적용을 분리한다.
+- 이해가 불확실한 부분은 헷갈린 점에 남긴다.
+- 복습 질문은 나중에 바로 테스트할 수 있게 작성한다.
+
+검증:
+- 핵심 개념과 복습 질문이 둘 다 있는지 확인한다.
+""",
+            },
+            "checklist": {
+                "name": "작업 체크리스트",
+                "trigger": "반복 작업, 배포 전 점검, 정리 절차를 체크리스트로 만들 때",
+                "body": """목표:
+- 반복 작업을 빠뜨리지 않도록 체크리스트로 만든다.
+
+형식:
+- 목적:
+- 사전 확인:
+- 실행 순서:
+- 검증:
+- 실패 시 복구:
+
+작성 기준:
+- 각 항목은 체크 가능한 문장으로 쓴다.
+- 실행 순서와 검증 순서를 분리한다.
+- 위험한 작업은 복구 방법을 같이 남긴다.
+
+검증:
+- 실행 전/후 확인 항목이 모두 있는지 확인한다.
+""",
+            },
+            "onenote_cleanup": {
+                "name": "OneNote 정리 작업",
+                "trigger": "OneNote의 메모, 섹션, 섹션 그룹을 정리하거나 재배치할 때",
+                "body": """목표:
+- OneNote 구조를 안전하게 정리하고 변경 내역을 검증한다.
+
+형식:
+- 현재 위치:
+- 바꿀 위치:
+- 변경 작업:
+- 보존할 항목:
+- 검증 방법:
+
+작업 기준:
+- 삭제보다 이동/이름 변경을 우선한다.
+- 전자필기장/섹션/페이지 계층을 먼저 조회한 뒤 작업한다.
+- 가능한 경우 OneNote COM API의 `GetHierarchy` 결과로 대상을 확인한다.
+
+검증:
+- 작업 전후 계층 구조를 비교한다.
+""",
+            },
+        }
+
+    def _apply_codex_skill_template(self) -> None:
+        combo = getattr(self, "codex_skill_template_combo", None)
+        if combo is None:
+            return
+        key = combo.currentData()
+        template = self._codex_skill_templates().get(key)
+        if not template:
+            return
+
+        self.codex_skill_order_input.setText(self._codex_next_skill_order())
+        self.codex_skill_name_input.setText(template.get("name", "새 코덱스 스킬"))
+        self.codex_skill_trigger_input.setText(template.get("trigger", ""))
+        self.codex_skill_body_editor.setPlainText(template.get("body", ""))
+        self._update_codex_skill_call_preview()
+        try:
+            self.connection_status_label.setText(
+                f"스킬 템플릿 적용: {template.get('name', '')}"
+            )
+        except Exception:
+            pass
+
+    def _codex_skill_section(self, text: str, heading: str) -> str:
+        pattern = rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)"
+        match = re.search(pattern, text or "")
+        return match.group(1).strip() if match else ""
+
+    def _codex_skill_metadata_from_text(
+        self, text: str, fallback_name: str = ""
+    ) -> Dict[str, str]:
+        lines = (text or "").splitlines()
+        name = fallback_name
+        for line in lines:
+            if line.strip().startswith("# "):
+                name = line.strip()[2:].strip()
+                break
+
+        order_no = self._codex_skill_section(text, "주문번호")
+        if not order_no:
+            match = re.search(r"(?im)^\s*(?:주문번호|Order)\s*[:：]\s*(.+?)\s*$", text or "")
+            order_no = match.group(1).strip() if match else ""
+
+        trigger = self._codex_skill_section(text, "Trigger")
+        body = self._codex_skill_section(text, "Instructions")
+        if not body:
+            body = text or ""
+
+        return {
+            "name": name or "새 코덱스 스킬",
+            "order": order_no,
+            "trigger": trigger,
+            "body": body,
+        }
+
+    def _codex_next_skill_order(self) -> str:
+        used: Set[int] = set()
+        skills_dir = self._codex_skills_dir()
+        try:
+            for filename in os.listdir(skills_dir):
+                if not filename.lower().endswith(".md"):
+                    continue
+                if filename in ("README.md", "skill-order-index.md", "skill-audit.md"):
+                    continue
+                with open(os.path.join(skills_dir, filename), "r", encoding="utf-8") as f:
+                    meta = self._codex_skill_metadata_from_text(f.read(), filename[:-3])
+                match = re.search(r"(\d+)", meta.get("order", ""))
+                if match:
+                    used.add(int(match.group(1)))
+        except Exception:
+            pass
+
+        n = 1
+        while n in used:
+            n += 1
+        return f"SK-{n:03d}"
+
+    def _write_codex_skill_order_index(self, skills: List[Dict[str, str]]) -> None:
+        path = self._codex_skill_order_index_path()
+        rows = []
+        for skill in sorted(skills, key=lambda s: (s.get("order") or "ZZZ", s.get("name") or "")):
+            order_no = skill.get("order") or "미지정"
+            name = skill.get("name") or "이름 없음"
+            filename = skill.get("filename") or ""
+            trigger = (skill.get("trigger") or "").replace("\n", " ").strip()
+            rows.append(f"| {order_no} | {name} | `{filename}` | {trigger} |")
+
+        text = "\n".join(
+            [
+                "# 코덱스 & 원노트 스킬 주문번호표",
+                "",
+                "사용자가 주문번호로 스킬을 지시하면 이 표에서 해당 Markdown 파일을 찾아 따른다.",
+                "",
+                "| 주문번호 | 스킬 이름 | 파일 | 호출 조건 |",
+                "| --- | --- | --- | --- |",
+                *rows,
+                "",
+            ]
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def _codex_skill_search_key(self, *parts: Any) -> str:
+        text = " ".join("" if p is None else str(p) for p in parts)
+        return re.sub(r"\s+", "", unicodedata.normalize("NFKC", text)).casefold()
+
+    def _populate_codex_skill_list(self, records: List[Dict[str, str]]) -> None:
+        skill_list = getattr(self, "codex_skill_list", None)
+        if skill_list is None:
+            return
+        skill_list.clear()
+        for skill in records:
+            order_no = skill.get("order", "")
+            name = skill.get("name", "")
+            label = f"[{order_no}] {name}" if order_no else name
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, skill.get("path", ""))
+            skill_list.addItem(item)
+
+    def _filter_codex_skill_list(self) -> None:
+        records = getattr(self, "_codex_skill_records", [])
+        search_input = getattr(self, "codex_skill_search_input", None)
+        query = search_input.text().strip() if search_input is not None else ""
+        key = self._codex_skill_search_key(query)
+        if not key:
+            self._populate_codex_skill_list(records)
+            return
+        filtered = [
+            skill
+            for skill in records
+            if key
+            in self._codex_skill_search_key(
+                skill.get("order", ""),
+                skill.get("name", ""),
+                skill.get("filename", ""),
+                skill.get("trigger", ""),
+            )
+        ]
+        self._populate_codex_skill_list(filtered)
+
+    def _selected_codex_skill_path(self) -> str:
+        skill_list = getattr(self, "codex_skill_list", None)
+        item = skill_list.currentItem() if skill_list is not None else None
+        if item is None:
+            return ""
+        return item.data(Qt.ItemDataRole.UserRole) or ""
+
+    def _current_codex_skill_markdown(self) -> str:
+        return self._codex_skill_markdown(
+            self.codex_skill_name_input.text(),
+            self.codex_skill_trigger_input.text(),
+            self.codex_skill_body_editor.toPlainText(),
+            self.codex_skill_order_input.text(),
+        )
+
+    def _codex_skill_call_prompt_text(self) -> str:
+        def _line_text(attr: str) -> str:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                return ""
+            try:
+                return widget.text().strip()
+            except Exception:
+                return ""
+
+        def _plain_text(attr: str) -> str:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                return ""
+            try:
+                return widget.toPlainText().strip()
+            except Exception:
+                return ""
+
+        order_no = _line_text("codex_skill_order_input") or self._codex_next_skill_order()
+        name = _line_text("codex_skill_name_input") or "선택 스킬"
+        trigger = _line_text("codex_skill_trigger_input")
+        target = ""
+        try:
+            target = self._codex_target_from_fields().get("path", "")
+        except Exception:
+            target = ""
+        request_title = _line_text("codex_request_title_input")
+        request_body = _plain_text("codex_request_body_editor")
+
+        return f"""이 프로젝트의 코덱스 & 원노트 스킬 주문번호 `{order_no}`를 조회해서 그대로 따라라.
+
+조회 위치:
+- docs/codex/skills/skill-order-index.md
+- docs/codex/skills/*.md
+
+스킬:
+- 주문번호: {order_no}
+- 이름: {name}
+- 호출 조건: {trigger or "현재 사용자가 요청한 OneNote 작업"}
+
+작업 위치:
+{target or "앱의 OneNote 작업 위치 설정을 우선 확인"}
+
+사용자 요청:
+{request_title or name}
+
+추가 내용:
+{request_body or "- 현재 선택된 스킬의 Instructions를 우선 적용한다."}
+
+실행 기준:
+- 스킬 파일의 `## Instructions`와 `## OneNote COM Guardrails`를 우선 따른다.
+- OneNote는 가능하면 화면 클릭보다 COM API로 조작한다.
+- 완료 검증은 가능한 한 OneNote 내부 조회 결과로 확인한다.
+"""
+
+    def _update_codex_skill_call_preview(self) -> None:
+        preview = getattr(self, "codex_skill_call_preview", None)
+        if preview is None:
+            self._update_codex_work_order_preview()
+            self._update_codex_status_summary()
+            return
+        preview.setPlainText(self._codex_skill_call_prompt_text())
+        self._update_codex_work_order_preview()
+        self._update_codex_status_summary()
+
+    def _copy_codex_skill_call_prompt_to_clipboard(self) -> None:
+        text = self._codex_skill_call_prompt_text()
+        QApplication.clipboard().setText(text)
+        try:
+            self.connection_status_label.setText("스킬 호출문을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _open_selected_codex_skill_file(self) -> None:
+        path = self._selected_codex_skill_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 스킬을 선택하세요.")
+            return
+        try:
+            os.startfile(path)
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 파일 열기 실패", str(e))
+
+    def _open_codex_skills_folder(self) -> None:
+        try:
+            os.makedirs(self._codex_skills_dir(), exist_ok=True)
+            os.startfile(self._codex_skills_dir())
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 폴더 열기 실패", str(e))
+
+    def _open_codex_requests_folder(self) -> None:
+        try:
+            os.makedirs(self._codex_requests_dir(), exist_ok=True)
+            os.startfile(self._codex_requests_dir())
+        except Exception as e:
+            QMessageBox.warning(self, "주문서 폴더 열기 실패", str(e))
+
+    def _codex_work_order_text(self) -> str:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        order_no = ""
+        skill_name = ""
+        skill_path = self._selected_codex_skill_path()
+        try:
+            order_no = self.codex_skill_order_input.text().strip()
+            skill_name = self.codex_skill_name_input.text().strip()
+        except Exception:
+            pass
+
+        try:
+            target = self._codex_target_from_fields()
+        except Exception:
+            target = {}
+
+        try:
+            request_text = self._codex_request_text()
+        except Exception:
+            request_text = ""
+
+        try:
+            template_text = self._selected_codex_template_text()
+        except Exception:
+            template_text = ""
+
+        return f"""# 코덱스 작업 주문서
+
+생성 시각: {timestamp}
+
+## 스킬 호출
+
+{self._codex_skill_call_prompt_text()}
+
+## 선택 스킬
+
+- 주문번호: {order_no or "미지정"}
+- 스킬명: {skill_name or "미지정"}
+- 파일: `{skill_path or "미선택"}`
+
+## 작업 위치
+
+- 위치 이름: {target.get("name", "")}
+- 작업 경로: {target.get("path", "")}
+- 전자필기장: {target.get("notebook", "")}
+- 섹션 그룹: {target.get("section_group", "")}
+- 섹션: {target.get("section", "")}
+
+## 요청문
+
+```text
+{request_text}
+```
+
+## 작업 템플릿
+
+```powershell
+{template_text}
+```
+"""
+
+    def _update_codex_work_order_preview(self) -> None:
+        preview = getattr(self, "codex_work_order_preview", None)
+        if preview is None:
+            return
+        preview.setPlainText(self._codex_work_order_text())
+
+    def _copy_codex_work_order_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_work_order_text())
+        try:
+            self.connection_status_label.setText("코덱스 작업 주문서를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _save_codex_work_order(self) -> None:
+        text = self._codex_work_order_text()
+        order_no = self.codex_skill_order_input.text().strip() or "NO-SKILL"
+        name = self.codex_skill_name_input.text().strip() or "codex-work-order"
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"{stamp}-{order_no}-{self._codex_skill_slug(name)}.md"
+        try:
+            os.makedirs(self._codex_requests_dir(), exist_ok=True)
+            path = os.path.join(self._codex_requests_dir(), filename)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            try:
+                self.connection_status_label.setText(f"코덱스 작업 주문서 저장 완료: {path}")
+            except Exception:
+                pass
+            self._refresh_codex_work_order_list(path)
+            QMessageBox.information(self, "작업 주문서 저장 완료", path)
+        except Exception as e:
+            QMessageBox.warning(self, "작업 주문서 저장 실패", str(e))
+
+    def _codex_context_pack_text(self) -> str:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            target_json = self._codex_target_profile_json_text()
+        except Exception:
+            target_json = "{}"
+
+        try:
+            target_audit = self._codex_target_audit_report_text()
+        except Exception:
+            target_audit = ""
+
+        try:
+            page_reader_summary = self._codex_page_reader_result_summary_text()
+        except Exception:
+            page_reader_summary = ""
+
+        try:
+            skill_call = self._codex_skill_call_prompt_text()
+        except Exception as e:
+            skill_call = f"스킬 호출문 생성 실패: {e}"
+
+        try:
+            request_text = self._codex_request_text()
+        except Exception:
+            request_text = ""
+
+        try:
+            template_text = self._selected_codex_template_text()
+        except Exception:
+            template_text = ""
+
+        try:
+            work_order_text = self._codex_work_order_text()
+        except Exception:
+            work_order_text = ""
+
+        try:
+            checklist_text = self._codex_execution_checklist_text()
+        except Exception:
+            checklist_text = ""
+
+        try:
+            compact_prompt = self._codex_compact_prompt_text()
+        except Exception:
+            compact_prompt = ""
+
+        try:
+            review_prompt = self._codex_review_prompt_text()
+        except Exception:
+            review_prompt = ""
+
+        try:
+            breakdown_prompt = self._codex_task_breakdown_prompt_text()
+        except Exception:
+            breakdown_prompt = ""
+
+        try:
+            completion_report = self._codex_completion_report_template_text()
+        except Exception:
+            completion_report = ""
+
+        try:
+            skill_recommendations = self._codex_skill_recommendation_report_text()
+        except Exception:
+            skill_recommendations = ""
+
+        try:
+            status_text = self._codex_status_summary_text()
+        except Exception:
+            status_text = ""
+
+        try:
+            current_skill = self._current_codex_skill_markdown()
+        except Exception:
+            current_skill = ""
+
+        skill_index = ""
+        try:
+            self._refresh_codex_skill_list()
+            with open(self._codex_skill_order_index_path(), "r", encoding="utf-8") as f:
+                skill_index = f.read().strip()
+        except Exception:
+            skill_index = ""
+
+        audit_text = ""
+        try:
+            audit_text = self._codex_skill_audit_report()
+        except Exception:
+            audit_text = ""
+
+        return f"""# 코덱스 컨텍스트 패키지
+생성 시각: {timestamp}
+
+이 문서는 다음 코덱스 작업에 필요한 현재 OneNote 작업 위치, 요청문, 스킬 호출문, 템플릿, 주문번호표를 한 번에 묶은 자료입니다.
+
+## 바로 실행할 지시
+
+아래 `스킬 호출문`과 `작업 주문서`를 기준으로 OneNote 작업을 수행해라. 화면 클릭보다 OneNote COM API 조회/수정/검증을 우선한다.
+
+## 초압축 실행 프롬프트
+
+```text
+{compact_prompt}
+```
+
+## 검토 프롬프트
+
+```text
+{review_prompt}
+```
+
+## 작업 분해 프롬프트
+
+```text
+{breakdown_prompt}
+```
+
+## 완료 보고 템플릿
+
+```markdown
+{completion_report}
+```
+
+## 스킬 추천 리포트
+
+```markdown
+{skill_recommendations}
+```
+
+## 스킬 호출문
+
+{skill_call}
+
+## 작업 위치 JSON
+
+```json
+{target_json}
+```
+
+## 작업 위치 진단
+
+```markdown
+{target_audit}
+```
+
+## 페이지 읽기 결과 요약
+
+```markdown
+{page_reader_summary}
+```
+
+## 현재 상태
+
+```text
+{status_text}
+```
+
+## 요청문
+
+```text
+{request_text}
+```
+
+## 작업 주문서
+
+````markdown
+{work_order_text}
+````
+
+## 실행 체크리스트
+
+```text
+{checklist_text}
+```
+
+## OneNote PowerShell 템플릿
+
+```powershell
+{template_text}
+```
+
+## 현재 스킬 초안
+
+````markdown
+{current_skill}
+````
+
+## 스킬 주문번호표
+
+````markdown
+{skill_index}
+````
+
+## 스킬 진단
+
+````markdown
+{audit_text}
+````
+"""
+
+    def _update_codex_context_pack_preview(self) -> None:
+        preview = getattr(self, "codex_context_pack_preview", None)
+        if preview is None:
+            return
+        preview.setPlainText(self._codex_context_pack_text())
+
+    def _copy_codex_context_pack_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_context_pack_text())
+        try:
+            self.connection_status_label.setText(
+                "코덱스 컨텍스트 패키지를 클립보드에 복사했습니다."
+            )
+        except Exception:
+            pass
+
+    def _save_codex_context_pack(self) -> None:
+        text = self._codex_context_pack_text()
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"{stamp}-codex-context-pack.md"
+        try:
+            os.makedirs(self._codex_requests_dir(), exist_ok=True)
+            path = os.path.join(self._codex_requests_dir(), filename)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            try:
+                self.connection_status_label.setText(
+                    f"코덱스 컨텍스트 패키지 저장 완료: {path}"
+                )
+            except Exception:
+                pass
+            self._refresh_codex_work_order_list(path)
+            QMessageBox.information(self, "컨텍스트 패키지 저장 완료", path)
+        except Exception as e:
+            QMessageBox.warning(self, "컨텍스트 패키지 저장 실패", str(e))
+
+    def _codex_markdown_file_count(self, folder: str) -> int:
+        try:
+            if not os.path.isdir(folder):
+                return 0
+            return sum(
+                1
+                for filename in os.listdir(folder)
+                if filename.lower().endswith(".md")
+                and filename not in ("README.md", "skill-order-index.md", "skill-audit.md")
+            )
+        except Exception:
+            return 0
+
+    def _codex_status_summary_text(self) -> str:
+        skill_count = self._codex_markdown_file_count(self._codex_skills_dir())
+        request_count = self._codex_markdown_file_count(self._codex_requests_dir())
+        target_count = len(self._load_codex_targets())
+
+        action = ""
+        title = ""
+        request_target = ""
+        try:
+            action = self.codex_request_action_combo.currentText().strip()
+            title = self.codex_request_title_input.text().strip()
+            request_target = self.codex_request_target_input.text().strip()
+        except Exception:
+            pass
+
+        skill_order = ""
+        skill_name = ""
+        try:
+            skill_order = self.codex_skill_order_input.text().strip()
+            skill_name = self.codex_skill_name_input.text().strip()
+        except Exception:
+            pass
+
+        target = {}
+        try:
+            target = self._codex_target_from_fields()
+        except Exception:
+            target = {}
+
+        draft_state = "있음" if os.path.exists(self._codex_request_draft_path()) else "없음"
+
+        return f"""코덱스 현재 상태
+
+- 스킬 파일: {skill_count}개
+- 저장된 작업 주문서/패키지: {request_count}개
+- 저장된 작업 위치: {target_count}개
+- 요청 초안: {draft_state}
+
+현재 요청
+- 작업: {action or "미지정"}
+- 제목/이름: {title or "미지정"}
+- 요청 대상: {request_target or target.get("path", "") or "미지정"}
+
+선택 스킬
+- 주문번호: {skill_order or "미지정"}
+- 스킬명: {skill_name or "미지정"}
+
+작업 위치
+- 위치 이름: {target.get("name", "") or "미지정"}
+- 전자필기장: {target.get("notebook", "") or "미지정"}
+- 섹션 그룹: {target.get("section_group", "") or "미지정"}
+- 섹션: {target.get("section", "") or "미지정"}
+"""
+
+    def _update_codex_status_summary(self) -> None:
+        preview = getattr(self, "codex_status_summary_preview", None)
+        if preview is not None:
+            preview.setPlainText(self._codex_status_summary_text())
+
+        try:
+            skill_count = self._codex_markdown_file_count(self._codex_skills_dir())
+            request_count = self._codex_markdown_file_count(self._codex_requests_dir())
+            target_count = len(self._load_codex_targets())
+            draft_state = (
+                "저장됨" if os.path.exists(self._codex_request_draft_path()) else "대기"
+            )
+            target = self._codex_target_from_fields()
+
+            action = ""
+            title = ""
+            try:
+                action = self.codex_request_action_combo.currentText().strip()
+                title = self.codex_request_title_input.text().strip()
+            except Exception:
+                pass
+
+            hero_values = {
+                "codex_metric_target_value": f"{target_count}개",
+                "codex_metric_draft_value": draft_state,
+                "codex_metric_skill_value": f"{skill_count}개",
+                "codex_metric_order_value": f"{request_count}개",
+                "codex_hero_target_value": (
+                    target.get("path")
+                    or target.get("name")
+                    or "작업 위치 미지정"
+                ),
+                "codex_hero_request_value": title or action or "요청 대기 중",
+            }
+            for attr, value in hero_values.items():
+                widget = getattr(self, attr, None)
+                if widget is not None:
+                    widget.setText(value)
+        except Exception:
+            pass
+
+    def _copy_codex_status_summary_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_status_summary_text())
+        try:
+            self.connection_status_label.setText("코덱스 현재 상태 요약을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _selected_codex_work_order_path(self) -> str:
+        order_list = getattr(self, "codex_work_order_list", None)
+        item = order_list.currentItem() if order_list is not None else None
+        if item is None:
+            return ""
+        return item.data(Qt.ItemDataRole.UserRole) or ""
+
+    def _selected_codex_work_order_text(self) -> str:
+        path = self._selected_codex_work_order_path()
+        if not path:
+            return ""
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def _refresh_codex_work_order_list(self, selected_path: str = "") -> None:
+        order_list = getattr(self, "codex_work_order_list", None)
+        if order_list is None:
+            return
+
+        current_path = selected_path or self._selected_codex_work_order_path()
+        query_input = getattr(self, "codex_work_order_search_input", None)
+        query = query_input.text().strip() if query_input is not None else ""
+        query_key = self._codex_skill_search_key(query)
+        order_list.blockSignals(True)
+        order_list.clear()
+        try:
+            os.makedirs(self._codex_requests_dir(), exist_ok=True)
+            records = []
+            for filename in os.listdir(self._codex_requests_dir()):
+                if not filename.lower().endswith(".md"):
+                    continue
+                path = os.path.join(self._codex_requests_dir(), filename)
+                try:
+                    mtime = os.path.getmtime(path)
+                except Exception:
+                    mtime = 0.0
+                if query_key:
+                    haystack = filename
+                    try:
+                        with open(path, "r", encoding="utf-8") as f:
+                            haystack += "\n" + f.read(8000)
+                    except Exception:
+                        pass
+                    if query_key not in self._codex_skill_search_key(haystack):
+                        continue
+                records.append((mtime, filename, path))
+            records.sort(key=lambda row: (-row[0], row[1]))
+            for mtime, filename, path in records:
+                stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(mtime)) if mtime else ""
+                label = f"{stamp}  {filename}" if stamp else filename
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, path)
+                order_list.addItem(item)
+        except Exception as e:
+            try:
+                self.connection_status_label.setText(f"작업 주문서 기록 로드 실패: {e}")
+            except Exception:
+                pass
+        finally:
+            order_list.blockSignals(False)
+
+        if current_path:
+            for i in range(order_list.count()):
+                item = order_list.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) == current_path:
+                    order_list.setCurrentRow(i)
+                    self._on_codex_work_order_selected(item)
+                    return
+        if order_list.count() > 0:
+            order_list.setCurrentRow(0)
+            self._on_codex_work_order_selected(order_list.item(0))
+        else:
+            preview = getattr(self, "codex_work_order_history_preview", None)
+            if preview is not None:
+                preview.setPlainText("저장된 작업 주문서가 없습니다.")
+
+    def _on_codex_work_order_selected(
+        self, item: Optional[QListWidgetItem] = None
+    ) -> None:
+        preview = getattr(self, "codex_work_order_history_preview", None)
+        if preview is None:
+            return
+        if item is None:
+            order_list = getattr(self, "codex_work_order_list", None)
+            item = order_list.currentItem() if order_list is not None else None
+        path = item.data(Qt.ItemDataRole.UserRole) if item is not None else ""
+        if not path:
+            preview.setPlainText("선택된 작업 주문서가 없습니다.")
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                preview.setPlainText(f.read())
+        except Exception as e:
+            preview.setPlainText(f"작업 주문서를 읽지 못했습니다.\n\n{e}")
+
+    def _copy_selected_codex_work_order_to_clipboard(self) -> None:
+        path = self._selected_codex_work_order_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 작업 주문서를 선택하세요.")
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                QApplication.clipboard().setText(f.read())
+            try:
+                self.connection_status_label.setText("선택 작업 주문서를 클립보드에 복사했습니다.")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "작업 주문서 복사 실패", str(e))
+
+    def _open_selected_codex_work_order_file(self) -> None:
+        path = self._selected_codex_work_order_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 작업 주문서를 선택하세요.")
+            return
+        try:
+            os.startfile(path)
+        except Exception as e:
+            QMessageBox.warning(self, "작업 주문서 열기 실패", str(e))
+
+    def _delete_selected_codex_work_order(self) -> None:
+        path = self._selected_codex_work_order_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 삭제할 작업 주문서를 선택하세요.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "작업 주문서 삭제",
+            f"선택한 작업 주문서를 삭제합니다.\n\n{path}\n\n계속하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            os.remove(path)
+            self._refresh_codex_work_order_list()
+            try:
+                self.connection_status_label.setText("작업 주문서를 삭제했습니다.")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "작업 주문서 삭제 실패", str(e))
+
+    def _codex_extract_fenced_section(self, text: str, heading: str) -> str:
+        pattern = rf"(?ms)^##\s+{re.escape(heading)}\s*$\n+```[^\n]*\n(.*?)\n```\s*"
+        match = re.search(pattern, text or "")
+        if match:
+            return match.group(1).strip()
+        return self._codex_skill_section(text, heading)
+
+    def _load_selected_codex_work_order_into_request(self) -> None:
+        try:
+            text = self._selected_codex_work_order_text()
+        except Exception as e:
+            QMessageBox.warning(self, "주문서 불러오기 실패", str(e))
+            return
+        if not text:
+            QMessageBox.information(self, "안내", "먼저 작업 주문서를 선택하세요.")
+            return
+
+        request_text = self._codex_extract_fenced_section(text, "요청문")
+        target_path = ""
+        skill_order = ""
+        title = ""
+
+        target_match = re.search(r"(?m)^-\s*작업 경로:\s*(.+?)\s*$", text)
+        if target_match:
+            target_path = target_match.group(1).strip()
+        order_match = re.search(r"(?m)^-\s*주문번호:\s*(.+?)\s*$", text)
+        if order_match:
+            skill_order = order_match.group(1).strip()
+        title_match = re.search(r"(?m)^제목/이름:\s*\n(.+?)\s*(?:\n\n|\Z)", request_text)
+        if title_match:
+            title = title_match.group(1).strip()
+
+        target_input = getattr(self, "codex_request_target_input", None)
+        if target_input is not None and target_path:
+            target_input.setText(target_path)
+
+        title_input = getattr(self, "codex_request_title_input", None)
+        if title_input is not None:
+            title_input.setText(title or os.path.basename(self._selected_codex_work_order_path()))
+
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        if body_editor is not None:
+            body_editor.setPlainText(request_text or text)
+
+        if skill_order:
+            lookup = getattr(self, "codex_skill_order_lookup_input", None)
+            if lookup is not None:
+                lookup.setText(skill_order)
+                self._select_codex_skill_by_order_input()
+
+        self._update_codex_codegen_previews()
+        try:
+            self._scroll_codex_to_widget("codex_request_group_widget")
+        except Exception:
+            pass
+        try:
+            self.connection_status_label.setText("선택 주문서를 현재 요청으로 불러왔습니다.")
+        except Exception:
+            pass
+
+    def _copy_selected_codex_work_order_followup_prompt(self) -> None:
+        try:
+            text = self._selected_codex_work_order_text()
+        except Exception as e:
+            QMessageBox.warning(self, "후속 프롬프트 생성 실패", str(e))
+            return
+        if not text:
+            QMessageBox.information(self, "안내", "먼저 작업 주문서를 선택하세요.")
+            return
+
+        prompt = f"""아래 이전 OneNote 작업 주문서를 이어서 처리해라.
+
+먼저 기존 주문서의 대상 위치, 스킬, 요청문을 요약하고, 이어서 필요한 다음 행동만 제안해라.
+실행이 필요하면 OneNote COM API를 우선 사용하고, 완료 후 `GetHierarchy` 또는 `GetPageContent`로 검증해라.
+
+## 이전 작업 주문서
+
+````markdown
+{text}
+````
+"""
+        QApplication.clipboard().setText(prompt)
+        try:
+            self.connection_status_label.setText("선택 주문서 후속 프롬프트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_skill_audit_report(self) -> str:
+        self._refresh_codex_skill_list()
+        records = list(getattr(self, "_codex_skill_records", []))
+        by_order: Dict[str, List[Dict[str, str]]] = {}
+        issues: List[str] = []
+
+        for record in records:
+            order_no = record.get("order", "")
+            name = record.get("name", "")
+            trigger = record.get("trigger", "")
+            path = record.get("path", "")
+            if not order_no:
+                issues.append(f"- 주문번호 없음: `{record.get('filename', '')}`")
+            else:
+                by_order.setdefault(order_no, []).append(record)
+            if not name:
+                issues.append(f"- 스킬명 없음: `{record.get('filename', '')}`")
+            if not trigger:
+                issues.append(f"- 호출 조건 없음: `{record.get('filename', '')}`")
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                if "## Instructions" not in text:
+                    issues.append(f"- Instructions 섹션 없음: `{record.get('filename', '')}`")
+                if "## OneNote COM Guardrails" not in text:
+                    issues.append(f"- Guardrails 섹션 없음: `{record.get('filename', '')}`")
+            except Exception as e:
+                issues.append(f"- 파일 읽기 실패: `{record.get('filename', '')}` ({e})")
+
+        for order_no, rows in by_order.items():
+            if len(rows) > 1:
+                files = ", ".join(f"`{r.get('filename', '')}`" for r in rows)
+                issues.append(f"- 주문번호 중복 {order_no}: {files}")
+
+        rows = [
+            f"| {r.get('order') or '미지정'} | {r.get('name') or '이름 없음'} | `{r.get('filename')}` |"
+            for r in records
+        ]
+        issue_text = "\n".join(issues) if issues else "- 문제 없음"
+        return "\n".join(
+            [
+                "# 코덱스 & 원노트 스킬 진단",
+                "",
+                f"생성 시각: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+                f"스킬 수: {len(records)}",
+                "",
+                "## 문제",
+                "",
+                issue_text,
+                "",
+                "## 주문번호 목록",
+                "",
+                "| 주문번호 | 스킬 이름 | 파일 |",
+                "| --- | --- | --- |",
+                *rows,
+                "",
+            ]
+        )
+
+    def _copy_codex_skill_audit_report_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_skill_audit_report())
+        try:
+            self.connection_status_label.setText("스킬 진단 리포트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _save_codex_skill_audit_report(self) -> None:
+        try:
+            os.makedirs(self._codex_skills_dir(), exist_ok=True)
+            with open(self._codex_skill_audit_path(), "w", encoding="utf-8") as f:
+                f.write(self._codex_skill_audit_report())
+            try:
+                self.connection_status_label.setText(
+                    f"스킬 진단 리포트 저장 완료: {self._codex_skill_audit_path()}"
+                )
+            except Exception:
+                pass
+            QMessageBox.information(self, "스킬 진단 저장 완료", self._codex_skill_audit_path())
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 진단 저장 실패", str(e))
+
+    def _copy_selected_codex_skill_path_to_clipboard(self) -> None:
+        path = self._selected_codex_skill_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 스킬을 선택하세요.")
+            return
+        QApplication.clipboard().setText(path)
+        try:
+            self.connection_status_label.setText("선택 스킬 파일 경로를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _select_codex_skill_by_order_input(self) -> None:
+        lookup = getattr(self, "codex_skill_order_lookup_input", None)
+        order_no = lookup.text().strip() if lookup is not None else ""
+        if not order_no:
+            order_no = self.codex_skill_order_input.text().strip()
+        if not order_no:
+            return
+
+        target_key = self._codex_skill_search_key(order_no)
+        records = getattr(self, "_codex_skill_records", [])
+        match = None
+        for record in records:
+            if self._codex_skill_search_key(record.get("order", "")) == target_key:
+                match = record
+                break
+        if match is None:
+            QMessageBox.information(self, "스킬 없음", f"주문번호를 찾지 못했습니다: {order_no}")
+            return
+
+        self.codex_skill_search_input.blockSignals(True)
+        self.codex_skill_search_input.setText("")
+        self.codex_skill_search_input.blockSignals(False)
+        self._populate_codex_skill_list(records)
+
+        path = match.get("path", "")
+        for i in range(self.codex_skill_list.count()):
+            item = self.codex_skill_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == path:
+                self.codex_skill_list.setCurrentRow(i)
+                self._load_selected_codex_skill(item)
+                return
+
+    def _recommended_codex_skill_order(self) -> str:
+        action = ""
+        try:
+            action = self.codex_request_action_combo.currentText()
+        except Exception:
+            pass
+
+        if "전자필기장" in action:
+            return "SK-005"
+        if "섹션 그룹" in action or "섹션그룹" in action:
+            return "SK-004"
+        if "섹션" in action:
+            return "SK-003"
+        if "글쓰기" in action:
+            return "SK-001"
+        if "페이지" in action:
+            return "SK-002"
+        return "SK-001"
+
+    def _select_recommended_codex_skill(self) -> None:
+        order_no = self._recommended_codex_skill_order()
+        if not getattr(self, "_codex_skill_records", None):
+            self._refresh_codex_skill_list()
+        target_key = self._codex_skill_search_key(order_no)
+        records = getattr(self, "_codex_skill_records", [])
+        if not any(
+            self._codex_skill_search_key(record.get("order", "")) == target_key
+            for record in records
+        ):
+            QMessageBox.information(
+                self,
+                "스킬 없음",
+                f"현재 작업에 맞는 기본 스킬을 찾지 못했습니다: {order_no}",
+            )
+            return
+        lookup = getattr(self, "codex_skill_order_lookup_input", None)
+        if lookup is not None:
+            lookup.setText(order_no)
+        self._select_codex_skill_by_order_input()
+        try:
+            self.connection_status_label.setText(f"현재 작업에 맞는 스킬을 선택했습니다: {order_no}")
+        except Exception:
+            pass
+
+    def _duplicate_selected_codex_skill(self) -> None:
+        path = self._selected_codex_skill_path()
+        if path and os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    meta = self._codex_skill_metadata_from_text(f.read(), os.path.basename(path)[:-3])
+            except Exception as e:
+                QMessageBox.warning(self, "스킬 복제 실패", str(e))
+                return
+        else:
+            meta = {
+                "name": self.codex_skill_name_input.text().strip() or "새 코덱스 스킬",
+                "trigger": self.codex_skill_trigger_input.text().strip(),
+                "body": self.codex_skill_body_editor.toPlainText().strip(),
+            }
+
+        new_order = self._codex_next_skill_order()
+        base_name = meta.get("name", "새 코덱스 스킬")
+        new_name = f"{base_name} 복사본"
+        new_body = meta.get("body", "")
+        new_trigger = meta.get("trigger", "")
+        skills_dir = self._codex_skills_dir()
+        try:
+            os.makedirs(skills_dir, exist_ok=True)
+            path = os.path.join(skills_dir, self._codex_skill_slug(new_name) + ".md")
+            if os.path.exists(path):
+                path = os.path.join(skills_dir, self._codex_skill_slug(f"{new_name}-{new_order}") + ".md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._codex_skill_markdown(new_name, new_trigger, new_body, new_order))
+            self._refresh_codex_skill_list()
+            self.codex_skill_order_lookup_input.setText(new_order)
+            self._select_codex_skill_by_order_input()
+            try:
+                self.connection_status_label.setText(f"스킬 복제 완료: {new_order}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 복제 실패", str(e))
+
+    def _delete_selected_codex_skill(self) -> None:
+        path = self._selected_codex_skill_path()
+        if not path:
+            QMessageBox.information(self, "안내", "먼저 삭제할 스킬을 선택하세요.")
+            return
+        filename = os.path.basename(path)
+        if filename in ("README.md", "skill-order-index.md"):
+            QMessageBox.warning(self, "삭제 불가", "기본 안내 파일은 삭제할 수 없습니다.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "스킬 삭제",
+            f"선택한 스킬 파일을 삭제합니다.\n\n{path}\n\n계속하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            os.remove(path)
+            self._refresh_codex_skill_list()
+            self._new_codex_skill_draft()
+            try:
+                self.connection_status_label.setText(f"스킬 삭제 완료: {filename}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 삭제 실패", str(e))
+
+    def _new_codex_skill_from_clipboard(self) -> None:
+        text = QApplication.clipboard().text().strip()
+        if not text:
+            QMessageBox.information(self, "안내", "클립보드에 스킬로 만들 내용이 없습니다.")
+            return
+        meta = self._codex_skill_metadata_from_text(text, "클립보드 스킬")
+        order_no = meta.get("order") or self._codex_next_skill_order()
+        name = meta.get("name") or "클립보드 스킬"
+        if name.startswith("[") and "]" in name:
+            name = name.split("]", 1)[1].strip() or "클립보드 스킬"
+        self.codex_skill_order_input.setText(order_no)
+        self.codex_skill_name_input.setText(name)
+        self.codex_skill_trigger_input.setText(meta.get("trigger", "클립보드에서 만든 스킬"))
+        self.codex_skill_body_editor.setPlainText(meta.get("body", text))
+        self._update_codex_skill_call_preview()
+        try:
+            self.connection_status_label.setText("클립보드 내용으로 스킬 초안을 만들었습니다.")
+        except Exception:
+            pass
+
+    def _codex_skill_markdown(
+        self, name: str, trigger: str, body: str, order_no: str = ""
+    ) -> str:
+        name = (name or "새 코덱스 스킬").strip()
+        trigger = (trigger or "").strip()
+        body = (body or "").strip()
+        order_no = (order_no or self._codex_next_skill_order()).strip()
+        return f"""# {name}
+
+## 주문번호
+
+{order_no}
+
+## Trigger
+
+{trigger or "- 사용자가 이 스킬을 호출할 자연어 조건을 적는다."}
+
+## Instructions
+
+{body or "여기에 스킬 실행 절차, OneNote 대상 경로, COM API 템플릿, 검증 방법을 적는다."}
+
+## OneNote COM Guardrails
+
+- 화면 클릭보다 OneNote COM API를 우선 사용한다.
+- 대상 ID가 있으면 `GetHierarchy` 전체 탐색보다 ID 직접 호출을 우선한다.
+- 검증은 `GetHierarchy` 또는 `GetPageContent`를 우선 사용한다.
+"""
+
+    def _new_codex_skill_draft(self) -> None:
+        self.codex_skill_order_input.setText(self._codex_next_skill_order())
+        self.codex_skill_name_input.setText("새 코덱스 스킬")
+        self.codex_skill_trigger_input.setText("이 스킬을 쓸 상황을 적는다")
+        self.codex_skill_body_editor.setPlainText(
+            """목표:
+- 이 스킬이 해결할 작업을 명확히 적는다.
+
+형식:
+- 제목:
+- 입력:
+- 처리 방식:
+- 출력:
+
+검증:
+- 완료 후 확인할 기준을 적는다.
+"""
+        )
+        self._update_codex_skill_call_preview()
+
+    def _create_default_codex_skill_set(self) -> None:
+        skills_dir = self._codex_skills_dir()
+        try:
+            os.makedirs(skills_dir, exist_ok=True)
+            existing_names: Set[str] = set()
+            for filename in os.listdir(skills_dir):
+                if not filename.lower().endswith(".md"):
+                    continue
+                if filename in ("README.md", "skill-order-index.md", "skill-audit.md"):
+                    continue
+                path = os.path.join(skills_dir, filename)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        meta = self._codex_skill_metadata_from_text(f.read(), filename[:-3])
+                    existing_names.add(self._codex_skill_search_key(meta.get("name", "")))
+                except Exception:
+                    existing_names.add(self._codex_skill_search_key(filename[:-3]))
+
+            created: List[str] = []
+            for template in self._codex_skill_templates().values():
+                name = template.get("name", "새 코덱스 스킬")
+                if self._codex_skill_search_key(name) in existing_names:
+                    continue
+                order_no = self._codex_next_skill_order()
+                path = os.path.join(skills_dir, self._codex_skill_slug(name) + ".md")
+                if os.path.exists(path):
+                    path = os.path.join(
+                        skills_dir, self._codex_skill_slug(f"{name}-{order_no}") + ".md"
+                    )
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(
+                        self._codex_skill_markdown(
+                            name,
+                            template.get("trigger", ""),
+                            template.get("body", ""),
+                            order_no,
+                        )
+                    )
+                created.append(f"{order_no} {name}")
+                existing_names.add(self._codex_skill_search_key(name))
+
+            self._refresh_codex_skill_list()
+            self._update_codex_status_summary()
+            if created:
+                QMessageBox.information(
+                    self,
+                    "기본 스킬 세트 생성 완료",
+                    "생성한 스킬:\n\n" + "\n".join(created),
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "기본 스킬 세트",
+                    "이미 기본 스킬 템플릿이 모두 준비되어 있습니다.",
+                )
+        except Exception as e:
+            QMessageBox.warning(self, "기본 스킬 세트 생성 실패", str(e))
+
+    def _refresh_codex_skill_list(self) -> None:
+        skill_list = getattr(self, "codex_skill_list", None)
+        if skill_list is None:
+            return
+        skill_list.clear()
+        skills_dir = self._codex_skills_dir()
+        try:
+            os.makedirs(skills_dir, exist_ok=True)
+            files = sorted(
+                f
+                for f in os.listdir(skills_dir)
+                if f.lower().endswith(".md")
+                and f not in ("README.md", "skill-order-index.md", "skill-audit.md")
+            )
+            skill_index_rows: List[Dict[str, str]] = []
+            for filename in files:
+                path = os.path.join(skills_dir, filename)
+                order_no = ""
+                name = filename[:-3]
+                trigger = ""
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        meta = self._codex_skill_metadata_from_text(f.read(), name)
+                    order_no = meta.get("order", "")
+                    name = meta.get("name", name)
+                    trigger = meta.get("trigger", "")
+                except Exception:
+                    pass
+                skill_index_rows.append(
+                    {
+                        "order": order_no,
+                        "name": name,
+                        "filename": filename,
+                        "trigger": trigger,
+                        "path": path,
+                    }
+                )
+            skill_index_rows.sort(
+                key=lambda s: (s.get("order") or "ZZZ", s.get("name") or "")
+            )
+            self._codex_skill_records = skill_index_rows
+            self._filter_codex_skill_list()
+            self._write_codex_skill_order_index(skill_index_rows)
+        except Exception as e:
+            try:
+                self.connection_status_label.setText(f"코덱스 스킬 목록 로드 실패: {e}")
+            except Exception:
+                pass
+
+    def _copy_codex_skill_order_index_to_clipboard(self) -> None:
+        try:
+            self._refresh_codex_skill_list()
+            with open(self._codex_skill_order_index_path(), "r", encoding="utf-8") as f:
+                text = f.read()
+            QApplication.clipboard().setText(text)
+            try:
+                self.connection_status_label.setText("스킬 주문번호표를 클립보드에 복사했습니다.")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "주문번호표 복사 실패", str(e))
+
+    def _save_codex_skill_draft(self) -> None:
+        order_no = self.codex_skill_order_input.text().strip()
+        name = self.codex_skill_name_input.text().strip()
+        trigger = self.codex_skill_trigger_input.text().strip()
+        body = self.codex_skill_body_editor.toPlainText().strip()
+        if not name:
+            name = "새 코덱스 스킬"
+        if not order_no:
+            order_no = self._codex_next_skill_order()
+            self.codex_skill_order_input.setText(order_no)
+        skills_dir = self._codex_skills_dir()
+        try:
+            os.makedirs(skills_dir, exist_ok=True)
+            path = os.path.join(skills_dir, self._codex_skill_slug(name) + ".md")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._codex_skill_markdown(name, trigger, body, order_no))
+            self._refresh_codex_skill_list()
+            self._update_codex_skill_call_preview()
+            try:
+                self.connection_status_label.setText(
+                    f"코덱스 스킬 저장 완료: {order_no} / {path}"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 저장 실패", str(e))
+
+    def _load_selected_codex_skill(self, item: Optional[QListWidgetItem] = None) -> None:
+        if item is None:
+            skill_list = getattr(self, "codex_skill_list", None)
+            item = skill_list.currentItem() if skill_list is not None else None
+        if item is None:
+            return
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+            meta = self._codex_skill_metadata_from_text(text, item.text())
+            self.codex_skill_order_input.setText(meta.get("order", ""))
+            self.codex_skill_name_input.setText(meta.get("name", ""))
+            self.codex_skill_trigger_input.setText(meta.get("trigger", ""))
+            self.codex_skill_body_editor.setPlainText(meta.get("body", text))
+            self._update_codex_skill_call_preview()
+            try:
+                self.connection_status_label.setText(f"코덱스 스킬 불러옴: {path}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "스킬 불러오기 실패", str(e))
+
+    def _copy_codex_skill_prompt_to_clipboard(self) -> None:
+        text = self._current_codex_skill_markdown()
+        QApplication.clipboard().setText(text)
+        try:
+            self.connection_status_label.setText("코덱스 스킬 초안을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_targets_path(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "onenote-targets.json")
+
+    def _default_codex_targets(self) -> List[Dict[str, str]]:
+        return [
+            {
+                "name": "임시 메모 - 미정리",
+                "path": "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리",
+                "notebook": "생산성도구-임시 메모",
+                "section_group": "A 미정리-생성 메모",
+                "section": "미정리",
+                "section_group_id": "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}",
+                "section_id": "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}",
+            }
+        ]
+
+    def _load_codex_targets(self) -> List[Dict[str, str]]:
+        path = self._codex_targets_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                targets = data.get("targets") if isinstance(data, dict) else data
+                if isinstance(targets, list) and targets:
+                    return [t for t in targets if isinstance(t, dict)]
+        except Exception as e:
+            try:
+                self.connection_status_label.setText(f"코덱스 작업 위치 로드 실패: {e}")
+            except Exception:
+                pass
+        return self._default_codex_targets()
+
+    def _write_codex_targets(self, targets: List[Dict[str, str]]) -> None:
+        path = self._codex_targets_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = {
+            "version": 1,
+            "targets": targets,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    def _selected_codex_target_profile(self) -> Dict[str, str]:
+        combo = getattr(self, "codex_target_combo", None)
+        if combo is not None:
+            data = combo.currentData()
+            if isinstance(data, dict):
+                return data
+        return self._default_codex_targets()[0]
+
+    def _codex_target_from_fields(self) -> Dict[str, str]:
+        def _text(attr: str) -> str:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                return ""
+            try:
+                return widget.text().strip()
+            except Exception:
+                return ""
+
+        return {
+            "name": _text("codex_target_name_input") or "새 대상",
+            "path": _text("codex_target_path_input"),
+            "notebook": _text("codex_target_notebook_input"),
+            "section_group": _text("codex_target_group_input"),
+            "section": _text("codex_target_section_input"),
+            "section_group_id": _text("codex_target_group_id_input"),
+            "section_id": _text("codex_target_section_id_input"),
+        }
+
+    def _populate_codex_target_fields(self, profile: Dict[str, str]) -> None:
+        mapping = {
+            "codex_target_name_input": profile.get("name", ""),
+            "codex_target_path_input": profile.get("path", ""),
+            "codex_target_notebook_input": profile.get("notebook", ""),
+            "codex_target_group_input": profile.get("section_group", ""),
+            "codex_target_section_input": profile.get("section", ""),
+            "codex_target_group_id_input": profile.get("section_group_id", ""),
+            "codex_target_section_id_input": profile.get("section_id", ""),
+        }
+        for attr, value in mapping.items():
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.blockSignals(True)
+                widget.setText(value)
+                widget.blockSignals(False)
+
+    def _refresh_codex_target_combo(self, selected_name: Optional[str] = None) -> None:
+        combo = getattr(self, "codex_target_combo", None)
+        if combo is None:
+            return
+        current_name = selected_name or combo.currentText()
+        combo.blockSignals(True)
+        combo.clear()
+        for profile in self._load_codex_targets():
+            combo.addItem(profile.get("name", "대상"), profile)
+        idx = combo.findText(current_name)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+        self._on_codex_target_selected()
+
+    def _on_codex_target_selected(self) -> None:
+        profile = self._selected_codex_target_profile()
+        self._populate_codex_target_fields(profile)
+        self._apply_codex_target_to_request()
+
+    def _apply_codex_target_to_request(self) -> None:
+        target_input = getattr(self, "codex_request_target_input", None)
+        if target_input is None:
+            return
+        profile = self._codex_target_from_fields()
+        target_input.setText(
+            profile.get("path")
+            or "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
+        )
+        self._update_codex_codegen_previews()
+
+    def _save_codex_target_profile(self) -> None:
+        profile = self._codex_target_from_fields()
+        targets = self._load_codex_targets()
+        replaced = False
+        for i, old in enumerate(targets):
+            if old.get("name") == profile.get("name"):
+                targets[i] = profile
+                replaced = True
+                break
+        if not replaced:
+            targets.append(profile)
+        try:
+            self._write_codex_targets(targets)
+            self._refresh_codex_target_combo(profile.get("name"))
+            try:
+                self.connection_status_label.setText(
+                    f"코덱스 작업 위치 저장 완료: {profile.get('name')}"
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "작업 위치 저장 실패", str(e))
+
+    def _new_codex_target_profile(self) -> None:
+        combo = getattr(self, "codex_target_combo", None)
+        if combo is not None:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(-1)
+            combo.blockSignals(False)
+        self._populate_codex_target_fields(
+            {
+                "name": "새 대상",
+                "path": "",
+                "notebook": "",
+                "section_group": "",
+                "section": "",
+                "section_group_id": "",
+                "section_id": "",
+            }
+        )
+        self._apply_codex_target_to_request()
+
+    def _build_codex_target_group(self) -> QWidget:
+        group = QGroupBox("OneNote 작업 위치")
+        layout = QVBoxLayout(group)
+
+        desc = QLabel(
+            "코덱스가 OneNote에서 작업할 위치입니다. 자주 쓰는 위치는 내부적으로 "
+            "자동 기억해서 다음 작업을 더 빠르게 준비합니다."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        top = QHBoxLayout()
+        self.codex_target_combo = QComboBox()
+        self.codex_target_combo.currentIndexChanged.connect(
+            self._on_codex_target_selected
+        )
+        top.addWidget(QLabel("작업 위치"))
+        top.addWidget(self.codex_target_combo, stretch=1)
+
+        apply_button = QToolButton()
+        apply_button.setText("요청에 넣기")
+        apply_button.clicked.connect(self._apply_codex_target_to_request)
+        top.addWidget(apply_button)
+
+        save_button = QToolButton()
+        save_button.setText("위치 저장")
+        save_button.clicked.connect(self._save_codex_target_profile)
+        top.addWidget(save_button)
+
+        copy_json_button = QToolButton()
+        copy_json_button.setText("JSON 복사")
+        copy_json_button.clicked.connect(self._copy_codex_target_profile_json_to_clipboard)
+        top.addWidget(copy_json_button)
+
+        copy_all_json_button = QToolButton()
+        copy_all_json_button.setText("전체 JSON")
+        copy_all_json_button.clicked.connect(self._copy_codex_all_targets_json_to_clipboard)
+        top.addWidget(copy_all_json_button)
+
+        paste_json_button = QToolButton()
+        paste_json_button.setText("JSON 불러오기")
+        paste_json_button.clicked.connect(self._save_codex_target_from_clipboard_json)
+        top.addWidget(paste_json_button)
+
+        inventory_import_button = QToolButton()
+        inventory_import_button.setText("인벤토리 등록")
+        inventory_import_button.clicked.connect(self._import_codex_targets_from_clipboard_inventory)
+        top.addWidget(inventory_import_button)
+
+        inventory_preview_button = QToolButton()
+        inventory_preview_button.setText("후보 복사")
+        inventory_preview_button.clicked.connect(self._copy_codex_inventory_target_preview_to_clipboard)
+        top.addWidget(inventory_preview_button)
+
+        target_audit_button = QToolButton()
+        target_audit_button.setText("위치 진단")
+        target_audit_button.clicked.connect(self._copy_codex_target_audit_report_to_clipboard)
+        top.addWidget(target_audit_button)
+        layout.addLayout(top)
+
+        def add_line(
+            label_text: str,
+            attr: str,
+            placeholder: str = "",
+            hidden: bool = False,
+        ) -> QLineEdit:
+            row_widget = QWidget()
+            row = QHBoxLayout(row_widget)
+            row.setContentsMargins(0, 0, 0, 0)
+            label = QLabel(label_text)
+            label.setMinimumWidth(110)
+            row.addWidget(label)
+            field = QLineEdit()
+            field.setPlaceholderText(placeholder)
+            setattr(self, attr, field)
+            setattr(self, f"{attr}_row", row_widget)
+            row.addWidget(field, stretch=1)
+            layout.addWidget(row_widget)
+            row_widget.setVisible(not hidden)
+            return field
+
+        self.codex_target_name_input = add_line("위치 이름", "codex_target_name_input")
+        self.codex_target_path_input = add_line(
+            "작업 경로",
+            "codex_target_path_input",
+            "전자필기장 > 섹션그룹 > 섹션",
+        )
+        self.codex_target_notebook_input = add_line(
+            "전자필기장", "codex_target_notebook_input"
+        )
+        self.codex_target_group_input = add_line(
+            "섹션 그룹", "codex_target_group_input"
+        )
+        self.codex_target_section_input = add_line("섹션", "codex_target_section_input")
+        self.codex_target_group_id_input = add_line(
+            "내부 그룹 ID", "codex_target_group_id_input", hidden=True
+        )
+        self.codex_target_section_id_input = add_line(
+            "내부 섹션 ID", "codex_target_section_id_input", hidden=True
+        )
+
+        self.codex_target_path_input.textChanged.connect(
+            self._apply_codex_target_to_request
+        )
+        self.codex_target_group_id_input.textChanged.connect(
+            self._update_codex_codegen_previews
+        )
+        self.codex_target_section_id_input.textChanged.connect(
+            self._update_codex_codegen_previews
+        )
+
+        self._refresh_codex_target_combo()
+        return group
+
+    def _codex_request_text(self) -> str:
+        action = self.codex_request_action_combo.currentText()
+        target = self.codex_request_target_input.text().strip()
+        title = self.codex_request_title_input.text().strip()
+        body = self.codex_request_body_editor.toPlainText().strip()
+        profile = self._codex_target_from_fields()
+        section_group_id = (
+            profile.get("section_group_id")
+            or "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}"
+        )
+        section_id = (
+            profile.get("section_id")
+            or "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}"
+        )
+
+        return f"""OneNote는 화면 클릭으로 조작하지 말고 Windows OneNote COM API를 PowerShell에서 사용해라.
+먼저 `New-Object -ComObject OneNote.Application`으로 연결하고,
+`GetHierarchy('', hsSections, ref xml)`로 전자필기장/섹션그룹/섹션 구조를 확인해라.
+
+작업:
+{action}
+
+대상 경로:
+{target or "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"}
+
+제목/이름:
+{title or "코덱스 작업"}
+
+본문/내용:
+{body or "- 필요한 내용을 여기에 작성한다."}
+
+내부 빠른 위치 정보 (코덱스용):
+- SectionGroup ID: {section_group_id}
+- Section ID: {section_id}
+
+구현 지침:
+- 페이지 추가는 Section ID로 `CreateNewPage + GetPageContent + UpdatePageContent`를 사용해라.
+- 섹션 생성은 SectionGroup ID로 `OpenHierarchy("섹션명.one", sectionGroupId, ref newId, cftSection)`를 사용해라.
+- 섹션 그룹 생성은 `OpenHierarchy("그룹명", parentId, ref newId, cftFolder)`를 사용해라.
+- 새 전자필기장은 저장 경로를 먼저 확인하고 `OpenHierarchy(notebookPath, "", ref newId, cftNotebook)`를 사용해라.
+- 완료 검증은 화면 캡처보다 `GetHierarchy` 또는 `GetPageContent`로 해라.
+"""
+
+    def _update_codex_request_preview(self) -> None:
+        preview = getattr(self, "codex_request_preview", None)
+        if preview is None:
+            return
+        preview.setPlainText(self._codex_request_text())
+
+    def _copy_codex_request_to_clipboard(self) -> None:
+        text = self._codex_request_text()
+        QApplication.clipboard().setText(text)
+        try:
+            self.connection_status_label.setText("코덱스 OneNote 요청문을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_request_draft_payload(self) -> Dict[str, Any]:
+        def line(attr: str) -> str:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                return ""
+            try:
+                return widget.text().strip()
+            except Exception:
+                return ""
+
+        def plain(attr: str) -> str:
+            widget = getattr(self, attr, None)
+            if widget is None:
+                return ""
+            try:
+                return widget.toPlainText()
+            except Exception:
+                return ""
+
+        action = ""
+        action_combo = getattr(self, "codex_request_action_combo", None)
+        if action_combo is not None:
+            try:
+                action = action_combo.currentText().strip()
+            except Exception:
+                action = ""
+
+        preset_key = ""
+        preset_combo = getattr(self, "codex_request_preset_combo", None)
+        if preset_combo is not None:
+            try:
+                preset_key = str(preset_combo.currentData() or "")
+            except Exception:
+                preset_key = ""
+
+        return {
+            "version": 1,
+            "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "preset": preset_key,
+            "request": {
+                "action": action,
+                "target": line("codex_request_target_input"),
+                "title": line("codex_request_title_input"),
+                "body": plain("codex_request_body_editor"),
+            },
+            "target_profile": self._codex_target_from_fields(),
+        }
+
+    def _save_codex_request_draft(self) -> None:
+        try:
+            path = self._codex_request_draft_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self._codex_request_draft_payload(), f, ensure_ascii=False, indent=2)
+            try:
+                self.connection_status_label.setText(f"코덱스 요청 초안 저장 완료: {path}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "요청 초안 저장 실패", str(e))
+
+    def _load_codex_request_draft(self) -> None:
+        path = self._codex_request_draft_path()
+        if not os.path.exists(path):
+            QMessageBox.information(self, "요청 초안 없음", "저장된 코덱스 요청 초안이 없습니다.")
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            request = payload.get("request", {}) if isinstance(payload, dict) else {}
+            target_profile = payload.get("target_profile", {}) if isinstance(payload, dict) else {}
+            if not isinstance(request, dict):
+                request = {}
+            if not isinstance(target_profile, dict):
+                target_profile = {}
+
+            action_combo = getattr(self, "codex_request_action_combo", None)
+            if action_combo is not None:
+                idx = action_combo.findText(str(request.get("action", "")))
+                if idx >= 0:
+                    action_combo.setCurrentIndex(idx)
+
+            target_input = getattr(self, "codex_request_target_input", None)
+            if target_input is not None:
+                target_input.setText(str(request.get("target", "")))
+
+            title_input = getattr(self, "codex_request_title_input", None)
+            if title_input is not None:
+                title_input.setText(str(request.get("title", "")))
+
+            body_editor = getattr(self, "codex_request_body_editor", None)
+            if body_editor is not None:
+                body_editor.setPlainText(str(request.get("body", "")))
+
+            if target_profile:
+                self._populate_codex_target_fields(target_profile)
+            self._update_codex_codegen_previews()
+            try:
+                self.connection_status_label.setText(f"코덱스 요청 초안 불러오기 완료: {path}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "요청 초안 불러오기 실패", str(e))
+
+    def _codex_execution_checklist_text(self) -> str:
+        payload = self._codex_request_draft_payload()
+        request = payload.get("request", {})
+        target = payload.get("target_profile", {})
+        return f"""# 코덱스 OneNote 실행 체크리스트
+생성 시각: {time.strftime("%Y-%m-%d %H:%M:%S")}
+
+## 현재 작업
+
+- 작업: {request.get("action", "") or "미지정"}
+- 제목/이름: {request.get("title", "") or "미지정"}
+- 대상 경로: {request.get("target", "") or target.get("path", "") or "미지정"}
+- SectionGroup ID: {target.get("section_group_id", "") or "미지정"}
+- Section ID: {target.get("section_id", "") or "미지정"}
+
+## 실행 전
+
+- OneNote COM 연결을 먼저 확인한다.
+- 대상 전자필기장/섹션/섹션 그룹을 `GetHierarchy`로 조회한다.
+- 내부 ID가 있으면 이름 탐색보다 ID 직접 사용을 우선한다.
+- 삭제/이동 작업은 작업 전 구조를 기록한다.
+
+## 실행 중
+
+- 화면 클릭 자동화보다 OneNote COM API를 우선 사용한다.
+- 페이지 추가는 `CreateNewPage`, `GetPageContent`, `UpdatePageContent` 순서로 처리한다.
+- 섹션/섹션 그룹 생성은 `OpenHierarchy`를 사용한다.
+- 예외가 나면 OneNote 상태와 대상 ID를 다시 조회한다.
+
+## 실행 후 검증
+
+- `GetHierarchy` 또는 `GetPageContent`로 결과를 확인한다.
+- 생성/수정한 제목과 본문 일부가 실제 XML에 있는지 확인한다.
+- 검증 결과와 다음 확인 항목을 사용자에게 짧게 보고한다.
+"""
+
+    def _copy_codex_execution_checklist_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_execution_checklist_text())
+        try:
+            self.connection_status_label.setText("코덱스 실행 체크리스트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _append_clipboard_to_codex_request_body(self) -> None:
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        if body_editor is None:
+            return
+        clip = QApplication.clipboard().text().strip()
+        if not clip:
+            QMessageBox.information(self, "클립보드 비어 있음", "요청 본문에 추가할 클립보드 텍스트가 없습니다.")
+            return
+
+        current = body_editor.toPlainText().rstrip()
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        addition = f"클립보드 자료 ({stamp}):\n{clip}"
+        body_editor.setPlainText((current + "\n\n" + addition).strip())
+        self._update_codex_codegen_previews()
+        try:
+            self.connection_status_label.setText("클립보드 텍스트를 코덱스 요청 본문에 추가했습니다.")
+        except Exception:
+            pass
+
+    def _replace_codex_request_body_from_clipboard(self) -> None:
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        if body_editor is None:
+            return
+        clip = QApplication.clipboard().text().strip()
+        if not clip:
+            QMessageBox.information(self, "클립보드 비어 있음", "요청 본문으로 교체할 클립보드 텍스트가 없습니다.")
+            return
+        body_editor.setPlainText(clip)
+        self._update_codex_codegen_previews()
+        try:
+            self.connection_status_label.setText("클립보드 텍스트로 코덱스 요청 본문을 교체했습니다.")
+        except Exception:
+            pass
+
+    def _codex_compact_prompt_text(self) -> str:
+        try:
+            target = self._codex_target_from_fields()
+        except Exception:
+            target = {}
+
+        try:
+            request = self._codex_request_draft_payload().get("request", {})
+        except Exception:
+            request = {}
+
+        order_no = ""
+        skill_name = ""
+        try:
+            order_no = self.codex_skill_order_input.text().strip()
+            skill_name = self.codex_skill_name_input.text().strip()
+        except Exception:
+            pass
+
+        return f"""OneNote COM API로 아래 작업을 바로 수행해라. 화면 클릭보다 COM 조회/수정/검증을 우선한다.
+
+스킬:
+- 주문번호: {order_no or "미지정"}
+- 스킬명: {skill_name or "미지정"}
+
+작업:
+- 유형: {request.get("action", "") or "미지정"}
+- 제목/이름: {request.get("title", "") or "미지정"}
+- 대상 경로: {request.get("target", "") or target.get("path", "") or "미지정"}
+- SectionGroup ID: {target.get("section_group_id", "") or "미지정"}
+- Section ID: {target.get("section_id", "") or "미지정"}
+
+본문:
+{request.get("body", "") or "- 사용자가 제공한 내용을 OneNote에 정리한다."}
+
+완료 후 `GetHierarchy` 또는 `GetPageContent`로 검증하고, 변경한 항목과 검증 결과만 간단히 보고해라.
+"""
+
+    def _copy_codex_compact_prompt_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_compact_prompt_text())
+        try:
+            self.connection_status_label.setText("코덱스 초압축 실행 프롬프트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_review_prompt_text(self) -> str:
+        return f"""아래 OneNote 작업 계획을 검토해라. 실행하지 말고 위험 요소, 빠진 검증, 잘못된 대상 ID 가능성만 점검해라.
+
+## 현재 상태
+
+{self._codex_status_summary_text()}
+
+## 실행 체크리스트
+
+{self._codex_execution_checklist_text()}
+
+## 요청문
+
+{self._codex_request_text()}
+
+검토 결과는 다음 형식으로 짧게 작성해라.
+- 실행 전 막아야 할 문제:
+- 대상 위치 확인 필요:
+- COM API 사용 시 주의:
+- 검증 방법:
+"""
+
+    def _copy_codex_review_prompt_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_review_prompt_text())
+        try:
+            self.connection_status_label.setText("코덱스 검토 프롬프트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_task_breakdown_prompt_text(self) -> str:
+        return f"""아래 OneNote 작업을 실행 가능한 하위 작업으로 분해해라. 아직 실행하지 말고 순서, 필요한 조회, 검증 기준만 작성해라.
+
+## 현재 요청
+
+{self._codex_request_text()}
+
+## 현재 작업 위치
+
+```json
+{self._codex_target_profile_json_text()}
+```
+
+출력 형식:
+- 목표:
+- 선행 조회:
+- 작업 순서:
+- 검증:
+- 실패 시 복구:
+"""
+
+    def _copy_codex_task_breakdown_prompt_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_task_breakdown_prompt_text())
+        try:
+            self.connection_status_label.setText("코덱스 작업 분해 프롬프트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_completion_report_template_text(self) -> str:
+        try:
+            request = self._codex_request_draft_payload().get("request", {})
+        except Exception:
+            request = {}
+        return f"""# OneNote 작업 완료 보고 템플릿
+
+## 요청
+
+- 작업: {request.get("action", "") or "미지정"}
+- 제목/이름: {request.get("title", "") or "미지정"}
+- 대상: {request.get("target", "") or "미지정"}
+
+## 수행한 작업
+
+- 
+
+## 변경한 OneNote 항목
+
+- 전자필기장:
+- 섹션 그룹:
+- 섹션:
+- 페이지:
+
+## 검증 결과
+
+- 조회 방식: GetHierarchy / GetPageContent
+- 확인한 값:
+- 결과:
+
+## 남은 확인 사항
+
+- 
+"""
+
+    def _copy_codex_completion_report_template_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_completion_report_template_text())
+        try:
+            self.connection_status_label.setText("OneNote 작업 완료 보고 템플릿을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_current_request_text_blob(self) -> str:
+        parts: List[str] = []
+        try:
+            parts.append(self.codex_request_action_combo.currentText())
+            parts.append(self.codex_request_target_input.text())
+            parts.append(self.codex_request_title_input.text())
+            parts.append(self.codex_request_body_editor.toPlainText())
+        except Exception:
+            pass
+        return "\n".join(p for p in parts if p)
+
+    def _codex_request_tokens(self) -> Set[str]:
+        text = unicodedata.normalize("NFKC", self._codex_current_request_text_blob()).casefold()
+        return {
+            token
+            for token in re.findall(r"[0-9A-Za-z가-힣_]{2,}", text)
+            if token not in {"one", "note", "onenote", "com", "api"}
+        }
+
+    def _rank_codex_skill_records(self) -> List[Dict[str, Any]]:
+        if not getattr(self, "_codex_skill_records", None):
+            self._refresh_codex_skill_list()
+
+        request_key = self._codex_skill_search_key(self._codex_current_request_text_blob())
+        request_tokens = self._codex_request_tokens()
+        ranked: List[Dict[str, Any]] = []
+
+        for record in getattr(self, "_codex_skill_records", []):
+            text = " ".join(
+                [
+                    record.get("order", ""),
+                    record.get("name", ""),
+                    record.get("filename", ""),
+                    record.get("trigger", ""),
+                ]
+            )
+            try:
+                path = record.get("path", "")
+                if path and os.path.exists(path):
+                    with open(path, "r", encoding="utf-8") as f:
+                        text += "\n" + self._codex_skill_metadata_from_text(
+                            f.read(), record.get("name", "")
+                        ).get("body", "")
+            except Exception:
+                pass
+
+            skill_key = self._codex_skill_search_key(text)
+            skill_tokens = {
+                token.casefold()
+                for token in re.findall(r"[0-9A-Za-z가-힣_]{2,}", unicodedata.normalize("NFKC", text))
+            }
+            hits = sorted(request_tokens & skill_tokens)
+            score = len(hits) * 10
+            if record.get("name") and self._codex_skill_search_key(record.get("name", "")) in request_key:
+                score += 25
+            if record.get("trigger") and self._codex_skill_search_key(record.get("trigger", "")) in request_key:
+                score += 20
+            if record.get("order") and self._codex_skill_search_key(record.get("order", "")) in request_key:
+                score += 50
+            if score > 0:
+                ranked.append(
+                    {
+                        "score": score,
+                        "record": record,
+                        "hits": hits[:8],
+                    }
+                )
+
+        ranked.sort(
+            key=lambda item: (
+                -int(item.get("score", 0)),
+                item.get("record", {}).get("order", "") or "ZZZ",
+                item.get("record", {}).get("name", ""),
+            )
+        )
+        return ranked
+
+    def _codex_skill_recommendation_report_text(self) -> str:
+        ranked = self._rank_codex_skill_records()
+        request = self._codex_current_request_text_blob().strip()
+        rows = []
+        for item in ranked[:10]:
+            record = item.get("record", {})
+            hits = ", ".join(item.get("hits", [])) or "-"
+            rows.append(
+                f"| {item.get('score', 0)} | {record.get('order', '') or '-'} | "
+                f"{record.get('name', '') or '-'} | {hits} | `{record.get('filename', '')}` |"
+            )
+
+        if not rows:
+            rows.append("| 0 | - | 추천 없음 | 현재 요청과 겹치는 스킬 키워드가 없습니다. | - |")
+
+        return "\n".join(
+            [
+                "# 코덱스 스킬 추천 리포트",
+                "",
+                "## 현재 요청 요약",
+                "",
+                request or "요청 내용 없음",
+                "",
+                "## 추천 스킬",
+                "",
+                "| 점수 | 주문번호 | 스킬 | 근거 키워드 | 파일 |",
+                "| ---: | --- | --- | --- | --- |",
+                *rows,
+                "",
+                "추천 점수는 현재 요청의 단어가 스킬 이름, 호출 조건, 본문과 겹치는 정도로 계산한다.",
+                "",
+            ]
+        )
+
+    def _copy_codex_skill_recommendation_report_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_skill_recommendation_report_text())
+        try:
+            self.connection_status_label.setText("코덱스 스킬 추천 리포트를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _select_best_codex_skill_recommendation(self) -> None:
+        ranked = self._rank_codex_skill_records()
+        if not ranked:
+            QMessageBox.information(self, "추천 스킬 없음", "현재 요청에 맞는 추천 스킬을 찾지 못했습니다.")
+            return
+        record = ranked[0].get("record", {})
+        order_no = record.get("order", "")
+        if not order_no:
+            QMessageBox.information(self, "추천 스킬 선택 실패", "추천된 스킬에 주문번호가 없습니다.")
+            return
+        lookup = getattr(self, "codex_skill_order_lookup_input", None)
+        if lookup is not None:
+            lookup.setText(order_no)
+        self._select_codex_skill_by_order_input()
+        try:
+            self.connection_status_label.setText(
+                f"추천 스킬 선택: {order_no} / {record.get('name', '')}"
+            )
+        except Exception:
+            pass
+
+    def _codex_request_presets(self) -> Dict[str, Dict[str, str]]:
+        today = time.strftime("%Y-%m-%d")
+        return {
+            "quick_note": {
+                "name": "빠른 메모",
+                "action": "페이지 추가",
+                "title": f"{today} 빠른 메모",
+                "body": """핵심:
+- 
+
+세부 내용:
+- 
+
+다음 행동:
+- 
+""",
+            },
+            "meeting": {
+                "name": "회의록",
+                "action": "나의 기본 글쓰기 형식으로 페이지 작성",
+                "title": f"{today} 회의록",
+                "body": """회의명:
+참석자:
+
+논의 요약:
+- 
+
+결정 사항:
+- 
+
+액션 아이템:
+- 담당자 / 마감 / 확인 방법:
+
+보류/리스크:
+- 
+""",
+            },
+            "daily_log": {
+                "name": "업무일지",
+                "action": "나의 기본 글쓰기 형식으로 페이지 작성",
+                "title": f"{today} 업무일지",
+                "body": """오늘 한 일:
+- 
+
+결정한 것:
+- 
+
+막힌 것:
+- 
+
+다음 행동:
+- 
+""",
+            },
+            "project_plan": {
+                "name": "작업 계획",
+                "action": "페이지 추가",
+                "title": "작업 계획",
+                "body": """목표:
+- 
+
+범위:
+- 포함:
+- 제외:
+
+실행 순서:
+1. 
+2. 
+3. 
+
+검증:
+- 
+
+리스크:
+- 
+""",
+            },
+            "cleanup": {
+                "name": "OneNote 정리",
+                "action": "나의 기본 글쓰기 형식으로 페이지 작성",
+                "title": "OneNote 정리 계획",
+                "body": """현재 위치:
+- 
+
+바꿀 위치:
+- 
+
+정리할 항목:
+- 
+
+보존할 항목:
+- 
+
+검증 방법:
+- GetHierarchy 결과로 전후 구조 확인
+""",
+            },
+            "weekly_review": {
+                "name": "주간 회고",
+                "action": "페이지 추가",
+                "title": f"{today} 주간 회고",
+                "body": """이번 주 완료:
+- 
+
+이번 주 미완료:
+- 
+
+배운 점:
+- 
+
+다음 주 우선순위:
+1. 
+2. 
+3. 
+""",
+            },
+        }
+
+    def _apply_codex_request_preset(self) -> None:
+        combo = getattr(self, "codex_request_preset_combo", None)
+        if combo is None:
+            return
+        preset = self._codex_request_presets().get(combo.currentData())
+        if not preset:
+            return
+
+        action_combo = getattr(self, "codex_request_action_combo", None)
+        if action_combo is not None:
+            idx = action_combo.findText(preset.get("action", ""))
+            if idx >= 0:
+                action_combo.setCurrentIndex(idx)
+
+        title_input = getattr(self, "codex_request_title_input", None)
+        if title_input is not None:
+            title_input.setText(preset.get("title", ""))
+
+        body_editor = getattr(self, "codex_request_body_editor", None)
+        if body_editor is not None:
+            body_editor.setPlainText(preset.get("body", ""))
+
+        self._update_codex_codegen_previews()
+        try:
+            self.connection_status_label.setText(
+                f"요청 프리셋 적용: {preset.get('name', '')}"
+            )
+        except Exception:
+            pass
+
+    def _new_codex_skill_from_current_request(self) -> None:
+        required = (
+            "codex_skill_order_input",
+            "codex_skill_name_input",
+            "codex_skill_trigger_input",
+            "codex_skill_body_editor",
+        )
+        if any(getattr(self, attr, None) is None for attr in required):
+            return
+
+        action = ""
+        title = ""
+        target = ""
+        body = ""
+        try:
+            action = self.codex_request_action_combo.currentText().strip()
+            title = self.codex_request_title_input.text().strip()
+            target = self.codex_request_target_input.text().strip()
+            body = self.codex_request_body_editor.toPlainText().strip()
+        except Exception:
+            pass
+
+        skill_name = f"{title or action or 'OneNote 작업'} 반복 스킬"
+        trigger = (
+            f"{action or 'OneNote 작업'}을(를) {target or '현재 작업 위치'}에서 "
+            "반복해서 수행할 때"
+        )
+        skill_body = f"""목표:
+- 아래 요청 유형을 같은 기준으로 반복 수행한다.
+
+반복 요청:
+- 작업: {action or '미지정'}
+- 대상: {target or '미지정'}
+- 제목/이름: {title or '미지정'}
+
+본문 기준:
+{body or '- 사용자가 제공한 본문을 유지하되 OneNote에 읽기 쉬운 구조로 작성한다.'}
+
+처리 방식:
+- 작업 위치를 먼저 확인한다.
+- 화면 클릭보다 OneNote COM API를 우선 사용한다.
+- 작성/생성 후 `GetHierarchy` 또는 `GetPageContent`로 결과를 검증한다.
+
+출력:
+- OneNote에 반영한 항목
+- 검증 결과
+- 사용자가 다음에 확인할 항목
+"""
+
+        self.codex_skill_order_input.setText(self._codex_next_skill_order())
+        self.codex_skill_name_input.setText(skill_name)
+        self.codex_skill_trigger_input.setText(trigger)
+        self.codex_skill_body_editor.setPlainText(skill_body)
+        self._update_codex_skill_call_preview()
+        try:
+            self._scroll_codex_to_widget("codex_skill_editor_widget")
+        except Exception:
+            pass
+        try:
+            self.connection_status_label.setText("현재 요청으로 스킬 초안을 만들었습니다.")
+        except Exception:
+            pass
+
+    def _build_codex_request_group(self) -> QWidget:
+        group = QGroupBox("코덱스 요청 생성기")
+        layout = QVBoxLayout(group)
+
+        preset_row = QHBoxLayout()
+        self.codex_request_preset_combo = QComboBox()
+        for key, preset in self._codex_request_presets().items():
+            self.codex_request_preset_combo.addItem(preset.get("name", key), key)
+        preset_row.addWidget(QLabel("요청 프리셋"))
+        preset_row.addWidget(self.codex_request_preset_combo, stretch=1)
+
+        apply_preset_button = QToolButton()
+        apply_preset_button.setText("프리셋 적용")
+        apply_preset_button.clicked.connect(self._apply_codex_request_preset)
+        preset_row.addWidget(apply_preset_button)
+        layout.addLayout(preset_row)
+
+        row1 = QHBoxLayout()
+        self.codex_request_action_combo = QComboBox()
+        self.codex_request_action_combo.addItems(
+            [
+                "페이지 추가",
+                "새 섹션 생성",
+                "새 섹션 그룹 생성",
+                "새 전자필기장 생성",
+                "나의 기본 글쓰기 형식으로 페이지 작성",
+            ]
+        )
+        self.codex_request_action_combo.currentIndexChanged.connect(
+            self._update_codex_codegen_previews
+        )
+        row1.addWidget(QLabel("작업"))
+        row1.addWidget(self.codex_request_action_combo, stretch=1)
+        layout.addLayout(row1)
+
+        self.codex_request_target_input = QLineEdit()
+        self.codex_request_target_input.setText(
+            "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
+        )
+        self.codex_request_target_input.textChanged.connect(
+            self._update_codex_codegen_previews
+        )
+        layout.addWidget(QLabel("대상 경로"))
+        layout.addWidget(self.codex_request_target_input)
+
+        self.codex_request_title_input = QLineEdit()
+        self.codex_request_title_input.setText("코덱스가 사용함")
+        self.codex_request_title_input.textChanged.connect(
+            self._update_codex_codegen_previews
+        )
+        layout.addWidget(QLabel("제목/이름"))
+        layout.addWidget(self.codex_request_title_input)
+
+        self.codex_request_body_editor = QTextEdit()
+        self.codex_request_body_editor.setMinimumHeight(90)
+        self.codex_request_body_editor.setPlainText("코덱스가 OneNote COM API로 작성한 메모입니다.")
+        self.codex_request_body_editor.textChanged.connect(
+            self._update_codex_codegen_previews
+        )
+        layout.addWidget(QLabel("본문/내용"))
+        layout.addWidget(self.codex_request_body_editor)
+
+        buttons = QHBoxLayout()
+        copy_button = QToolButton()
+        copy_button.setText("요청문 복사")
+        copy_button.clicked.connect(self._copy_codex_request_to_clipboard)
+        buttons.addWidget(copy_button)
+
+        save_draft_button = QToolButton()
+        save_draft_button.setText("초안 저장")
+        save_draft_button.clicked.connect(self._save_codex_request_draft)
+        buttons.addWidget(save_draft_button)
+
+        load_draft_button = QToolButton()
+        load_draft_button.setText("초안 복구")
+        load_draft_button.clicked.connect(self._load_codex_request_draft)
+        buttons.addWidget(load_draft_button)
+
+        checklist_button = QToolButton()
+        checklist_button.setText("체크리스트 복사")
+        checklist_button.clicked.connect(self._copy_codex_execution_checklist_to_clipboard)
+        buttons.addWidget(checklist_button)
+
+        append_clip_button = QToolButton()
+        append_clip_button.setText("클립보드 추가")
+        append_clip_button.clicked.connect(self._append_clipboard_to_codex_request_body)
+        buttons.addWidget(append_clip_button)
+
+        replace_clip_button = QToolButton()
+        replace_clip_button.setText("본문 교체")
+        replace_clip_button.clicked.connect(self._replace_codex_request_body_from_clipboard)
+        buttons.addWidget(replace_clip_button)
+
+        page_result_button = QToolButton()
+        page_result_button.setText("페이지결과 추가")
+        page_result_button.clicked.connect(self._append_codex_page_reader_result_to_request_body)
+        buttons.addWidget(page_result_button)
+
+        compact_button = QToolButton()
+        compact_button.setText("압축 프롬프트")
+        compact_button.clicked.connect(self._copy_codex_compact_prompt_to_clipboard)
+        buttons.addWidget(compact_button)
+
+        review_button = QToolButton()
+        review_button.setText("검토 프롬프트")
+        review_button.clicked.connect(self._copy_codex_review_prompt_to_clipboard)
+        buttons.addWidget(review_button)
+
+        breakdown_button = QToolButton()
+        breakdown_button.setText("작업 분해")
+        breakdown_button.clicked.connect(self._copy_codex_task_breakdown_prompt_to_clipboard)
+        buttons.addWidget(breakdown_button)
+
+        report_button = QToolButton()
+        report_button.setText("완료보고")
+        report_button.clicked.connect(self._copy_codex_completion_report_template_to_clipboard)
+        buttons.addWidget(report_button)
+
+        recommend_button = QToolButton()
+        recommend_button.setText("작업별 스킬 선택")
+        recommend_button.clicked.connect(self._select_recommended_codex_skill)
+        buttons.addWidget(recommend_button)
+
+        skill_from_request_button = QToolButton()
+        skill_from_request_button.setText("요청→스킬 초안")
+        skill_from_request_button.clicked.connect(self._new_codex_skill_from_current_request)
+        buttons.addWidget(skill_from_request_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.codex_request_preview = QTextEdit()
+        self.codex_request_preview.setReadOnly(True)
+        self.codex_request_preview.setMinimumHeight(170)
+        layout.addWidget(QLabel("생성된 요청문 (코덱스용)"))
+        layout.addWidget(self.codex_request_preview)
+        self._update_codex_request_preview()
+        return group
+
+    def _build_codex_template_group(self) -> QWidget:
+        group = QGroupBox("OneNote 작업 템플릿")
+        layout = QVBoxLayout(group)
+
+        row = QHBoxLayout()
+        self.codex_template_combo = QComboBox()
+        self.codex_template_combo.addItem("페이지 추가", "add_page")
+        self.codex_template_combo.addItem("새 섹션 생성", "add_section")
+        self.codex_template_combo.addItem("새 섹션 그룹 생성", "add_section_group")
+        self.codex_template_combo.addItem("새 전자필기장 생성", "add_notebook")
+        self.codex_template_combo.currentIndexChanged.connect(
+            self._update_codex_template_preview
+        )
+        row.addWidget(self.codex_template_combo, stretch=1)
+
+        copy_button = QToolButton()
+        copy_button.setText("템플릿 복사")
+        copy_button.clicked.connect(self._copy_codex_template_to_clipboard)
+        row.addWidget(copy_button)
+        layout.addLayout(row)
+
+        self.codex_template_preview = QTextEdit()
+        self.codex_template_preview.setReadOnly(True)
+        self.codex_template_preview.setMinimumHeight(220)
+        layout.addWidget(self.codex_template_preview)
+        self._update_codex_template_preview()
+
+        return group
+
+    def _build_codex_skill_group(self) -> QWidget:
+        group = QGroupBox("스킬 도움말")
+        layout = QVBoxLayout(group)
+        memo = QTextEdit()
+        memo.setReadOnly(True)
+        memo.setPlainText(
+            """코덱스 & 원노트 스킬은 주문번호로 호출하는 작업 형식입니다.
+
+예시:
+- "SK-001 형식으로 임시메모에 페이지 만들어줘"
+- "스킬 주문번호 SK-003 조회해서 그 방식대로 해"
+
+- 주문번호 검색으로 스킬을 빠르게 찾습니다.
+- 요청 생성기의 작업 종류에 맞는 기본 스킬을 자동으로 선택합니다.
+- 스킬 호출문 복사로 코덱스에게 바로 넘길 문장을 만듭니다.
+- 빠른 도구에서 자주 쓰는 복사/열기/설정 확인 작업을 실행합니다.
+- 작업 주문서로 스킬, 작업 위치, 요청문, 템플릿을 하나의 Markdown으로 묶습니다.
+- 주문서 기록에서 이전 작업 주문서를 다시 복사하거나 열 수 있습니다.
+- 스킬 진단으로 주문번호 중복/누락과 필수 섹션 누락을 점검합니다.
+- 나의 기본 글쓰기 형식
+- OneNote 페이지 생성 템플릿
+- 회의록 / 업무일지 / 아이디어 정리 템플릿
+- 섹션/섹션그룹 생성 규칙
+- 자주 쓰는 작업 위치 자동 기억
+
+운영 원칙:
+스킬은 주문번호 + 자연어 지시문 + 필요한 OneNote 작업 방식 + 검증 방법을 같이 저장해야 합니다.
+"""
+        )
+        layout.addWidget(memo)
+        return group
+
+    def _build_codex_skill_editor_group(self) -> QWidget:
+        group = QGroupBox("코덱스 & 원노트 스킬")
+        layout = QHBoxLayout(group)
+
+        left = QVBoxLayout()
+        self.codex_skill_list = QListWidget()
+        self.codex_skill_list.itemDoubleClicked.connect(self._load_selected_codex_skill)
+        left.addWidget(QLabel("스킬 주문번호 목록"))
+
+        self.codex_skill_search_input = QLineEdit()
+        self.codex_skill_search_input.setPlaceholderText("주문번호/스킬명 검색")
+        self.codex_skill_search_input.textChanged.connect(self._filter_codex_skill_list)
+        left.addWidget(self.codex_skill_search_input)
+
+        lookup_row = QHBoxLayout()
+        self.codex_skill_order_lookup_input = QLineEdit()
+        self.codex_skill_order_lookup_input.setPlaceholderText("SK-001 바로 선택")
+        self.codex_skill_order_lookup_input.returnPressed.connect(
+            self._select_codex_skill_by_order_input
+        )
+        lookup_row.addWidget(self.codex_skill_order_lookup_input, stretch=1)
+        lookup_button = QToolButton()
+        lookup_button.setText("선택")
+        lookup_button.clicked.connect(self._select_codex_skill_by_order_input)
+        lookup_row.addWidget(lookup_button)
+        left.addLayout(lookup_row)
+
+        left.addWidget(self.codex_skill_list)
+        refresh_button = QToolButton()
+        refresh_button.setText("주문번호표 새로고침")
+        refresh_button.clicked.connect(self._refresh_codex_skill_list)
+        left.addWidget(refresh_button)
+
+        copy_index_button = QToolButton()
+        copy_index_button.setText("주문번호표 복사")
+        copy_index_button.clicked.connect(self._copy_codex_skill_order_index_to_clipboard)
+        left.addWidget(copy_index_button)
+
+        open_folder_button = QToolButton()
+        open_folder_button.setText("스킬 폴더 열기")
+        open_folder_button.clicked.connect(self._open_codex_skills_folder)
+        left.addWidget(open_folder_button)
+
+        path_button = QToolButton()
+        path_button.setText("선택 경로 복사")
+        path_button.clicked.connect(self._copy_selected_codex_skill_path_to_clipboard)
+        left.addWidget(path_button)
+
+        layout.addLayout(left, stretch=1)
+
+        right = QVBoxLayout()
+        template_row = QHBoxLayout()
+        self.codex_skill_template_combo = QComboBox()
+        for key, template in self._codex_skill_templates().items():
+            self.codex_skill_template_combo.addItem(template.get("name", key), key)
+        template_row.addWidget(QLabel("스킬 템플릿"))
+        template_row.addWidget(self.codex_skill_template_combo, stretch=1)
+        apply_template_button = QToolButton()
+        apply_template_button.setText("템플릿 적용")
+        apply_template_button.clicked.connect(self._apply_codex_skill_template)
+        template_row.addWidget(apply_template_button)
+        right.addLayout(template_row)
+
+        self.codex_skill_order_input = QLineEdit()
+        self.codex_skill_order_input.setPlaceholderText("예: SK-001")
+        self.codex_skill_order_input.textChanged.connect(self._update_codex_skill_call_preview)
+        right.addWidget(QLabel("주문번호"))
+        right.addWidget(self.codex_skill_order_input)
+
+        self.codex_skill_name_input = QLineEdit()
+        self.codex_skill_name_input.setPlaceholderText("스킬 이름")
+        self.codex_skill_name_input.textChanged.connect(self._update_codex_skill_call_preview)
+        right.addWidget(QLabel("스킬 이름"))
+        right.addWidget(self.codex_skill_name_input)
+
+        self.codex_skill_trigger_input = QLineEdit()
+        self.codex_skill_trigger_input.setPlaceholderText("언제 이 스킬을 쓸지")
+        self.codex_skill_trigger_input.textChanged.connect(self._update_codex_skill_call_preview)
+        right.addWidget(QLabel("호출 조건"))
+        right.addWidget(self.codex_skill_trigger_input)
+
+        self.codex_skill_body_editor = QTextEdit()
+        self.codex_skill_body_editor.setMinimumHeight(170)
+        self.codex_skill_body_editor.textChanged.connect(self._update_codex_skill_call_preview)
+        right.addWidget(QLabel("스킬 내용"))
+        right.addWidget(self.codex_skill_body_editor)
+
+        buttons = QHBoxLayout()
+        new_button = QToolButton()
+        new_button.setText("새 스킬")
+        new_button.clicked.connect(self._new_codex_skill_draft)
+        buttons.addWidget(new_button)
+
+        save_button = QToolButton()
+        save_button.setText("스킬 저장")
+        save_button.clicked.connect(self._save_codex_skill_draft)
+        buttons.addWidget(save_button)
+
+        copy_button = QToolButton()
+        copy_button.setText("초안 복사")
+        copy_button.clicked.connect(self._copy_codex_skill_prompt_to_clipboard)
+        buttons.addWidget(copy_button)
+
+        load_button = QToolButton()
+        load_button.setText("선택 불러오기")
+        load_button.clicked.connect(self._load_selected_codex_skill)
+        buttons.addWidget(load_button)
+
+        duplicate_button = QToolButton()
+        duplicate_button.setText("복제")
+        duplicate_button.clicked.connect(self._duplicate_selected_codex_skill)
+        buttons.addWidget(duplicate_button)
+
+        delete_button = QToolButton()
+        delete_button.setText("삭제")
+        delete_button.clicked.connect(self._delete_selected_codex_skill)
+        buttons.addWidget(delete_button)
+
+        clipboard_button = QToolButton()
+        clipboard_button.setText("클립보드→스킬")
+        clipboard_button.clicked.connect(self._new_codex_skill_from_clipboard)
+        buttons.addWidget(clipboard_button)
+
+        open_button = QToolButton()
+        open_button.setText("파일 열기")
+        open_button.clicked.connect(self._open_selected_codex_skill_file)
+        buttons.addWidget(open_button)
+
+        call_button = QToolButton()
+        call_button.setText("호출문 복사")
+        call_button.clicked.connect(self._copy_codex_skill_call_prompt_to_clipboard)
+        buttons.addWidget(call_button)
+
+        recommend_report_button = QToolButton()
+        recommend_report_button.setText("추천 리포트")
+        recommend_report_button.clicked.connect(self._copy_codex_skill_recommendation_report_to_clipboard)
+        buttons.addWidget(recommend_report_button)
+
+        best_recommend_button = QToolButton()
+        best_recommend_button.setText("추천 선택")
+        best_recommend_button.clicked.connect(self._select_best_codex_skill_recommendation)
+        buttons.addWidget(best_recommend_button)
+        buttons.addStretch(1)
+        right.addLayout(buttons)
+
+        self.codex_skill_call_preview = QTextEdit()
+        self.codex_skill_call_preview.setReadOnly(True)
+        self.codex_skill_call_preview.setMinimumHeight(130)
+        right.addWidget(QLabel("스킬 호출문 미리보기"))
+        right.addWidget(self.codex_skill_call_preview)
+
+        layout.addLayout(right, stretch=2)
+        self._refresh_codex_skill_list()
+        self._new_codex_skill_draft()
+        return group
+
+    def _build_codex_status_group(self) -> QWidget:
+        from PyQt6.QtWidgets import QSizePolicy
+
+        group = QGroupBox("코덱스 현재 상태")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        def add_button(row: QHBoxLayout, text: str, callback: Callable, primary: bool = False) -> None:
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumHeight(30)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            if primary:
+                btn.setProperty("variant", "primary")
+            btn.clicked.connect(callback)
+            row.addWidget(btn)
+
+        button_specs = [
+            ("상태 새로고침", self._update_codex_status_summary, True),
+            ("상태 복사", self._copy_codex_status_summary_to_clipboard, False),
+            ("요청 초안 저장", self._save_codex_request_draft, False),
+            ("요청 초안 복구", self._load_codex_request_draft, False),
+            ("실행 체크리스트", self._copy_codex_execution_checklist_to_clipboard, False),
+            ("압축 프롬프트", self._copy_codex_compact_prompt_to_clipboard, False),
+            ("검토 프롬프트", self._copy_codex_review_prompt_to_clipboard, False),
+            ("인벤토리 스크립트", self._copy_codex_onenote_inventory_script_to_clipboard, False),
+            ("페이지 읽기", self._copy_codex_page_reader_script_to_clipboard, False),
+            ("페이지결과 요약", self._copy_codex_page_reader_result_summary_to_clipboard, False),
+            ("위치 진단", self._copy_codex_target_audit_report_to_clipboard, False),
+            ("인벤토리 위치 등록", self._import_codex_targets_from_clipboard_inventory, False),
+            ("스킬 추천", self._copy_codex_skill_recommendation_report_to_clipboard, False),
+            ("추천 스킬 선택", self._select_best_codex_skill_recommendation, False),
+            ("기본 스킬 세트", self._create_default_codex_skill_set, False),
+        ]
+        for index in range(0, len(button_specs), 2):
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            for text, callback, primary in button_specs[index:index + 2]:
+                add_button(row, text, callback, primary)
+            layout.addLayout(row)
+
+        self.codex_status_summary_preview = QTextEdit()
+        self.codex_status_summary_preview.setReadOnly(True)
+        self.codex_status_summary_preview.setMinimumHeight(140)
+        self.codex_status_summary_preview.setPlainText(self._codex_status_summary_text())
+        layout.addWidget(self.codex_status_summary_preview)
+
+        return group
+
+    def _build_codex_quick_tools_group(self) -> QWidget:
+        from PyQt6.QtWidgets import QSizePolicy
+
+        group = QGroupBox("코덱스 빠른 도구")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        desc = QLabel("자주 쓰는 코덱스 준비 작업을 한 곳에서 실행합니다.")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        def add_button(row: QHBoxLayout, text: str, callback: Callable, primary: bool = False) -> None:
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumHeight(30)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            if primary:
+                btn.setProperty("variant", "primary")
+            btn.clicked.connect(callback)
+            row.addWidget(btn)
+
+        def add_cluster(title: str, rows: List[List[tuple]]) -> None:
+            title_label = QLabel(title)
+            title_label.setObjectName("CodexClusterLabel")
+            layout.addWidget(title_label)
+            flat_specs = [spec for row_specs in rows for spec in row_specs]
+            for index in range(0, len(flat_specs), 2):
+                row = QHBoxLayout()
+                row.setSpacing(6)
+                for spec in flat_specs[index:index + 2]:
+                    text, callback, primary = spec
+                    add_button(row, text, callback, primary)
+                layout.addLayout(row)
+
+        add_cluster(
+            "작업 지시",
+            [
+                [
+                    ("주문서 복사", self._copy_codex_work_order_to_clipboard, True),
+                    ("주문서 저장", self._save_codex_work_order, False),
+                    ("요청문 복사", self._copy_codex_request_to_clipboard, False),
+                ],
+                [
+                    ("체크리스트", self._copy_codex_execution_checklist_to_clipboard, False),
+                    ("압축 프롬프트", self._copy_codex_compact_prompt_to_clipboard, False),
+                    ("검토 프롬프트", self._copy_codex_review_prompt_to_clipboard, False),
+                ],
+            ],
+        )
+
+        add_cluster(
+            "컨텍스트",
+            [
+                [
+                    ("패키지 복사", self._copy_codex_context_pack_to_clipboard, True),
+                    ("패키지 저장", self._save_codex_context_pack, False),
+                    ("미리보기 갱신", self._update_codex_context_pack_preview, False),
+                ],
+                [
+                    ("페이지 읽기", self._copy_codex_page_reader_script_to_clipboard, False),
+                    ("페이지결과 요약", self._copy_codex_page_reader_result_summary_to_clipboard, False),
+                    ("본문에 추가", self._append_codex_page_reader_result_to_request_body, False),
+                ],
+            ],
+        )
+
+        add_cluster(
+            "스킬",
+            [
+                [
+                    ("스킬 호출문", self._copy_codex_skill_call_prompt_to_clipboard, True),
+                    ("작업별 선택", self._select_recommended_codex_skill, False),
+                    ("추천 리포트", self._copy_codex_skill_recommendation_report_to_clipboard, False),
+                ],
+                [
+                    ("주문번호표", self._copy_codex_skill_order_index_to_clipboard, False),
+                    ("클립보드→스킬", self._new_codex_skill_from_clipboard, False),
+                    ("기본 세트 생성", self._create_default_codex_skill_set, False),
+                ],
+            ],
+        )
+
+        add_cluster(
+            "위치와 진단",
+            [
+                [
+                    ("위치 자동 찾기", self._copy_codex_target_discovery_script_to_clipboard, True),
+                    ("인벤토리 스크립트", self._copy_codex_onenote_inventory_script_to_clipboard, False),
+                    ("위치 등록", self._import_codex_targets_from_clipboard_inventory, False),
+                ],
+                [
+                    ("상태 새로고침", self._update_codex_status_summary, False),
+                    ("상태 복사", self._copy_codex_status_summary_to_clipboard, False),
+                    ("설정 폴더", self._open_settings_json_folder, False),
+                ],
+            ],
+        )
+
+        return group
+
+    def _build_codex_context_pack_group(self) -> QWidget:
+        group = QGroupBox("코덱스 컨텍스트 패키지")
+        layout = QVBoxLayout(group)
+
+        desc = QLabel(
+            "현재 작업 위치, 요청문, 스킬 호출문, 주문서, 템플릿, 스킬 주문번호표를 "
+            "하나의 Markdown 패키지로 묶습니다."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        buttons = QHBoxLayout()
+        copy_button = QToolButton()
+        copy_button.setText("패키지 복사")
+        copy_button.clicked.connect(self._copy_codex_context_pack_to_clipboard)
+        buttons.addWidget(copy_button)
+
+        save_button = QToolButton()
+        save_button.setText("패키지 저장")
+        save_button.clicked.connect(self._save_codex_context_pack)
+        buttons.addWidget(save_button)
+
+        refresh_button = QToolButton()
+        refresh_button.setText("미리보기 갱신")
+        refresh_button.clicked.connect(self._update_codex_context_pack_preview)
+        buttons.addWidget(refresh_button)
+
+        target_json_button = QToolButton()
+        target_json_button.setText("위치 JSON 복사")
+        target_json_button.clicked.connect(self._copy_codex_target_profile_json_to_clipboard)
+        buttons.addWidget(target_json_button)
+
+        compact_button = QToolButton()
+        compact_button.setText("압축 프롬프트")
+        compact_button.clicked.connect(self._copy_codex_compact_prompt_to_clipboard)
+        buttons.addWidget(compact_button)
+
+        review_button = QToolButton()
+        review_button.setText("검토 프롬프트")
+        review_button.clicked.connect(self._copy_codex_review_prompt_to_clipboard)
+        buttons.addWidget(review_button)
+
+        breakdown_button = QToolButton()
+        breakdown_button.setText("작업 분해")
+        breakdown_button.clicked.connect(self._copy_codex_task_breakdown_prompt_to_clipboard)
+        buttons.addWidget(breakdown_button)
+
+        report_button = QToolButton()
+        report_button.setText("완료보고")
+        report_button.clicked.connect(self._copy_codex_completion_report_template_to_clipboard)
+        buttons.addWidget(report_button)
+
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.codex_context_pack_preview = QTextEdit()
+        self.codex_context_pack_preview.setReadOnly(True)
+        self.codex_context_pack_preview.setMinimumHeight(190)
+        self.codex_context_pack_preview.setPlainText(
+            "미리보기 갱신을 누르면 현재 코덱스 작업 패키지가 표시됩니다. "
+            "복사/저장은 항상 최신 값으로 생성됩니다."
+        )
+        layout.addWidget(self.codex_context_pack_preview)
+
+        return group
+
+    def _build_codex_work_order_group(self) -> QWidget:
+        group = QGroupBox("코덱스 작업 주문서")
+        layout = QVBoxLayout(group)
+
+        desc = QLabel(
+            "선택 스킬, 작업 위치, 요청문, 작업 템플릿을 한 번에 묶어 코덱스에게 넘기는 문서입니다."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        buttons = QHBoxLayout()
+        copy_button = QToolButton()
+        copy_button.setText("주문서 복사")
+        copy_button.clicked.connect(self._copy_codex_work_order_to_clipboard)
+        buttons.addWidget(copy_button)
+
+        save_button = QToolButton()
+        save_button.setText("주문서 저장")
+        save_button.clicked.connect(self._save_codex_work_order)
+        buttons.addWidget(save_button)
+
+        open_button = QToolButton()
+        open_button.setText("주문서 폴더 열기")
+        open_button.clicked.connect(self._open_codex_requests_folder)
+        buttons.addWidget(open_button)
+
+        audit_copy_button = QToolButton()
+        audit_copy_button.setText("스킬 진단 복사")
+        audit_copy_button.clicked.connect(self._copy_codex_skill_audit_report_to_clipboard)
+        buttons.addWidget(audit_copy_button)
+
+        audit_save_button = QToolButton()
+        audit_save_button.setText("스킬 진단 저장")
+        audit_save_button.clicked.connect(self._save_codex_skill_audit_report)
+        buttons.addWidget(audit_save_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.codex_work_order_preview = QTextEdit()
+        self.codex_work_order_preview.setReadOnly(True)
+        self.codex_work_order_preview.setMinimumHeight(190)
+        layout.addWidget(self.codex_work_order_preview)
+        self._update_codex_work_order_preview()
+
+        return group
+
+    def _build_codex_work_order_history_group(self) -> QWidget:
+        group = QGroupBox("작업 주문서 기록")
+        layout = QVBoxLayout(group)
+
+        desc = QLabel(
+            "저장한 코덱스 작업 주문서를 다시 열거나 복사합니다. 다음 AI에게 이전 주문서를 그대로 넘길 때 사용합니다."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        buttons = QHBoxLayout()
+        refresh_button = QToolButton()
+        refresh_button.setText("기록 새로고침")
+        refresh_button.clicked.connect(self._refresh_codex_work_order_list)
+        buttons.addWidget(refresh_button)
+
+        copy_button = QToolButton()
+        copy_button.setText("선택 주문서 복사")
+        copy_button.clicked.connect(self._copy_selected_codex_work_order_to_clipboard)
+        buttons.addWidget(copy_button)
+
+        open_button = QToolButton()
+        open_button.setText("파일 열기")
+        open_button.clicked.connect(self._open_selected_codex_work_order_file)
+        buttons.addWidget(open_button)
+
+        delete_button = QToolButton()
+        delete_button.setText("삭제")
+        delete_button.clicked.connect(self._delete_selected_codex_work_order)
+        buttons.addWidget(delete_button)
+
+        folder_button = QToolButton()
+        folder_button.setText("폴더 열기")
+        folder_button.clicked.connect(self._open_codex_requests_folder)
+        buttons.addWidget(folder_button)
+
+        load_button = QToolButton()
+        load_button.setText("요청으로 불러오기")
+        load_button.clicked.connect(self._load_selected_codex_work_order_into_request)
+        buttons.addWidget(load_button)
+
+        followup_button = QToolButton()
+        followup_button.setText("후속 프롬프트")
+        followup_button.clicked.connect(self._copy_selected_codex_work_order_followup_prompt)
+        buttons.addWidget(followup_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("검색"))
+        self.codex_work_order_search_input = QLineEdit()
+        self.codex_work_order_search_input.setPlaceholderText("파일명/주문서 내용 검색")
+        self.codex_work_order_search_input.textChanged.connect(
+            lambda text: self._refresh_codex_work_order_list()
+        )
+        search_row.addWidget(self.codex_work_order_search_input, stretch=1)
+
+        clear_search_button = QToolButton()
+        clear_search_button.setText("검색 지우기")
+        clear_search_button.clicked.connect(self.codex_work_order_search_input.clear)
+        search_row.addWidget(clear_search_button)
+        layout.addLayout(search_row)
+
+        body = QHBoxLayout()
+        self.codex_work_order_list = QListWidget()
+        self.codex_work_order_list.setMinimumHeight(150)
+        self.codex_work_order_list.currentItemChanged.connect(
+            lambda current, previous=None: self._on_codex_work_order_selected(current)
+        )
+        self.codex_work_order_list.itemDoubleClicked.connect(
+            lambda item: self._open_selected_codex_work_order_file()
+        )
+        body.addWidget(self.codex_work_order_list, stretch=1)
+
+        self.codex_work_order_history_preview = QTextEdit()
+        self.codex_work_order_history_preview.setReadOnly(True)
+        self.codex_work_order_history_preview.setMinimumHeight(150)
+        body.addWidget(self.codex_work_order_history_preview, stretch=2)
+        layout.addLayout(body)
+
+        self._refresh_codex_work_order_list()
+        return group
+
+    def _add_codex_menu_action(self, menu: QMenu, text: str, callback: Callable) -> None:
+        action = QAction(text, self)
+        action.triggered.connect(callback)
+        menu.addAction(action)
+
+    def _scroll_codex_to_widget(self, attr_name: str) -> None:
+        stacked = getattr(self, "codex_stacked_widget", None)
+        widget = getattr(self, attr_name, None)
+        if stacked is None or widget is None:
+            return
+        
+        page_mapping = {
+            "codex_status_summary_widget": 0,
+            "codex_quick_tools_widget": 0,
+            "codex_context_pack_widget": 0,
+            "codex_work_order_widget": 0,
+            "codex_request_group_widget": 1,
+            "codex_target_group_widget": 1,
+            "codex_skill_editor_widget": 2,
+            "codex_work_order_history_widget": 2,
+            "codex_skill_guide_widget": 3,
+            "codex_template_group_widget": 3,
+            "codex_guide_widget": 3,
+        }
+        idx = page_mapping.get(attr_name, -1)
+        if idx >= 0:
+            stacked.setCurrentIndex(idx)
+            buttons = getattr(self, "_codex_nav_buttons", [])
+            for i, b in enumerate(buttons):
+                b.setChecked(i == idx)
+                
+            try:
+                scroll_area = stacked.currentWidget()
+                content = scroll_area.widget()
+                if content:
+                    target_y = widget.mapTo(content, widget.rect().topLeft()).y()
+                    scroll_area.verticalScrollBar().setValue(max(0, target_y - 16))
+            except Exception:
+                pass
+
+    def _build_codex_hamburger_menu(self, button: QToolButton) -> None:
+        menu = QMenu(button)
+
+        move_menu = QMenu("이동", menu)
+        self._add_codex_menu_action(
+            move_menu,
+            "현재 상태",
+            lambda: self._scroll_codex_to_widget("codex_status_summary_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "코덱스 & 원노트 스킬",
+            lambda: self._scroll_codex_to_widget("codex_skill_editor_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "빠른 도구",
+            lambda: self._scroll_codex_to_widget("codex_quick_tools_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "컨텍스트 패키지",
+            lambda: self._scroll_codex_to_widget("codex_context_pack_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "작업 주문서",
+            lambda: self._scroll_codex_to_widget("codex_work_order_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "주문서 기록",
+            lambda: self._scroll_codex_to_widget("codex_work_order_history_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "스킬 도움말",
+            lambda: self._scroll_codex_to_widget("codex_skill_guide_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "작업 위치",
+            lambda: self._scroll_codex_to_widget("codex_target_group_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "요청 생성기",
+            lambda: self._scroll_codex_to_widget("codex_request_group_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "작업 템플릿",
+            lambda: self._scroll_codex_to_widget("codex_template_group_widget"),
+        )
+        self._add_codex_menu_action(
+            move_menu,
+            "코덱스 도움말",
+            lambda: self._scroll_codex_to_widget("codex_guide_widget"),
+        )
+        menu.addMenu(move_menu)
+
+        target_menu = QMenu("작업 위치", menu)
+        self._add_codex_menu_action(target_menu, "새 작업 위치", self._new_codex_target_profile)
+        self._add_codex_menu_action(target_menu, "작업 위치 저장", self._save_codex_target_profile)
+        self._add_codex_menu_action(
+            target_menu,
+            "현재 위치 JSON 복사",
+            self._copy_codex_target_profile_json_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "작업 위치 전체 JSON 복사",
+            self._copy_codex_all_targets_json_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "작업 위치 진단 복사",
+            self._copy_codex_target_audit_report_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "작업 위치 진단 저장",
+            self._save_codex_target_audit_report,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "작업 위치 자동 찾기",
+            self._copy_codex_target_discovery_script_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "OneNote 전체 구조 인벤토리",
+            self._copy_codex_onenote_inventory_script_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "현재 섹션 페이지 읽기",
+            self._copy_codex_page_reader_script_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "페이지 읽기 결과 요약",
+            self._copy_codex_page_reader_result_summary_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "페이지 읽기 결과 요청에 추가",
+            self._append_codex_page_reader_result_to_request_body,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "인벤토리 위치 후보 복사",
+            self._copy_codex_inventory_target_preview_to_clipboard,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "인벤토리 위치 등록",
+            self._import_codex_targets_from_clipboard_inventory,
+        )
+        self._add_codex_menu_action(
+            target_menu,
+            "자동 찾기 결과 저장",
+            self._save_codex_target_from_clipboard_json,
+        )
+        menu.addMenu(target_menu)
+
+        output_menu = QMenu("생성/복사", menu)
+        self._add_codex_menu_action(
+            output_menu, "요청문 복사", self._copy_codex_request_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "요청 프리셋 적용", self._apply_codex_request_preset
+        )
+        self._add_codex_menu_action(
+            output_menu, "요청 초안 저장", self._save_codex_request_draft
+        )
+        self._add_codex_menu_action(
+            output_menu, "요청 초안 복구", self._load_codex_request_draft
+        )
+        self._add_codex_menu_action(
+            output_menu, "클립보드 본문 추가", self._append_clipboard_to_codex_request_body
+        )
+        self._add_codex_menu_action(
+            output_menu, "클립보드로 본문 교체", self._replace_codex_request_body_from_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "페이지 읽기 결과 요청에 추가", self._append_codex_page_reader_result_to_request_body
+        )
+        self._add_codex_menu_action(
+            output_menu, "실행 체크리스트 복사", self._copy_codex_execution_checklist_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "초압축 프롬프트 복사", self._copy_codex_compact_prompt_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "검토 프롬프트 복사", self._copy_codex_review_prompt_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "작업 분해 프롬프트 복사", self._copy_codex_task_breakdown_prompt_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "완료보고 템플릿 복사", self._copy_codex_completion_report_template_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "상태 요약 복사", self._copy_codex_status_summary_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "상태 미리보기 갱신", self._update_codex_status_summary
+        )
+        self._add_codex_menu_action(
+            output_menu, "작업 템플릿 복사", self._copy_codex_template_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "스킬 초안 복사", self._copy_codex_skill_prompt_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "스킬 호출문 복사", self._copy_codex_skill_call_prompt_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "작업 주문서 복사", self._copy_codex_work_order_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "작업 주문서 저장", self._save_codex_work_order
+        )
+        self._add_codex_menu_action(
+            output_menu, "컨텍스트 패키지 복사", self._copy_codex_context_pack_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "컨텍스트 패키지 저장", self._save_codex_context_pack
+        )
+        self._add_codex_menu_action(
+            output_menu, "컨텍스트 미리보기 갱신", self._update_codex_context_pack_preview
+        )
+        self._add_codex_menu_action(
+            output_menu, "주문서 기록 새로고침", self._refresh_codex_work_order_list
+        )
+        self._add_codex_menu_action(
+            output_menu, "선택 주문서 복사", self._copy_selected_codex_work_order_to_clipboard
+        )
+        self._add_codex_menu_action(
+            output_menu, "선택 주문서를 요청으로 불러오기", self._load_selected_codex_work_order_into_request
+        )
+        self._add_codex_menu_action(
+            output_menu, "선택 주문서 후속 프롬프트", self._copy_selected_codex_work_order_followup_prompt
+        )
+        self._add_codex_menu_action(
+            output_menu, "선택 주문서 열기", self._open_selected_codex_work_order_file
+        )
+        self._add_codex_menu_action(
+            output_menu, "주문서 폴더 열기", self._open_codex_requests_folder
+        )
+        menu.addMenu(output_menu)
+
+        skill_menu = QMenu("스킬", menu)
+        self._add_codex_menu_action(skill_menu, "새 스킬", self._new_codex_skill_draft)
+        self._add_codex_menu_action(
+            skill_menu, "기본 스킬 세트 생성", self._create_default_codex_skill_set
+        )
+        self._add_codex_menu_action(skill_menu, "선택 템플릿 적용", self._apply_codex_skill_template)
+        self._add_codex_menu_action(
+            skill_menu, "현재 요청으로 스킬 초안", self._new_codex_skill_from_current_request
+        )
+        self._add_codex_menu_action(skill_menu, "작업별 스킬 선택", self._select_recommended_codex_skill)
+        self._add_codex_menu_action(
+            skill_menu, "현재 요청 스킬 추천 리포트", self._copy_codex_skill_recommendation_report_to_clipboard
+        )
+        self._add_codex_menu_action(
+            skill_menu, "최상위 추천 스킬 선택", self._select_best_codex_skill_recommendation
+        )
+        self._add_codex_menu_action(skill_menu, "클립보드로 스킬 초안", self._new_codex_skill_from_clipboard)
+        self._add_codex_menu_action(skill_menu, "선택 스킬 불러오기", self._load_selected_codex_skill)
+        self._add_codex_menu_action(skill_menu, "선택 스킬 복제", self._duplicate_selected_codex_skill)
+        self._add_codex_menu_action(skill_menu, "스킬 저장", self._save_codex_skill_draft)
+        self._add_codex_menu_action(skill_menu, "선택 스킬 삭제", self._delete_selected_codex_skill)
+        self._add_codex_menu_action(skill_menu, "선택 스킬 파일 열기", self._open_selected_codex_skill_file)
+        self._add_codex_menu_action(skill_menu, "선택 스킬 경로 복사", self._copy_selected_codex_skill_path_to_clipboard)
+        self._add_codex_menu_action(skill_menu, "스킬 폴더 열기", self._open_codex_skills_folder)
+        self._add_codex_menu_action(
+            skill_menu, "주문번호표 새로고침", self._refresh_codex_skill_list
+        )
+        self._add_codex_menu_action(
+            skill_menu, "주문번호표 복사", self._copy_codex_skill_order_index_to_clipboard
+        )
+        self._add_codex_menu_action(
+            skill_menu, "스킬 진단 복사", self._copy_codex_skill_audit_report_to_clipboard
+        )
+        self._add_codex_menu_action(
+            skill_menu, "스킬 진단 저장", self._save_codex_skill_audit_report
+        )
+        menu.addMenu(skill_menu)
+
+        button.setMenu(menu)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+
+    def _build_codex_tab(self) -> QWidget:
+        from PyQt6.QtWidgets import QStackedWidget, QSizePolicy
+
+        root = QWidget()
+        root.setObjectName("CodexRoot")
+        root.setStyleSheet(
+            """
+            QWidget#CodexRoot {
+                background-color: #111316;
+                color: #E2E2E6;
+                font-family: 'Segoe UI', 'Malgun Gothic';
+            }
+            QWidget#CodexSidePanel {
+                background-color: #0C0E11;
+            }
+            QLabel#CodexBrand {
+                color: #E2E2E6;
+                font-size: 18pt;
+                font-weight: 800;
+                padding: 0px;
+            }
+            QLabel#CodexSidebarCaption {
+                color: #8D937F;
+                font-size: 8pt;
+                font-weight: bold;
+            }
+            QLabel#CodexStatusPill {
+                background-color: #1E2023;
+                color: #C1F56D;
+                border-radius: 6px;
+                padding: 5px 8px;
+                font-size: 9pt;
+                font-weight: bold;
+            }
+            QToolButton#CodexMenuButton {
+                background-color: #1E2023;
+                color: #C3C9B3;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 10px;
+                text-align: left;
+                font-weight: bold;
+            }
+            QToolButton#CodexMenuButton:hover {
+                background-color: #282A2D;
+                color: #E2E2E6;
+            }
+            QToolButton#CodexSideNavButton {
+                background-color: transparent;
+                color: #C3C9B3;
+                border: none;
+                border-left: 3px solid transparent;
+                border-radius: 0px;
+                padding: 8px 8px 8px 12px;
+                text-align: left;
+                font-size: 10pt;
+                font-weight: bold;
+            }
+            QToolButton#CodexSideNavButton:hover {
+                background-color: #1A1C1F;
+                color: #E2E2E6;
+            }
+            QToolButton#CodexSideNavButton:checked {
+                background-color: #1A1C1F;
+                color: #C1F56D;
+                border-left: 3px solid #A6D854;
+            }
+            QStackedWidget#CodexStackedWidget,
+            QWidget#CodexPageContent {
+                background-color: #111316;
+            }
+            QScrollArea#CodexPageScroll {
+                border: none;
+                background-color: #111316;
+            }
+            QLabel#CodexPageEyebrow {
+                color: #66D9CC;
+                font-size: 8pt;
+                font-weight: bold;
+            }
+            QLabel#CodexPageTitle {
+                color: #E2E2E6;
+                font-size: 20pt;
+                font-weight: 800;
+            }
+            QLabel#CodexPageSubtitle {
+                color: #8D937F;
+                font-size: 9pt;
+            }
+            QWidget#CodexHeroBand {
+                background-color: #1A1C1F;
+                border-radius: 6px;
+            }
+            QLabel#CodexHeroTitle {
+                color: #E2E2E6;
+                font-size: 16pt;
+                font-weight: 800;
+            }
+            QLabel#CodexHeroSubtitle,
+            QLabel#CodexHeroMetaLabel {
+                color: #8D937F;
+                font-size: 9pt;
+            }
+            QLabel#CodexHeroMetaValue {
+                color: #C3C9B3;
+                font-size: 9pt;
+                font-weight: bold;
+            }
+            QWidget#CodexMetricTile {
+                background-color: #0C0E11;
+                border-radius: 6px;
+            }
+            QLabel#CodexMetricLabel {
+                color: #8D937F;
+                font-size: 8pt;
+                font-weight: bold;
+            }
+            QLabel#CodexMetricValue {
+                color: #C1F56D;
+                font-size: 14pt;
+                font-weight: 800;
+            }
+            QLabel#CodexClusterLabel {
+                color: #66D9CC;
+                font-size: 8pt;
+                font-weight: bold;
+                padding-top: 4px;
+            }
+            QGroupBox {
+                background-color: #1A1C1F;
+                border: none;
+                border-left: 4px solid #A6D854;
+                border-radius: 6px;
+                margin-top: 18px;
+                padding: 16px 10px 10px 12px;
+                font-weight: bold;
+                color: #C1F56D;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 12px;
+                padding: 0px 4px;
+                color: #C1F56D;
+                background-color: transparent;
+            }
+            QLabel {
+                color: #C3C9B3;
+            }
+            QToolButton {
+                background-color: #282A2D;
+                color: #E2E2E6;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background-color: #333538;
+            }
+            QToolButton:pressed {
+                background-color: #1E2023;
+            }
+            QToolButton[variant="primary"] {
+                background-color: #A6D854;
+                color: #223600;
+            }
+            QToolButton[variant="primary"]:hover {
+                background-color: #C1F56D;
+            }
+            QLineEdit, QTextEdit, QListWidget, QComboBox {
+                background-color: #0C0E11;
+                color: #E2E2E6;
+                border: none;
+                border-radius: 6px;
+                padding: 6px;
+                selection-background-color: #1EA296;
+                selection-color: #0C0E11;
+            }
+            QLineEdit:focus, QTextEdit:focus, QListWidget:focus, QComboBox:focus {
+                border: 1px solid rgba(166, 216, 84, 102);
+            }
+            QListWidget::item {
+                padding: 5px 6px;
+                margin: 1px 0px;
+            }
+            QListWidget::item:selected {
+                background-color: #282A2D;
+                color: #C1F56D;
+            }
+            QSplitter::handle {
+                background-color: #111316;
+            }
+            """
+        )
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        side_panel = QWidget()
+        side_panel.setObjectName("CodexSidePanel")
+        side_panel.setFixedWidth(208)
+
+        side_layout = QVBoxLayout(side_panel)
+        side_layout.setContentsMargins(16, 18, 12, 18)
+        side_layout.setSpacing(8)
+
+        side_title = QLabel("CODEX")
+        side_title.setObjectName("CodexBrand")
+        side_layout.addWidget(side_title)
+
+        side_caption = QLabel("OneNote 작업 지휘")
+        side_caption.setObjectName("CodexSidebarCaption")
+        side_layout.addWidget(side_caption)
+
+        self.codex_sidebar_status_pill = QLabel("시스템 활성")
+        self.codex_sidebar_status_pill.setObjectName("CodexStatusPill")
+        self.codex_sidebar_status_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        side_layout.addWidget(self.codex_sidebar_status_pill)
+
+        self.codex_menu_button = QToolButton()
+        self.codex_menu_button.setObjectName("CodexMenuButton")
+        self.codex_menu_button.setText("전체 메뉴")
+        self.codex_menu_button.setMinimumHeight(32)
+        self.codex_menu_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        side_layout.addWidget(self.codex_menu_button)
+
+        self.codex_stacked_widget = QStackedWidget()
+        self.codex_stacked_widget.setObjectName("CodexStackedWidget")
+        self._codex_nav_buttons = []
+
+        def switch_page(idx: int, btn: QToolButton):
+            self.codex_stacked_widget.setCurrentIndex(idx)
+            for b in self._codex_nav_buttons:
+                b.setChecked(False)
+            btn.setChecked(True)
+
+        def add_nav_item(text: str, index: int) -> QToolButton:
+            btn = QToolButton()
+            btn.setObjectName("CodexSideNavButton")
+            btn.setText(text)
+            btn.setCheckable(True)
+            btn.setMinimumHeight(46)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            btn.clicked.connect(lambda checked, i=index, b=btn: switch_page(i, b))
+            side_layout.addWidget(btn)
+            self._codex_nav_buttons.append(btn)
+            return btn
+
+        def make_scroll_page(eyebrow: str, title: str, subtitle: str):
+            page = QScrollArea()
+            page.setObjectName("CodexPageScroll")
+            page.setWidgetResizable(True)
+            page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            content = QWidget()
+            content.setObjectName("CodexPageContent")
+            layout = QVBoxLayout(content)
+            layout.setContentsMargins(28, 24, 28, 28)
+            layout.setSpacing(14)
+
+            eyebrow_label = QLabel(eyebrow)
+            eyebrow_label.setObjectName("CodexPageEyebrow")
+            layout.addWidget(eyebrow_label)
+
+            title_label = QLabel(title)
+            title_label.setObjectName("CodexPageTitle")
+            layout.addWidget(title_label)
+
+            subtitle_label = QLabel(subtitle)
+            subtitle_label.setObjectName("CodexPageSubtitle")
+            subtitle_label.setWordWrap(True)
+            layout.addWidget(subtitle_label)
+
+            page.setWidget(content)
+            return page, layout
+
+        def make_metric(label: str, value: str):
+            tile = QWidget()
+            tile.setObjectName("CodexMetricTile")
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(12, 8, 12, 8)
+            tile_layout.setSpacing(2)
+
+            label_widget = QLabel(label)
+            label_widget.setObjectName("CodexMetricLabel")
+            value_widget = QLabel(value)
+            value_widget.setObjectName("CodexMetricValue")
+            value_widget.setMinimumHeight(24)
+
+            tile_layout.addWidget(label_widget)
+            tile_layout.addWidget(value_widget)
+            return tile, value_widget
+
+        page_dashboard, dashboard_layout = make_scroll_page(
+            "COMMAND HOME",
+            "명령 홈",
+            "코덱스에게 넘길 위치, 요청, 스킬, 주문서를 한 화면에서 정리합니다.",
+        )
+
+        hero = QWidget()
+        hero.setObjectName("CodexHeroBand")
+        hero_layout = QVBoxLayout(hero)
+        hero_layout.setContentsMargins(18, 16, 18, 16)
+        hero_layout.setSpacing(12)
+
+        hero_top = QHBoxLayout()
+        hero_title_area = QVBoxLayout()
+        hero_title_area.setSpacing(4)
+        hero_title = QLabel("Codex Command Center")
+        hero_title.setObjectName("CodexHeroTitle")
+        hero_subtitle = QLabel("OneNote 작업 위치와 지시서를 바로 실행 가능한 상태로 정리합니다.")
+        hero_subtitle.setObjectName("CodexHeroSubtitle")
+        hero_subtitle.setWordWrap(True)
+        hero_title_area.addWidget(hero_title)
+        hero_title_area.addWidget(hero_subtitle)
+        hero_top.addLayout(hero_title_area, stretch=1)
+
+        self.codex_hero_request_value = QLabel("요청 대기 중")
+        self.codex_hero_request_value.setObjectName("CodexStatusPill")
+        self.codex_hero_request_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.codex_hero_request_value.setMinimumWidth(130)
+        hero_top.addWidget(self.codex_hero_request_value)
+        hero_layout.addLayout(hero_top)
+
+        target_row = QHBoxLayout()
+        target_label = QLabel("대상 프로필")
+        target_label.setObjectName("CodexHeroMetaLabel")
+        target_row.addWidget(target_label)
+        self.codex_hero_target_value = QLabel("작업 위치 미지정")
+        self.codex_hero_target_value.setObjectName("CodexHeroMetaValue")
+        self.codex_hero_target_value.setWordWrap(True)
+        target_row.addWidget(self.codex_hero_target_value, stretch=1)
+        hero_layout.addLayout(target_row)
+
+        metrics = QHBoxLayout()
+        metrics.setSpacing(8)
+        target_tile, self.codex_metric_target_value = make_metric("작업 위치", "0개")
+        draft_tile, self.codex_metric_draft_value = make_metric("요청 초안", "대기")
+        skill_tile, self.codex_metric_skill_value = make_metric("스킬 수", "0개")
+        order_tile, self.codex_metric_order_value = make_metric("작업 지시서", "0개")
+        for tile in (target_tile, draft_tile, skill_tile, order_tile):
+            metrics.addWidget(tile)
+        hero_layout.addLayout(metrics)
+        dashboard_layout.addWidget(hero)
+
+        self.codex_status_summary_widget = self._build_codex_status_group()
+        dashboard_layout.addWidget(self.codex_status_summary_widget)
+        self.codex_quick_tools_widget = self._build_codex_quick_tools_group()
+        dashboard_layout.addWidget(self.codex_quick_tools_widget)
+        self.codex_context_pack_widget = self._build_codex_context_pack_group()
+        dashboard_layout.addWidget(self.codex_context_pack_widget)
+        self.codex_work_order_widget = self._build_codex_work_order_group()
+        dashboard_layout.addWidget(self.codex_work_order_widget)
+        dashboard_layout.addStretch(1)
+
+        page_request, request_layout = make_scroll_page(
+            "WORK REQUEST",
+            "작업 지시서 작성",
+            "요청 본문과 OneNote 대상 프로필을 한 번에 맞춘 뒤 복사하거나 저장합니다.",
+        )
+
+        self.codex_request_group_widget = self._build_codex_request_group()
+        request_layout.addWidget(self.codex_request_group_widget)
+        self.codex_target_group_widget = self._build_codex_target_group()
+        request_layout.addWidget(self.codex_target_group_widget)
+        request_layout.addStretch(1)
+
+        page_skills, skills_layout = make_scroll_page(
+            "SKILLS",
+            "스킬 보관함",
+            "반복되는 업무 방식과 글쓰기 규칙을 주문번호로 관리합니다.",
+        )
+
+        self.codex_skill_editor_widget = self._build_codex_skill_editor_group()
+        skills_layout.addWidget(self.codex_skill_editor_widget)
+        self.codex_work_order_history_widget = self._build_codex_work_order_history_group()
+        skills_layout.addWidget(self.codex_work_order_history_widget)
+        skills_layout.addStretch(1)
+
+        page_adv, adv_layout = make_scroll_page(
+            "ADVANCED",
+            "고급 설정",
+            "템플릿, 스킬 가이드, 내부 동작 도움말을 확인합니다.",
+        )
+
+        self.codex_skill_guide_widget = self._build_codex_skill_group()
+        adv_layout.addWidget(self.codex_skill_guide_widget)
+        self.codex_template_group_widget = self._build_codex_template_group()
+        adv_layout.addWidget(self.codex_template_group_widget)
+        
+        guide = QTextEdit()
+        self.codex_guide_widget = guide
+        guide.setReadOnly(True)
+        guide.setPlainText(
+            """코덱스 도움말
+
+이 탭은 코덱스가 OneNote를 더 쉽게 조작하도록 준비하는 공간입니다.
+사용자는 보통 작업 위치, 요청 내용, 스킬 초안만 관리하면 됩니다.
+
+사용자가 알면 되는 것
+- 작업 위치: AI가 어느 전자필기장/섹션에서 작업할지 정합니다.
+- 요청 생성기: AI에게 넘길 작업 지시문을 만듭니다.
+- 스킬 보관함: 자주 쓰는 글쓰기 형식이나 업무 방식을 주문번호(예: SK-001)로 저장합니다.
+- 커맨드 홈: 스킬 호출, 주문서 생성 등을 클릭 한 번에 복사하여 AI에게 바로 붙여넣습니다.
+
+내부에서 자동으로 처리되는 것 (신경 쓰지 않아도 됨)
+- OneNote 내부 위치 식별값 처리, COM 템플릿 변환, 스킬 주문서 인덱싱 등은 알아서 관리됩니다.
+- "SK-001 조회해서 그 형식대로 해" 라고만 AI에게 지시하세요.
+"""
+        )
+        guide.setMinimumHeight(240)
+        adv_layout.addWidget(guide)
+        adv_layout.addStretch(1)
+
+        self.codex_stacked_widget.addWidget(page_dashboard) # 0
+        self.codex_stacked_widget.addWidget(page_request)   # 1
+        self.codex_stacked_widget.addWidget(page_skills)    # 2
+        self.codex_stacked_widget.addWidget(page_adv)       # 3
+
+        btn_dashboard = add_nav_item("명령 홈", 0)
+        btn_request = add_nav_item("작업 요청", 1)
+        btn_skills = add_nav_item("스킬", 2)
+        btn_adv = add_nav_item("고급", 3)
+
+        side_layout.addStretch(1)
+        
+        root_layout.addWidget(side_panel)
+        root_layout.addWidget(self.codex_stacked_widget, stretch=1)
+        
+        self._update_codex_work_order_preview()
+        self._update_codex_status_summary()
+        self._build_codex_hamburger_menu(self.codex_menu_button)
+        switch_page(0, btn_dashboard)
+
+        return root
 
     def init_ui(self, initial_status):
         self.setWindowTitle("OneNote 전자필기장 스크롤 리모컨")
@@ -3371,6 +8471,24 @@ class OneNoteScrollRemoconApp(QMainWindow):
         restore_action = QAction("복원하기...", self)
         restore_action.triggered.connect(self._restore_full_settings)
         file_menu.addAction(restore_action)
+
+        file_menu.addSeparator()
+
+        shared_settings_action = QAction("공용 설정 JSON 위치 지정...", self)
+        shared_settings_action.triggered.connect(self._choose_shared_settings_json)
+        file_menu.addAction(shared_settings_action)
+
+        show_settings_path_action = QAction("현재 설정 JSON 위치 보기", self)
+        show_settings_path_action.triggered.connect(self._show_settings_json_path)
+        file_menu.addAction(show_settings_path_action)
+
+        open_settings_folder_action = QAction("설정 JSON 폴더 열기", self)
+        open_settings_folder_action.triggered.connect(self._open_settings_json_folder)
+        file_menu.addAction(open_settings_folder_action)
+
+        clear_shared_settings_action = QAction("공용 설정 JSON 연결 해제", self)
+        clear_shared_settings_action.triggered.connect(self._clear_shared_settings_json)
+        file_menu.addAction(clear_shared_settings_action)
 
         special_menu = menubar.addMenu("&특수 기능")
         self.open_all_notebooks_action = QAction(
@@ -3499,13 +8617,81 @@ class OneNoteScrollRemoconApp(QMainWindow):
             QLineEdit:focus {{
                 border: 1px solid {COLOR_LIST_SELECTED};
             }}
+            QTextEdit {{
+                background-color: {COLOR_LIST_BG};
+                border: 1px solid {COLOR_GROUPBOX_BG};
+                border-radius: 8px;
+                color: {COLOR_PRIMARY_TEXT};
+                padding: 10px;
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {COLOR_GROUPBOX_BG};
+                border-radius: 6px;
+            }}
+            QTabBar::tab {{
+                background-color: {COLOR_SECONDARY_BUTTON};
+                color: {COLOR_PRIMARY_TEXT};
+                padding: 7px 14px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 2px;
+            }}
+            QTabBar::tab:selected {{
+                background-color: {COLOR_ACCENT};
+                color: #111;
+                font-weight: bold;
+            }}
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: {COLOR_BACKGROUND};
+            }}
+            #CodexSidePanel {{
+                background-color: #242424;
+                border-right: 1px solid #444444;
+            }}
+            #CodexSideSectionLabel {{
+                color: {COLOR_SECONDARY_TEXT};
+                font-size: 8pt;
+                padding: 8px 8px 2px 8px;
+            }}
+            #CodexMenuButton {{
+                background-color: transparent;
+                color: {COLOR_PRIMARY_TEXT};
+                border-radius: 17px;
+                padding: 8px 10px;
+                text-align: left;
+                font-weight: bold;
+            }}
+            #CodexMenuButton:hover {{
+                background-color: {COLOR_SECONDARY_BUTTON_HOVER};
+            }}
+            #CodexSideNavButton {{
+                background-color: transparent;
+                color: {COLOR_PRIMARY_TEXT};
+                border-radius: 16px;
+                padding: 7px 12px;
+                text-align: left;
+            }}
+            #CodexSideNavButton:hover {{
+                background-color: {COLOR_SECONDARY_BUTTON_HOVER};
+            }}
+            #CodexSideNavButton:pressed {{
+                background-color: {COLOR_SECONDARY_BUTTON_PRESSED};
+            }}
         """
         )
 
-        central_widget = QWidget()
+        central_widget = QTabWidget()
         self.setCentralWidget(central_widget)
 
-        main_layout = QVBoxLayout(central_widget)
+        remocon_tab = QWidget()
+        central_widget.addTab(remocon_tab, "리모컨")
+        central_widget.addTab(self._build_codex_tab(), "코덱스")
+
+        main_layout = QVBoxLayout(remocon_tab)
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(10)
 
@@ -3536,13 +8722,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.btn_add_buffer.clicked.connect(self._add_buffer)
 
         self.btn_rename_buffer = QToolButton()
-        self.btn_rename_buffer.setText("이름변경(F2)")
+        self.btn_rename_buffer.setText("이름변경")
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
 
         self.btn_register_all_notebooks = QToolButton()
-        self.btn_register_all_notebooks.setText("종합(전필장 전체등록)")
+        self.btn_register_all_notebooks.setText("종합 새로고침")
         self.btn_register_all_notebooks.setToolTip(
-            "실제 OneNote를 여는 기능이 아닙니다. 현재 연결된 OneNote 창의 노트북 이름을 '종합' 버퍼에 등록합니다."
+            "현재 열린 OneNote 전자필기장 목록을 다시 읽고 미분류/분류 상태를 한 번에 갱신합니다."
         )
         self.btn_register_all_notebooks.clicked.connect(self._register_all_notebooks_from_current_onenote)
         self.btn_register_all_notebooks.setEnabled(False)  # 종합 버퍼에서만 활성화
@@ -3625,7 +8811,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.btn_add_section_current.setText("현재 전자필기장 추가")
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
         self.btn_rename = QToolButton()
-        self.btn_rename.setText("이름 바꾸기 (F2)")
+        self.btn_rename.setText("이름바꾸기")
         self.btn_rename.clicked.connect(self._rename_favorite_item)
         tb1_layout.addWidget(self.btn_add_section_current)
         tb1_layout.addWidget(self.btn_rename)
@@ -3680,7 +8866,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.action_expand_all_groups.triggered.connect(
             lambda: self._expand_fav_groups_always(reason="toolbar")
         )
-        self.action_collapse_all_groups.triggered.connect(self.fav_tree.collapseAll)
+        self.action_collapse_all_groups.triggered.connect(
+            lambda: self._collapse_fav_groups_always(reason="toolbar")
+        )
         self.fav_tree.itemDoubleClicked.connect(self._on_fav_item_double_clicked)
         self.fav_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.fav_tree.customContextMenuRequested.connect(self._on_fav_context_menu)
@@ -3800,18 +8988,21 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         right_layout.addWidget(actions_group)
 
-        search_group = QGroupBox("전자필기장 검색")
+        search_group = QGroupBox("검색 / 위치정렬")
         search_group_layout = QVBoxLayout(search_group)
+        search_group_layout.setSpacing(8)
+
+        notebook_search_label = QLabel("전자필기장위치정렬")
+        search_group_layout.addWidget(notebook_search_label)
 
         search_widget_layout = QHBoxLayout()
-
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("검색할 섹션 이름 입력...")
         self.search_input.returnPressed.connect(self._search_and_select_section)
         self.search_input.setEnabled(False)
         search_widget_layout.addWidget(self.search_input, stretch=1)
 
-        self.search_button = QPushButton("전자필기장 위치")
+        self.search_button = QPushButton("전자필기장위치정렬")
         self.search_button.setStyleSheet(
             """
             QPushButton {
@@ -3835,16 +9026,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
         search_widget_layout.addWidget(self.search_button)
 
         search_group_layout.addLayout(search_widget_layout)
-        right_layout.addWidget(search_group)
+        search_group_layout.addSpacing(14)
 
-        right_layout.addStretch(1)
+        project_search_label = QLabel("프로젝트 검색")
+        project_search_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        search_group_layout.addWidget(project_search_label)
 
-        project_search_group = QGroupBox("프로젝트 검색")
-        project_search_group_layout = QVBoxLayout(project_search_group)
         module_search_layout = QHBoxLayout()
         self.module_project_search_input = QLineEdit()
         self.module_project_search_input.setPlaceholderText(
-            "프로젝트/등록영역 버퍼 검색 (띄어쓰기 무시)..."
+            "프로젝트/등록영역 + 모듈영역 검색 (띄어쓰기 무시)..."
         )
         self.module_project_search_input.setClearButtonEnabled(True)
         self.module_project_search_input.textChanged.connect(
@@ -3855,10 +9046,22 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.btn_module_project_search_clear.clicked.connect(
             self.module_project_search_input.clear
         )
-        module_search_layout.addWidget(self.module_project_search_input, stretch=1)
+        module_search_layout.addStretch(1)
+        module_search_layout.addWidget(self.module_project_search_input, stretch=4)
         module_search_layout.addWidget(self.btn_module_project_search_clear)
-        project_search_group_layout.addLayout(module_search_layout)
-        right_layout.addWidget(project_search_group)
+        module_search_layout.addStretch(1)
+        search_group_layout.addLayout(module_search_layout)
+
+        project_search_hint = QLabel(
+            "입력한 글자가 포함된 항목은 프로젝트/등록영역과 모듈영역에 하이라이트로 표시됩니다."
+        )
+        project_search_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        project_search_hint.setWordWrap(True)
+        project_search_hint.setStyleSheet("color: #B8B8B8; font-size: 9pt;")
+        search_group_layout.addWidget(project_search_hint)
+        right_layout.addWidget(search_group)
+
+        right_layout.addStretch(1)
 
         self.main_splitter.addWidget(right_panel)
 
@@ -4927,7 +10130,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             return None
 
-    def _invalidate_aggregate_cache(self):
+    def _invalidate_aggregate_cache(self, *, invalidate_classified_keys: bool = True):
         """종합 버퍼 계산/표시 캐시를 무효화합니다."""
         self._aggregate_cache_valid = False
         self._aggregate_cache = []
@@ -4935,6 +10138,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_display_cache = []
         self._aggregate_display_cache_kind = None
         self._aggregate_display_cache_source_id = 0
+        if invalidate_classified_keys:
+            self._aggregate_classified_keys_cache_valid = False
+            self._aggregate_classified_keys_cache = set()
 
     def _get_sorted_aggregate_display_nodes(self, nodes, *, kind: str):
         """
@@ -4965,6 +10171,319 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_display_cache_source_id = source_id
         return data
 
+    def _aggregate_notebook_key_from_node(self, node: Any) -> str:
+        keys = self._aggregate_notebook_keys_from_node(node)
+        if not keys:
+            return ""
+        id_keys = sorted(k for k in keys if k.startswith("id:"))
+        if id_keys:
+            return id_keys[0]
+        return sorted(keys)[0]
+
+    def _aggregate_notebook_keys_from_node(self, node: Any) -> Set[str]:
+        if not isinstance(node, dict):
+            return set()
+        target = node.get("target") or {}
+        keys: Set[str] = set()
+        notebook_id = str(target.get("notebook_id") or "").strip()
+        if notebook_id:
+            keys.add("id:" + notebook_id.casefold())
+        name = (
+            str(target.get("notebook_text") or "").strip()
+            or str(node.get("name") or "").strip()
+        )
+        name_key = _normalize_notebook_name_key(name)
+        if name_key:
+            keys.add("name:" + name_key)
+        return keys
+
+    def _collect_notebook_nodes_from_nodes(self, nodes: Any) -> List[Dict[str, Any]]:
+        if not isinstance(nodes, list):
+            return []
+        found: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        stack = list(reversed(nodes))
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("type") == "notebook":
+                node_keys = self._aggregate_notebook_keys_from_node(node)
+                if node_keys and not (node_keys & seen):
+                    seen.update(node_keys)
+                    found.append(
+                        {
+                            "type": "notebook",
+                            "id": node.get("id") or str(uuid.uuid4()),
+                            "name": node.get("name") or "전자필기장",
+                            "target": copy.deepcopy(node.get("target") or {}),
+                        }
+                    )
+                continue
+            children = node.get("children")
+            if isinstance(children, list):
+                stack.extend(reversed(children))
+            data = node.get("data")
+            if isinstance(data, list):
+                stack.extend(reversed(data))
+        try:
+            found.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+        except Exception:
+            pass
+        return found
+
+    def _nodes_contain_notebook(self, nodes: Any) -> bool:
+        if not isinstance(nodes, list):
+            return False
+        stack = list(nodes)
+        while stack:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            if node.get("type") == "notebook":
+                return True
+            children = node.get("children")
+            if isinstance(children, list):
+                stack.extend(children)
+            data = node.get("data")
+            if isinstance(data, list):
+                stack.extend(data)
+        return False
+
+    def _collect_classified_aggregate_notebook_keys(self) -> Set[str]:
+        if getattr(self, "_aggregate_classified_keys_cache_valid", False):
+            return set(getattr(self, "_aggregate_classified_keys_cache", set()))
+
+        keys: Set[str] = set()
+
+        def _walk_fav_nodes(nodes: Any) -> None:
+            if not isinstance(nodes, list):
+                return
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                if node.get("type") == "notebook":
+                    keys.update(self._aggregate_notebook_keys_from_node(node))
+                children = node.get("children")
+                if isinstance(children, list):
+                    _walk_fav_nodes(children)
+
+        def _walk_buffers(nodes: Any) -> None:
+            if not isinstance(nodes, list):
+                return
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                if node.get("type") == "buffer":
+                    if node.get("id") == AGG_BUFFER_ID:
+                        continue
+                    _walk_fav_nodes(node.get("data") or [])
+                elif node.get("type") == "group":
+                    _walk_buffers(node.get("children") or [])
+
+        _walk_buffers(self.settings.get("favorites_buffers", []))
+        self._aggregate_classified_keys_cache = set(keys)
+        self._aggregate_classified_keys_cache_valid = True
+        return keys
+
+    def _build_aggregate_categorized_display_nodes(
+        self, source_nodes: Any
+    ) -> List[Dict[str, Any]]:
+        notebooks = self._collect_notebook_nodes_from_nodes(source_nodes)
+        if not notebooks:
+            notebooks = self._collect_notebook_nodes_from_nodes(
+                _collect_all_sections_dedup(self.settings)
+            )
+
+        classified_keys = self._collect_classified_aggregate_notebook_keys()
+        unclassified: List[Dict[str, Any]] = []
+        classified: List[Dict[str, Any]] = []
+        for notebook in notebooks:
+            notebook_keys = self._aggregate_notebook_keys_from_node(notebook)
+            if notebook_keys and notebook_keys & classified_keys:
+                classified.append(notebook)
+            else:
+                unclassified.append(notebook)
+
+        try:
+            unclassified.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+            classified.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+        except Exception:
+            pass
+
+        return [
+            {
+                "type": "group",
+                "id": AGG_UNCLASSIFIED_GROUP_ID,
+                "name": AGG_UNCLASSIFIED_GROUP_NAME,
+                "children": unclassified,
+            },
+            {
+                "type": "group",
+                "id": AGG_CLASSIFIED_GROUP_ID,
+                "name": AGG_CLASSIFIED_GROUP_NAME,
+                "children": classified,
+            },
+        ]
+
+    def _aggregate_classification_signature_from_nodes(self, nodes: Any) -> tuple:
+        if not isinstance(nodes, list):
+            return tuple()
+
+        def _collect_keys(children: Any) -> List[str]:
+            keys: List[str] = []
+            if not isinstance(children, list):
+                return keys
+            stack = list(children)
+            while stack:
+                child = stack.pop()
+                if not isinstance(child, dict):
+                    continue
+                keys.extend(self._aggregate_notebook_keys_from_node(child))
+                nested = child.get("children")
+                if isinstance(nested, list):
+                    stack.extend(nested)
+            return keys
+
+        groups: Dict[str, List[str]] = {
+            AGG_UNCLASSIFIED_GROUP_ID: [],
+            AGG_CLASSIFIED_GROUP_ID: [],
+        }
+        fallback_keys: List[str] = []
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_type = node.get("type")
+            node_id = node.get("id")
+            if node_type == "group" and node_id in groups:
+                groups[node_id].extend(_collect_keys(node.get("children") or []))
+            elif node_type == "notebook":
+                fallback_keys.extend(self._aggregate_notebook_keys_from_node(node))
+
+        if fallback_keys and not (groups[AGG_UNCLASSIFIED_GROUP_ID] or groups[AGG_CLASSIFIED_GROUP_ID]):
+            return (("flat", tuple(sorted(set(fallback_keys)))),)
+
+        return (
+            (
+                AGG_UNCLASSIFIED_GROUP_ID,
+                tuple(sorted(set(groups[AGG_UNCLASSIFIED_GROUP_ID]))),
+            ),
+            (
+                AGG_CLASSIFIED_GROUP_ID,
+                tuple(sorted(set(groups[AGG_CLASSIFIED_GROUP_ID]))),
+            ),
+        )
+
+    def _serialize_current_module_tree(self) -> List[Dict[str, Any]]:
+        nodes: List[Dict[str, Any]] = []
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            for i in range(root.childCount()):
+                nodes.append(self._serialize_fav_item(root.child(i)))
+        except Exception:
+            pass
+        return nodes
+
+    def _aggregate_source_nodes_for_fast_classification(
+        self, current_nodes: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
+        if getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID:
+            if current_nodes is None:
+                current_nodes = self._serialize_current_module_tree()
+            if self._nodes_contain_notebook(current_nodes):
+                return current_nodes
+
+        agg_node = _find_buffer_node_by_id(
+            self.settings.get("favorites_buffers", []),
+            AGG_BUFFER_ID,
+        )
+        saved = (agg_node or {}).get("data", []) if isinstance(agg_node, dict) else []
+        if self._nodes_contain_notebook(saved):
+            return saved
+        return _collect_all_sections_dedup(self.settings)
+
+    def _persist_active_aggregate_data(self, data: List[Dict[str, Any]]) -> None:
+        if getattr(self, "active_buffer_id", None) != AGG_BUFFER_ID:
+            return
+        new_sig = self._calc_nodes_signature(data)
+        if self.active_buffer_node is not None:
+            self.active_buffer_node["data"] = data
+        if self.active_buffer_item is not None:
+            payload = self.active_buffer_item.data(0, ROLE_DATA) or {}
+            payload["data"] = data
+            self.active_buffer_item.setData(0, ROLE_DATA, payload)
+        settings_node = _find_buffer_node_by_id(
+            self.settings.get("favorites_buffers", []),
+            AGG_BUFFER_ID,
+        )
+        if isinstance(settings_node, dict):
+            old_sig = self._calc_nodes_signature(settings_node.get("data", []))
+            settings_node["data"] = data
+            self._active_buffer_settings_node = settings_node
+            if not new_sig or new_sig != old_sig:
+                self._save_settings_to_file()
+
+    def _refresh_active_aggregate_classification_from_saved_data(
+        self,
+        *,
+        current_nodes: Optional[List[Dict[str, Any]]] = None,
+        persist: bool = True,
+        show_status: bool = False,
+    ) -> bool:
+        if getattr(self, "active_buffer_id", None) != AGG_BUFFER_ID:
+            if show_status:
+                QMessageBox.information(self, "안내", "종합 버퍼에서만 사용할 수 있습니다.")
+            return False
+        if getattr(self, "_aggregate_reclassify_in_progress", False):
+            return False
+
+        if current_nodes is None:
+            current_nodes = self._serialize_current_module_tree()
+        source_nodes = self._aggregate_source_nodes_for_fast_classification(current_nodes)
+        categorized = self._build_aggregate_categorized_display_nodes(source_nodes)
+        current_sig = self._aggregate_classification_signature_from_nodes(current_nodes)
+        next_sig = self._aggregate_classification_signature_from_nodes(categorized)
+
+        if current_sig and current_sig == next_sig:
+            if show_status:
+                try:
+                    self.connection_status_label.setText(
+                        "종합 분류 상태가 이미 최신입니다."
+                    )
+                except Exception:
+                    pass
+            return False
+
+        self._aggregate_reclassify_in_progress = True
+        try:
+            self._load_favorites_into_center_tree(categorized)
+            self._fav_reset_undo_context_from_data(
+                categorized,
+                reason="aggregate_fast_reclassify",
+            )
+            if persist:
+                self._persist_active_aggregate_data(categorized)
+            if show_status:
+                try:
+                    unclassified_count = len(categorized[0].get("children") or [])
+                    classified_count = len(categorized[1].get("children") or [])
+                    self.connection_status_label.setText(
+                        "종합 분류 새로고침 완료: "
+                        f"미분류 {unclassified_count}개, 분류됨 {classified_count}개"
+                    )
+                except Exception:
+                    pass
+            return True
+        finally:
+            self._aggregate_reclassify_in_progress = False
+
+    def _refresh_active_aggregate_classification_action(self) -> None:
+        self._refresh_active_aggregate_classification_from_saved_data(
+            persist=True,
+            show_status=True,
+        )
+
     def _build_aggregate_buffer(self):
         """모든 섹션을 수집하여 종합 버퍼 데이터를 생성합니다."""
         if getattr(self, "_aggregate_cache_valid", False):
@@ -4992,7 +10511,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 payload = found_item.data(0, ROLE_DATA) or {}
                 buf_name = found_item.text(0)
                 if active_id == AGG_BUFFER_ID:
-                    found_data = self._build_aggregate_buffer()
+                    saved = payload.get("data", []) or []
+                    source = saved if self._nodes_have_any_type(saved, {"notebook", "group"}) else self._build_aggregate_buffer()
+                    found_data = self._build_aggregate_categorized_display_nodes(source)
                 else:
                     found_data = payload.get("data", [])
             else:
@@ -5003,7 +10524,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     if payload.get("id") == active_id:
                         buf_name = item.text(0)
                         if active_id == AGG_BUFFER_ID:
-                            found_data = self._build_aggregate_buffer()
+                            saved = payload.get("data", []) or []
+                            source = saved if self._nodes_have_any_type(saved, {"notebook", "group"}) else self._build_aggregate_buffer()
+                            found_data = self._build_aggregate_categorized_display_nodes(source)
                         else:
                             found_data = payload.get("data", [])
                         break
@@ -5052,7 +10575,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self.fav_tree.setUpdatesEnabled(False)
             self.fav_tree.clear()
             self._last_loaded_center_buffer_id = None
+            self._last_center_payload_snapshot = None
+            self._last_center_payload_source_id = 0
             self._last_center_payload_hash = None # 해시 캐시 초기화
+            self._module_search_index = []
+            self._module_search_last_match_records = []
+            self._module_search_highlighted_by_id = {}
+            self._module_search_match_count = 0
         except Exception:
             pass
         finally:
@@ -5076,6 +10605,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._buffer_item_index = {}
         self._first_buffer_item = None
         self._buffer_search_index = []
+        self._buffer_search_last_match_records = []
         self._buffer_search_highlighted_by_id = {}
         self._buffer_search_match_count = 0
         self._buffer_search_last_applied_key = ""
@@ -5148,6 +10678,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._on_buffer_tree_item_clicked(found_item, 0)
         finally:
             self._boot_loading = False
+            try:
+                self.buffer_tree.blockSignals(False)
+                self.buffer_tree.viewport().update()
+            except Exception:
+                pass
             self._refresh_project_buffer_search_highlights()
 
     def _append_buffer_node(self, parent: QTreeWidgetItem, node: Dict[str, Any]) -> QTreeWidgetItem:
@@ -5188,7 +10723,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             if node_type == "buffer" and self._first_buffer_item is None:
                 self._first_buffer_item = item
         if node_type == "buffer":
-            search_key = _normalize_project_search_key(item.text(0))
+            search_key = self._project_buffer_search_key_for_item(item)
             if search_key:
                 parents = []
                 parent_item = item.parent()
@@ -5247,6 +10782,103 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception:
                 pass
 
+    def _collapse_fav_groups_always(self, *, reason: str = "") -> None:
+        changed = False
+        was_updates_enabled = True
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
+            collapsed = 0
+            was_updates_enabled = self.fav_tree.updatesEnabled()
+            self.fav_tree.setUpdatesEnabled(False)
+            while stack:
+                it = stack.pop()
+                if it.childCount() > 0:
+                    for j in range(it.childCount() - 1, -1, -1):
+                        stack.append(it.child(j))
+                    if it.isExpanded():
+                        self.fav_tree.collapseItem(it)
+                        collapsed += 1
+                        changed = True
+            tag = f" reason={reason}" if reason else ""
+            self._dbg_hot(f"[DBG][FAV][COLLAPSE_GROUPS]{tag} collapsed={collapsed}")
+        except Exception as e:
+            try:
+                tag = f" reason={reason}" if reason else ""
+                self._dbg_hot(f"[DBG][FAV][COLLAPSE_GROUPS][FAIL]{tag} {e}")
+            except Exception:
+                pass
+        finally:
+            try:
+                self.fav_tree.setUpdatesEnabled(was_updates_enabled)
+                if changed and was_updates_enabled:
+                    self.fav_tree.viewport().update()
+            except Exception:
+                pass
+
+    def _project_search_text_from_target(self, target: Any) -> List[str]:
+        if not isinstance(target, dict):
+            return []
+        parts = []
+        for key in ("notebook_text", "section_text", "display_text", "path"):
+            value = target.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        return parts
+
+    def _project_search_text_from_nodes(
+        self, nodes: Any, max_parts: int = 1200
+    ) -> List[str]:
+        if not isinstance(nodes, list):
+            return []
+        parts = []
+        stack = list(reversed(nodes))
+        while stack and len(parts) < max_parts:
+            node = stack.pop()
+            if not isinstance(node, dict):
+                continue
+            name = node.get("name")
+            if isinstance(name, str) and name.strip():
+                parts.append(name.strip())
+            parts.extend(self._project_search_text_from_target(node.get("target")))
+            children = node.get("children")
+            if isinstance(children, list):
+                stack.extend(reversed(children))
+            data = node.get("data")
+            if isinstance(data, list):
+                stack.extend(reversed(data))
+        return parts
+
+    def _project_search_text_from_fav_tree(self) -> List[str]:
+        parts = []
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
+            while stack and len(parts) < 1200:
+                item = stack.pop()
+                text = item.text(0)
+                if text:
+                    parts.append(text)
+                payload = item.data(0, ROLE_DATA) or {}
+                parts.extend(self._project_search_text_from_target(payload.get("target")))
+                for i in range(item.childCount() - 1, -1, -1):
+                    stack.append(item.child(i))
+        except Exception:
+            pass
+        return parts
+
+    def _project_buffer_search_key_for_item(self, item: QTreeWidgetItem) -> str:
+        if item is None:
+            return ""
+        parts = [item.text(0)]
+        payload = item.data(0, ROLE_DATA) or {}
+        item_id = payload.get("id")
+        if item_id and item_id == getattr(self, "active_buffer_id", None):
+            parts.extend(self._project_search_text_from_fav_tree())
+        else:
+            parts.extend(self._project_search_text_from_nodes(payload.get("data")))
+        return _normalize_project_search_key(" ".join(p for p in parts if p))
+
     def _expand_buffer_groups_always(self, *, reason: str = "") -> None:
         changed = False
         was_updates_enabled = True
@@ -5285,6 +10917,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._buffer_item_index = {}
         self._first_buffer_item = None
         self._buffer_search_index = []
+        self._buffer_search_last_match_records = []
         try:
             root = self.buffer_tree.invisibleRootItem()
             stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
@@ -5300,7 +10933,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     ):
                         self._first_buffer_item = item
                 if item.data(0, ROLE_TYPE) == "buffer":
-                    search_key = _normalize_project_search_key(item.text(0))
+                    search_key = self._project_buffer_search_key_for_item(item)
                     if search_key:
                         parents = []
                         parent = item.parent()
@@ -5315,6 +10948,29 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception as e:
             self._dbg_hot(f"[DBG][BUF][INDEX][FAIL] {e}")
 
+    def _rebuild_module_search_index(self) -> None:
+        self._module_search_index = []
+        self._module_search_last_match_records = []
+        try:
+            root = self.fav_tree.invisibleRootItem()
+            stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
+            while stack:
+                item = stack.pop()
+                search_key = _normalize_project_search_key(item.text(0))
+                if search_key:
+                    parents = []
+                    parent = item.parent()
+                    while parent is not None:
+                        parents.append(parent)
+                        parent = parent.parent()
+                    self._module_search_index.append(
+                        {"item": item, "key": search_key, "parents": tuple(parents)}
+                    )
+                for i in range(item.childCount() - 1, -1, -1):
+                    stack.append(item.child(i))
+        except Exception as e:
+            self._dbg_hot(f"[DBG][MOD][SEARCH_INDEX][FAIL] {e}")
+
     def _set_buffer_search_highlight(self, item: QTreeWidgetItem, enabled: bool) -> None:
         if item is None:
             return
@@ -5328,21 +10984,38 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             pass
 
+    def _set_module_search_highlight(self, item: QTreeWidgetItem, enabled: bool) -> None:
+        self._set_buffer_search_highlight(item, enabled)
+
     def _clear_project_buffer_search_highlights(self) -> None:
         was_updates_enabled = True
+        fav_updates_enabled = True
         changed = False
+        module_changed = False
         try:
             highlighted = list(self._buffer_search_highlighted_by_id.values())
+            module_highlighted = list(self._module_search_highlighted_by_id.values())
             was_updates_enabled = self.buffer_tree.updatesEnabled()
             if highlighted:
                 self.buffer_tree.setUpdatesEnabled(False)
                 for item in highlighted:
                     self._set_buffer_search_highlight(item, False)
                 changed = True
+            fav_updates_enabled = self.fav_tree.updatesEnabled()
+            if module_highlighted:
+                self.fav_tree.setUpdatesEnabled(False)
+                for item in module_highlighted:
+                    self._set_module_search_highlight(item, False)
+                module_changed = True
             self._buffer_search_highlighted_by_id = {}
+            self._buffer_search_last_match_records = []
+            self._module_search_highlighted_by_id = {}
+            self._module_search_last_match_records = []
             self._buffer_search_match_count = 0
+            self._module_search_match_count = 0
             self._buffer_search_last_applied_key = ""
             self._buffer_search_last_first_match_id = 0
+            self._module_search_last_first_match_id = 0
             self._buffer_search_pending_key = ""
         except Exception:
             pass
@@ -5351,6 +11024,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self.buffer_tree.setUpdatesEnabled(was_updates_enabled)
                 if changed and was_updates_enabled:
                     self.buffer_tree.viewport().update()
+                self.fav_tree.setUpdatesEnabled(fav_updates_enabled)
+                if module_changed and fav_updates_enabled:
+                    self.fav_tree.viewport().update()
             except Exception:
                 pass
 
@@ -5361,7 +11037,95 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._buffer_search_timer.stop()
             self._clear_project_buffer_search_highlights()
             return
-        self._buffer_search_timer.start(120)
+        self._buffer_search_timer.start(35)
+
+    def _apply_project_search_to_tree(
+        self,
+        *,
+        tree: QTreeWidget,
+        records: List[Dict[str, Any]],
+        previous_records: List[Dict[str, Any]],
+        previous_highlights: Dict[int, QTreeWidgetItem],
+        query: str,
+        previous_query: str,
+        set_highlight: Callable[[QTreeWidgetItem, bool], None],
+        previous_first_match_id: int,
+        scroll: bool,
+    ) -> Dict[str, Any]:
+        records_to_scan = records
+        if previous_query and query.startswith(previous_query):
+            records_to_scan = previous_records
+
+        match_count = 0
+        matched_records = []
+        match_by_id: Dict[int, QTreeWidgetItem] = {}
+        first_match = None
+        changed_highlights = False
+        was_updates_enabled = True
+        try:
+            was_updates_enabled = tree.updatesEnabled()
+            for record in records_to_scan:
+                item = record.get("item")
+                item_key = record.get("key") or ""
+                if item is not None and item_key and query in item_key:
+                    match_count += 1
+                    matched_records.append(record)
+                    if first_match is None:
+                        first_match = item
+                    match_by_id[id(item)] = item
+
+            prev_ids = set(previous_highlights)
+            next_ids = set(match_by_id)
+            removed_ids = prev_ids - next_ids
+            added_ids = next_ids - prev_ids
+            changed_highlights = bool(removed_ids or added_ids)
+
+            if changed_highlights:
+                tree.setUpdatesEnabled(False)
+                for item_id in removed_ids:
+                    set_highlight(previous_highlights.get(item_id), False)
+                expanded_parent_ids = set()
+                for record in matched_records:
+                    item = record.get("item")
+                    if item is None or id(item) not in added_ids:
+                        continue
+                    set_highlight(item, True)
+                    for parent in record.get("parents") or ():
+                        parent_id = id(parent)
+                        if parent_id in expanded_parent_ids:
+                            continue
+                        expanded_parent_ids.add(parent_id)
+                        if not parent.isExpanded():
+                            tree.expandItem(parent)
+        finally:
+            try:
+                tree.setUpdatesEnabled(was_updates_enabled)
+                if was_updates_enabled and changed_highlights:
+                    tree.viewport().update()
+            except Exception:
+                pass
+
+        first_match_id = id(first_match) if first_match is not None else 0
+        if (
+            scroll
+            and first_match is not None
+            and first_match_id != previous_first_match_id
+        ):
+            try:
+                tree.scrollToItem(
+                    first_match,
+                    QAbstractItemView.ScrollHint.EnsureVisible,
+                )
+            except Exception:
+                pass
+
+        return {
+            "matched_records": matched_records,
+            "match_by_id": match_by_id,
+            "match_count": match_count,
+            "first_match_id": first_match_id,
+            "changed": changed_highlights,
+        }
 
     def _highlight_project_buffers_from_module_search(
         self,
@@ -5378,86 +11142,50 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         if not self._buffer_search_index:
             self._rebuild_buffer_item_index()
+        if not self._module_search_index:
+            self._rebuild_module_search_index()
 
-        if query == self._buffer_search_last_applied_key:
+        previous_query = self._buffer_search_last_applied_key
+        if query == previous_query:
             return
         self._buffer_search_last_applied_key = query
 
-        matches = []
-        matched_records = []
-        match_by_id: Dict[int, QTreeWidgetItem] = {}
-        first_match = None
-        changed_highlights = False
-        was_updates_enabled = True
-        try:
-            was_updates_enabled = self.buffer_tree.updatesEnabled()
-            for record in self._buffer_search_index:
-                item = record.get("item")
-                item_key = record.get("key") or ""
-                matched = bool(item is not None and item_key and query in item_key)
-                if matched:
-                    matches.append(item)
-                    matched_records.append(record)
-                    if first_match is None:
-                        first_match = item
-                    match_by_id[id(item)] = item
+        buffer_result = self._apply_project_search_to_tree(
+            tree=self.buffer_tree,
+            records=self._buffer_search_index,
+            previous_records=getattr(self, "_buffer_search_last_match_records", []),
+            previous_highlights=self._buffer_search_highlighted_by_id,
+            query=query,
+            previous_query=previous_query,
+            set_highlight=self._set_buffer_search_highlight,
+            previous_first_match_id=self._buffer_search_last_first_match_id,
+            scroll=scroll,
+        )
+        module_result = self._apply_project_search_to_tree(
+            tree=self.fav_tree,
+            records=self._module_search_index,
+            previous_records=getattr(self, "_module_search_last_match_records", []),
+            previous_highlights=self._module_search_highlighted_by_id,
+            query=query,
+            previous_query=previous_query,
+            set_highlight=self._set_module_search_highlight,
+            previous_first_match_id=self._module_search_last_first_match_id,
+            scroll=scroll,
+        )
 
-            prev_by_id = self._buffer_search_highlighted_by_id
-            prev_ids = set(prev_by_id)
-            next_ids = set(match_by_id)
-            removed_ids = prev_ids - next_ids
-            added_ids = next_ids - prev_ids
-            changed_highlights = bool(removed_ids or added_ids)
+        self._buffer_search_last_match_records = buffer_result["matched_records"]
+        self._buffer_search_highlighted_by_id = buffer_result["match_by_id"]
+        self._buffer_search_match_count = buffer_result["match_count"]
+        self._buffer_search_last_first_match_id = buffer_result["first_match_id"]
+        self._module_search_last_match_records = module_result["matched_records"]
+        self._module_search_highlighted_by_id = module_result["match_by_id"]
+        self._module_search_match_count = module_result["match_count"]
+        self._module_search_last_first_match_id = module_result["first_match_id"]
 
-            if changed_highlights:
-                self.buffer_tree.setUpdatesEnabled(False)
-                for item_id in removed_ids:
-                    self._set_buffer_search_highlight(prev_by_id.get(item_id), False)
-                expanded_parent_ids = set()
-                for record in matched_records:
-                    item = record.get("item")
-                    if item is None or id(item) not in added_ids:
-                        continue
-                    self._set_buffer_search_highlight(item, True)
-                    for parent in record.get("parents") or ():
-                        parent_id = id(parent)
-                        if parent_id in expanded_parent_ids:
-                            continue
-                        expanded_parent_ids.add(parent_id)
-                        if not parent.isExpanded():
-                            self.buffer_tree.expandItem(parent)
-                self._buffer_search_highlighted_by_id = match_by_id
-        finally:
-            try:
-                self.buffer_tree.setUpdatesEnabled(was_updates_enabled)
-                if was_updates_enabled and (
-                    changed_highlights or self._buffer_search_match_count != len(matches)
-                ):
-                    self.buffer_tree.viewport().update()
-            except Exception:
-                pass
-
-        self._buffer_search_match_count = len(matches)
-        first_match_id = id(first_match) if first_match is not None else 0
-        if first_match is None:
-            self._buffer_search_last_first_match_id = 0
-        if (
-            scroll
-            and first_match is not None
-            and first_match_id != self._buffer_search_last_first_match_id
-        ):
-            try:
-                self.buffer_tree.scrollToItem(
-                    first_match,
-                    QAbstractItemView.ScrollHint.EnsureVisible,
-                )
-                self._buffer_search_last_first_match_id = first_match_id
-            except Exception:
-                pass
         if update_status:
             try:
                 self.connection_status_label.setText(
-                    f"프로젝트 검색: '{text}' - 버퍼 {len(matches)}개 강조"
+                    f"프로젝트 검색: '{text}' - 프로젝트 {self._buffer_search_match_count}개, 모듈 {self._module_search_match_count}개 강조"
                 )
             except Exception:
                 pass
@@ -5468,7 +11196,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
             return
         query = _normalize_project_search_key(search_input.text())
         if not query:
-            if self._buffer_search_highlighted_by_id:
+            if (
+                self._buffer_search_highlighted_by_id
+                or self._module_search_highlighted_by_id
+            ):
                 self._clear_project_buffer_search_highlights()
             return
         self._buffer_search_last_applied_key = ""
@@ -5482,6 +11213,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
         # ✅ 동일 데이터면 rebuild 스킵 (클릭 렉 제거 핵심)
+        payload_raw = None
+        source_id = id(node_data) if isinstance(node_data, list) else 0
         try:
             payload_raw = json.dumps(node_data, sort_keys=True, ensure_ascii=False)
             new_hash = hashlib.md5(payload_raw.encode("utf-8")).hexdigest()
@@ -5489,6 +11222,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             new_hash = None
 
         if new_hash is not None and getattr(self, "_last_center_payload_hash", None) == new_hash:
+            self._last_center_payload_snapshot = payload_raw
+            self._last_center_payload_source_id = source_id
             return
 
         # 로딩 중 clear/append 과정에서 structureChanged/itemChanged가 발생하면
@@ -5499,6 +11234,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self.fav_tree.setUpdatesEnabled(False)
         try:
             self.fav_tree.clear()
+            self._module_search_index = []
+            self._module_search_last_match_records = []
+            self._module_search_highlighted_by_id = {}
+            self._module_search_match_count = 0
             t_build0 = time.perf_counter()
             for node in node_data:
                 self._append_fav_node(self.fav_tree.invisibleRootItem(), node)
@@ -5515,12 +11254,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
             #    - 예전에는 최초 1회만 펼쳤는데, 그 이후엔 항상 접힌 상태로 복원되어 사용성이 나빠짐
             #    - expandAll() 대신 '자식이 있는 노드만 expandItem' 방식으로 그룹만 펼쳐 성능도 방어
             self._expand_fav_groups_always(total_nodes=total_nodes, reason="rebuild")
+            self._rebuild_module_search_index()
             self._last_center_payload_hash = new_hash
+            self._last_center_payload_snapshot = payload_raw
+            self._last_center_payload_source_id = source_id
         finally:
             self.fav_tree.setUpdatesEnabled(was_updates_enabled)
             self.fav_tree.blockSignals(False)
             if was_updates_enabled:
                 self.fav_tree.viewport().update()
+        self._refresh_project_buffer_search_highlights()
 
     def _request_favorites_save(self, *_args):
         """
@@ -5533,6 +11276,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
             return
         if getattr(self, "_fav_undo_suspended", False):
             return
+        self._module_search_index = []
+        self._module_search_last_match_records = []
+        self._buffer_search_last_applied_key = ""
         self._fav_save_pending = True
         self._fav_save_timer.start(self._fav_save_interval_ms)
 
@@ -5547,7 +11293,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         """현재 활성화된 중앙 트리의 내용을 버퍼 트리의 해당 노드 데이터에 반영하고 저장합니다."""
         if not self.active_buffer_node:
             return
-        self._invalidate_aggregate_cache()
+        self._invalidate_aggregate_cache(
+            invalidate_classified_keys=self.active_buffer_id != AGG_BUFFER_ID
+        )
+        self._module_search_index = []
+        self._module_search_last_match_records = []
+        self._buffer_search_index = []
+        self._buffer_search_last_match_records = []
+        self._buffer_search_last_applied_key = ""
 
         try:
             if getattr(self, "_fav_save_timer", None) is not None and self._fav_save_timer.isActive():
@@ -5569,7 +11322,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception:
                 snap = "[]"
             try:
-                current_hash = hashlib.md5(snap.encode("utf-8")).hexdigest()
+                current_hash = None
+                if snap == getattr(self, "_last_center_payload_snapshot", None):
+                    current_hash = getattr(self, "_last_center_payload_hash", None)
+                if not current_hash:
+                    current_hash = hashlib.md5(snap.encode("utf-8")).hexdigest()
             except Exception:
                 current_hash = None
 
@@ -5580,6 +11337,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             # Undo가 과거 스냅샷(7개)을 로드하려 할 때 "해시가 같다"로 판단되어 리빌드가 스킵된다.
             # => Ctrl+Z가 안 먹는 것처럼 보이는 핵심 원인.
             self._last_center_payload_hash = current_hash
+            self._last_center_payload_snapshot = snap
+            self._last_center_payload_source_id = id(data)
 
             # ✅ 같은 상태를 signal 연쇄로 다시 저장하려는 경우 early-return
             #    - rename 편집 종료 / itemChanged 연속 호출 / 구조변경 후 중복 저장 방어
@@ -5637,6 +11396,16 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 self._save_buffer_structure()
                 self._dbg_hot("[DBG][FAV][SAVE] Fallback full buffer structure persist")
 
+            if (
+                self.active_buffer_id == AGG_BUFFER_ID
+                and not getattr(self, "_aggregate_reclassify_in_progress", False)
+            ):
+                self._refresh_active_aggregate_classification_from_saved_data(
+                    current_nodes=data,
+                    persist=True,
+                    show_status=False,
+                )
+
         except Exception as e:
             print(f"[ERROR] 즐겨찾기 저장 실패: {e}")
 
@@ -5664,6 +11433,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._buffer_item_index = {}
         self._first_buffer_item = None
         self._buffer_search_index = []
+        self._buffer_search_last_match_records = []
         root = self.buffer_tree.invisibleRootItem()
         structure = []
         for i in range(root.childCount()):
@@ -5711,7 +11481,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 if node_type == "buffer" and self._first_buffer_item is None:
                     self._first_buffer_item = item
             if node_type == "buffer":
-                search_key = _normalize_project_search_key(item.text(0))
+                search_key = self._project_buffer_search_key_for_item(item)
                 if search_key:
                     parents = []
                     parent_item = item.parent()
@@ -5820,6 +11590,135 @@ class OneNoteScrollRemoconApp(QMainWindow):
                 QMessageBox.critical(
                     self, "백업 실패", f"백업 중 오류가 발생했습니다:\n{e}"
                 )
+
+    def _reload_settings_after_path_change(self) -> None:
+        self.settings = load_settings()
+        try:
+            self._load_buffers_and_favorites()
+            self._update_move_button_state()
+        except Exception as e:
+            print(f"[WARN] 설정 경로 변경 후 UI 재로드 실패: {e}")
+        try:
+            self.connection_status_label.setText(_settings_path_mode_label())
+        except Exception:
+            pass
+
+    def _choose_shared_settings_json(self):
+        """프로젝트 실행과 EXE 실행이 같이 쓸 공용 설정 JSON을 지정합니다."""
+        current_path = _get_settings_file_path()
+        default_dir = os.path.dirname(current_path) if current_path else os.getcwd()
+        default_path = os.path.join(default_dir, SETTINGS_FILE)
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "공용 설정 JSON 위치 지정",
+            default_path,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        file_path = _expand_external_settings_path(file_path)
+        try:
+            self._save_window_state()
+            self._flush_pending_buffer_structure_save()
+            self._save_favorites()
+
+            use_existing = False
+            if os.path.exists(file_path):
+                answer = QMessageBox.question(
+                    self,
+                    "공용 설정 JSON 선택",
+                    (
+                        "선택한 JSON 파일이 이미 있습니다.\n\n"
+                        "예: 기존 JSON을 불러와 사용합니다.\n"
+                        "아니오: 현재 앱 설정으로 해당 JSON을 덮어씁니다.\n"
+                        "취소: 변경하지 않습니다."
+                    ),
+                    (
+                        QMessageBox.StandardButton.Yes
+                        | QMessageBox.StandardButton.No
+                        | QMessageBox.StandardButton.Cancel
+                    ),
+                    QMessageBox.StandardButton.Yes,
+                )
+                if answer == QMessageBox.StandardButton.Cancel:
+                    return
+                use_existing = answer == QMessageBox.StandardButton.Yes
+
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            if not use_existing:
+                payload = dict(self.settings)
+                payload.pop("favorites", None)
+                _ensure_default_and_aggregate_inplace(payload)
+                _write_json(file_path, payload)
+
+            _set_external_settings_file_path(file_path)
+            _SETTINGS_OBJECT_CACHE.clear()
+            _JSON_TEXT_CACHE.clear()
+            self._reload_settings_after_path_change()
+            QMessageBox.information(
+                self,
+                "공용 설정 JSON 연결 완료",
+                (
+                    "이제 프로젝트 실행과 EXE 실행이 같은 설정 JSON을 사용합니다.\n\n"
+                    f"경로: {file_path}\n\n"
+                    "다른 PC에서는 OneDrive가 동기화된 로컬 경로를 한 번 지정하면 됩니다."
+                ),
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "공용 설정 JSON 연결 실패", str(e))
+
+    def _show_settings_json_path(self):
+        QMessageBox.information(
+            self,
+            "현재 설정 JSON 위치",
+            (
+                f"{_settings_path_mode_label()}\n\n"
+                f"공용 경로 포인터: {_settings_path_config_file()}\n"
+                f"환경변수 우선순위: {SETTINGS_PATH_ENV}"
+            ),
+        )
+
+    def _open_settings_json_folder(self):
+        path = _get_settings_file_path()
+        folder = os.path.dirname(path)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            os.startfile(folder)
+        except Exception as e:
+            QMessageBox.warning(self, "폴더 열기 실패", str(e))
+
+    def _clear_shared_settings_json(self):
+        if not _get_external_settings_file_path():
+            QMessageBox.information(self, "안내", "현재 공용 설정 JSON 연결이 없습니다.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "공용 설정 JSON 연결 해제",
+            (
+                "공용 설정 JSON 연결을 해제하고 기본 위치의 설정 JSON을 사용합니다.\n"
+                "현재 공용 JSON 파일 자체는 삭제하지 않습니다.\n\n"
+                "계속하시겠습니까?"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._save_settings_to_file(immediate=True)
+            _clear_external_settings_file_path()
+            _SETTINGS_OBJECT_CACHE.clear()
+            _JSON_TEXT_CACHE.clear()
+            self._reload_settings_after_path_change()
+            QMessageBox.information(
+                self,
+                "연결 해제 완료",
+                f"이제 기본 설정 JSON을 사용합니다.\n\n{_get_settings_file_path()}",
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "연결 해제 실패", str(e))
 
     def _restore_full_settings(self):
         """설정 파일을 복원합니다."""
@@ -6023,7 +11922,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
         """
         try:
             data_list = data if isinstance(data, list) else []
-            snap = json.dumps(data_list, sort_keys=True, ensure_ascii=False)
+            snap = None
+            if (
+                isinstance(data, list)
+                and id(data) == getattr(self, "_last_center_payload_source_id", 0)
+            ):
+                snap = getattr(self, "_last_center_payload_snapshot", None)
+            if snap is None:
+                snap = json.dumps(data_list, sort_keys=True, ensure_ascii=False)
         except Exception:
             snap = ""
         try:
@@ -6034,7 +11940,15 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._fav_redo_stack = []
         self._fav_last_snapshot = snap
         try:
-            self._fav_last_persisted_hash = hashlib.md5(snap.encode("utf-8")).hexdigest()
+            self._fav_last_persisted_hash = None
+            if snap == getattr(self, "_last_center_payload_snapshot", None):
+                self._fav_last_persisted_hash = getattr(
+                    self, "_last_center_payload_hash", None
+                )
+            if not self._fav_last_persisted_hash:
+                self._fav_last_persisted_hash = hashlib.md5(
+                    snap.encode("utf-8")
+                ).hexdigest()
         except Exception:
             self._fav_last_persisted_hash = None
         try:
@@ -6076,24 +11990,23 @@ class OneNoteScrollRemoconApp(QMainWindow):
             )
             self.settings["active_buffer_id"] = self.active_buffer_id
             
-            self.setUpdatesEnabled(False)
             try:
                 # ✅ 종합 버퍼: 전자필기장(노트북) 저장용
                 if payload.get("id") == AGG_BUFFER_ID:
                     saved = payload.get("data", []) or []
                     self._dbg_node_type_counts(saved, "AGG_SAVED")
 
-                    # 1) 종합 버퍼에 notebook 저장이 있으면: 그걸 그대로 보여준다 (절대 덮어쓰기 금지)
+                    # 1) 종합 버퍼에 notebook/group 저장이 있으면: 그걸 기준으로 분류 표시한다.
                     if self._nodes_have_any_type(saved, {"notebook", "group"}):
                         self._dbg_hot(f"[DBG][AGG] load SAVED data (len={len(saved)})")
-                        data_to_load = self._get_sorted_aggregate_display_nodes(saved, kind="saved")
+                        data_to_load = self._build_aggregate_categorized_display_nodes(saved)
                         self._load_favorites_into_center_tree(data_to_load)
                     else:
-                        # 2) 저장된게 없을 때만: 기존 섹션 종합 계산 fallback
+                        # 2) 저장된게 없을 때만: 기존 종합 계산 fallback
                         agg_data = self._build_aggregate_buffer()
                         self._dbg_node_type_counts(agg_data, "AGG_BUILT")
                         self._dbg_hot(f"[DBG][AGG] load BUILT aggregate (len={len(agg_data)})")
-                        data_to_load = agg_data
+                        data_to_load = self._build_aggregate_categorized_display_nodes(agg_data)
                         self._load_favorites_into_center_tree(data_to_load)
 
                     # ✅ 버퍼 전환 직후: Undo/Redo 컨텍스트를 현재 버퍼 데이터로 리셋
@@ -6116,8 +12029,13 @@ class OneNoteScrollRemoconApp(QMainWindow):
                     self.btn_add_group.setEnabled(True)
                 self._last_loaded_center_buffer_id = self.active_buffer_id
             finally:
-                self.setUpdatesEnabled(True)
-                self.update()
+                try:
+                    self.buffer_tree.setUpdatesEnabled(True)
+                    self.fav_tree.setUpdatesEnabled(True)
+                    self.buffer_tree.viewport().update()
+                    self.fav_tree.viewport().update()
+                except Exception:
+                    pass
         else:
             # 그룹 선택 시
             # 현재 버퍼 내용이 남아있을 수 있으므로 먼저 저장
@@ -6531,6 +12449,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         #        최종 커밋은 _fav_end_undo_group()에서 1회만 수행한다.
         if getattr(self, "_fav_undo_batch_depth", 0) > 0:
             self._fav_last_snapshot = new_snapshot
+            self._fav_undo_batch_final_snapshot = new_snapshot
             return
 
         # (E) 일반 단일 변경
@@ -6546,6 +12465,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             # ✅ base는 _fav_last_snapshot 대신 '현재 트리'에서 직접 캡쳐 (base==final 문제 원천 차단)
             base = self._fav_capture_center_tree_snapshot()
             self._fav_undo_batch_base_snapshot = base
+            self._fav_undo_batch_final_snapshot = None
             self._fav_undo_batch_reason = reason or ""
             # base를 last_snapshot에도 맞춰둬야 이후 비교가 흔들리지 않는다.
             self._fav_last_snapshot = base
@@ -6566,7 +12486,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         base = self._fav_undo_batch_base_snapshot or ""
         # ✅ final도 last_snapshot 의존 X: 트리에서 직접 캡쳐
-        final = self._fav_capture_center_tree_snapshot()
+        final = self._fav_undo_batch_final_snapshot
+        if final is None:
+            final = self._fav_capture_center_tree_snapshot()
         # last_snapshot을 final로 동기화 (Undo/Redo 비교 흔들림 방지)
         self._fav_last_snapshot = final
 
@@ -6586,6 +12508,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
             pass
 
         self._fav_undo_batch_base_snapshot = None
+        self._fav_undo_batch_final_snapshot = None
         self._fav_undo_batch_reason = ""
 
     @contextmanager
@@ -6596,6 +12519,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         - Undo/Redo는 begin/end로 한 번의 step으로 묶는다.
         """
         self._fav_begin_undo_group(reason=reason)
+        was_updates_enabled = self.fav_tree.updatesEnabled()
         self.fav_tree.blockSignals(True)
         self.fav_tree.setUpdatesEnabled(False)
         try:
@@ -6606,10 +12530,11 @@ class OneNoteScrollRemoconApp(QMainWindow):
             except Exception:
                 pass
         finally:
-            self.fav_tree.setUpdatesEnabled(True)
+            self.fav_tree.setUpdatesEnabled(was_updates_enabled)
             self.fav_tree.blockSignals(False)
             try:
-                self.fav_tree.update()
+                if was_updates_enabled:
+                    self.fav_tree.viewport().update()
             except Exception:
                 pass
             self._fav_end_undo_group()
@@ -6629,6 +12554,8 @@ class OneNoteScrollRemoconApp(QMainWindow):
             # ✅ Undo/Redo는 무조건 리빌드되어야 한다.
             # 해시 스킵 최적화가 undo 적용을 막는 케이스를 원천 차단.
             self._last_center_payload_hash = None
+            self._last_center_payload_snapshot = None
+            self._last_center_payload_source_id = 0
             self._fav_last_persisted_hash = None
             self._load_favorites_into_center_tree(data)
             self._save_favorites()
@@ -6774,142 +12701,150 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._save_favorites()
 
     def _register_all_notebooks_from_current_onenote(self):
-        """Default > 종합 버퍼의 2패널(모듈영역)에 전자필기장(노트북)만 한 번에 등록합니다."""
-        print("[DBG][ONENOTE_REG][ALL] ENTER")
+        """종합 버퍼를 OneNote의 열린 전자필기장 목록으로 새로고침하고 분류까지 갱신합니다."""
+        started_at = time.perf_counter()
+        refresh_button = getattr(self, "btn_register_all_notebooks", None)
+        if refresh_button is not None:
+            refresh_button.setEnabled(False)
 
-        # 0) 종합 버퍼에서만 동작 (id 기준)
         try:
             cur_item = self.buffer_tree.currentItem()
             cur_payload = cur_item.data(0, ROLE_DATA) if cur_item else {}
-            is_agg = bool(cur_payload and cur_payload.get("id") == AGG_BUFFER_ID)
-            print(f"[DBG][ONENOTE_REG][ALL] is_agg={is_agg} cur_item={cur_item} payload_keys={list(cur_payload.keys()) if isinstance(cur_payload, dict) else type(cur_payload)}")
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] is_agg check FAIL: {e}")
-            is_agg = False
+            is_agg = (
+                getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID
+                or bool(isinstance(cur_payload, dict) and cur_payload.get("id") == AGG_BUFFER_ID)
+            )
+            if not is_agg:
+                QMessageBox.information(self, "안내", "이 기능은 '종합' 버퍼에서만 사용할 수 있습니다.")
+                return
 
-        if not is_agg:
-            print("[DBG][ONENOTE_REG][ALL] NOT AGG -> RETURN")
-            QMessageBox.information(self, "안내", "이 기능은 '종합' 버퍼에서만 사용할 수 있습니다.")
-            return
-
-        # 1) 기본 선행 체크(현재 연결 상태 등)
-        try:
-            ok = self._pre_action_check()
-            print(f"[DBG][ONENOTE_REG][ALL] _pre_action_check={ok}")
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] _pre_action_check EXC: {e}")
-            ok = False
-        if not ok:
-            print("[DBG][ONENOTE_REG][ALL] precheck FAIL -> RETURN")
-            return
-
-        # 2) OneNote 트리 컨트롤 확보
-        try:
-            if not getattr(self, "tree_control", None):
-                self.tree_control = _find_tree_or_list(self.onenote_window)
-            print(f"[DBG][ONENOTE_REG][ALL] tree_control={self.tree_control}")
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] tree_control find EXC: {e}")
-            self.tree_control = None
-
-        if not self.tree_control:
-            print("[DBG][ONENOTE_REG][ALL] tree_control NONE -> RETURN")
-            QMessageBox.warning(self, "오류", "OneNote의 섹션/페이지 트리를 찾지 못했습니다.")
-            return
-
-        # 3) 전자필기장(노트북) 이름만 수집 (섹션은 무시)
-        ensure_pywinauto()
-        notebooks = []  # List[str]
-        try:
-            roots = []
+            onenote_window = getattr(self, "onenote_window", None)
+            hwnd = None
             try:
-                roots = list(self.tree_control.children())
+                if onenote_window is not None:
+                    hwnd = getattr(onenote_window, "handle", None)
+                    if callable(hwnd):
+                        hwnd = onenote_window.handle()
+            except Exception:
+                hwnd = None
+            if not hwnd:
+                self.update_status_and_ui("OneNote 창이 연결되지 않았습니다. 먼저 OneNote 창 연결/선택을 해주세요.", False)
+                return
+
+            try:
+                self.connection_status_label.setText("종합 새로고침 중...")
+                QApplication.processEvents()
+            except Exception:
+                pass
+
+            try:
+                sig = build_window_signature(onenote_window)
             except Exception as e:
-                print(f"[DBG][ONENOTE_REG][ALL] children() FAIL: {e}")
-                roots = []
-            print(f"[DBG][ONENOTE_REG][ALL] roots_count={len(roots)}")
+                print(f"[WARN][AGG_REFRESH] signature build failed: {e}")
+                sig = {}
 
-            for i, r in enumerate(roots):
-                try:
-                    nb_name = (r.window_text() or "").strip()
-                except Exception:
-                    nb_name = ""
-                print(f"[DBG][ONENOTE_REG][ALL] root[{i}] nb_name='{nb_name}' type={type(r)}")
-                if not nb_name:
-                    continue
-                notebooks.append(nb_name)
+            notebook_nodes: List[Dict[str, Any]] = []
+            seen_keys: Set[str] = set()
+            com_error = ""
 
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] collect EXC: {e}")
-            QMessageBox.warning(self, "오류", f"OneNote 항목 수집 중 오류: {e}")
-            return
-
-        print(f"[DBG][ONENOTE_REG][ALL] notebooks_count={len(notebooks)}")
-        if not notebooks:
-            print("[DBG][ONENOTE_REG][ALL] EMPTY notebooks -> RETURN")
-            QMessageBox.information(self, "안내", "등록할 전자필기장을 찾지 못했습니다.")
-            return
-
-        # 4) 윈도우 시그니처
-        try:
-            sig = build_window_signature(self.onenote_window)
-            print(f"[DBG][ONENOTE_REG][ALL] sig={sig}")
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] sig build FAIL: {e}")
-            sig = {}
-
-        notebook_records_by_key: Dict[str, List[Dict[str, str]]] = {}
-        try:
-            for record in _get_open_notebook_records_via_com(refresh=True):
-                record_key = _normalize_notebook_name_key(record.get("name"))
-                if record_key:
-                    notebook_records_by_key.setdefault(record_key, []).append(record)
-        except Exception as e:
-            print(f"[WARN][ONENOTE_REG][ALL][COM] {e}")
-
-        # 5) 현재 종합 버퍼의 2패널(모듈영역=fav_tree)에 notebook 노드로 넣고 저장
-        try:
-            root = self.fav_tree.invisibleRootItem()
-            # 기존 notebook 노드만 싹 정리 (그룹/섹션은 건드리지 않음)
-            keep_items = []
-            for i in range(root.childCount()):
-                it = root.child(i)
-                t = it.data(0, ROLE_TYPE)
-                if t == "notebook":
-                    continue
-                keep_items.append(it)
-            while root.childCount() > 0:
-                root.removeChild(root.child(0))
-            for it in keep_items:
-                root.addChild(it)
-            # notebook 노드 삽입
-            for nb_name in notebooks:
-                target = {"sig": sig, "notebook_text": nb_name}
-                matched_records = notebook_records_by_key.get(
-                    _normalize_notebook_name_key(nb_name), []
+            def _append_notebook_node(
+                nb_name: str,
+                *,
+                notebook_id: str = "",
+                notebook_path: str = "",
+            ) -> None:
+                nb_name_clean = _strip_stale_favorite_prefix(str(nb_name or "").strip())
+                name_key = _normalize_notebook_name_key(nb_name_clean)
+                id_key = str(notebook_id or "").strip().casefold()
+                dedupe_key = f"id:{id_key}" if id_key else f"name:{name_key}"
+                if not nb_name_clean or not name_key or dedupe_key in seen_keys:
+                    return
+                seen_keys.add(dedupe_key)
+                target = {"sig": sig, "notebook_text": nb_name_clean}
+                if notebook_id:
+                    target["notebook_id"] = str(notebook_id).strip()
+                if notebook_path:
+                    target["path"] = str(notebook_path).strip()
+                notebook_nodes.append(
+                    {
+                        "type": "notebook",
+                        "id": str(uuid.uuid4()),
+                        "name": nb_name_clean,
+                        "target": target,
+                    }
                 )
-                if len(matched_records) == 1 and matched_records[0].get("id"):
-                    target["notebook_id"] = matched_records[0]["id"]
-                node = {
-                    "type": "notebook",
-                    "id": str(uuid.uuid4()),
-                    "name": nb_name,
-                    "target": target,
-                }
-                self._append_fav_node(root, node)
-            self._expand_fav_groups_always(reason="register_all_notebooks")
-            self._save_favorites()
-            
-            # SSOT 검증 로직 추가
-            print(f"[DBG][ONENOTE_REG][ALL] SSOT in_memory_count={len(self.active_buffer_node.get('data', [])) if self.active_buffer_node else 'N/A'}")
-            print(f"[DBG][ONENOTE_REG][ALL] disk_persist={os.path.exists(_get_settings_file_path())}")
-        except Exception as e:
-            print(f"[DBG][ONENOTE_REG][ALL] apply to fav_tree FAIL: {e}")
-            QMessageBox.warning(self, "오류", f"전자필기장 등록 UI 반영 실패: {e}")
-            return
 
-        self.update_status_and_ui(f"전자필기장 등록 완료: {len(notebooks)}개", True)
-        print("[DBG][ONENOTE_REG][ALL] DONE notebooks_only")
+            try:
+                for record in _get_open_notebook_records_via_com(refresh=True):
+                    _append_notebook_node(
+                        record.get("name", ""),
+                        notebook_id=record.get("id", ""),
+                        notebook_path=record.get("path", ""),
+                    )
+            except Exception as e:
+                com_error = str(e)
+                print(f"[WARN][AGG_REFRESH][COM] {e}")
+
+            source = "COM"
+            if not notebook_nodes:
+                source = "UI"
+                try:
+                    ensure_pywinauto()
+                    if hasattr(self, "_bring_onenote_to_front"):
+                        self._bring_onenote_to_front()
+                    if not getattr(self, "tree_control", None):
+                        self.tree_control = _find_tree_or_list(onenote_window)
+                    for nb_name in _collect_root_notebook_names_from_tree(
+                        self.tree_control,
+                        limit=512,
+                    ):
+                        _append_notebook_node(nb_name)
+                except Exception as e:
+                    print(f"[WARN][AGG_REFRESH][UI_FALLBACK] {e}")
+
+            if not notebook_nodes:
+                message = "등록할 전자필기장을 찾지 못했습니다."
+                if com_error:
+                    message += f"\n\nCOM 조회 오류: {com_error}"
+                QMessageBox.information(self, "안내", message)
+                return
+
+            self._invalidate_aggregate_cache(invalidate_classified_keys=True)
+            categorized = self._build_aggregate_categorized_display_nodes(notebook_nodes)
+
+            self._aggregate_reclassify_in_progress = True
+            try:
+                self._load_favorites_into_center_tree(categorized)
+                self._fav_reset_undo_context_from_data(
+                    categorized,
+                    reason="aggregate_onenote_refresh",
+                )
+                self._persist_active_aggregate_data(categorized)
+            finally:
+                self._aggregate_reclassify_in_progress = False
+
+            unclassified_count = len(categorized[0].get("children") or []) if categorized else 0
+            classified_count = len(categorized[1].get("children") or []) if len(categorized) > 1 else 0
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            self.update_status_and_ui(
+                (
+                    "종합 새로고침 완료: "
+                    f"전체 {len(notebook_nodes)}개, "
+                    f"미분류 {unclassified_count}개, "
+                    f"분류됨 {classified_count}개 "
+                    f"({source}, {elapsed_ms:.0f}ms)"
+                ),
+                True,
+            )
+        except Exception as e:
+            print(f"[ERROR][AGG_REFRESH] {e}")
+            traceback.print_exc()
+            QMessageBox.warning(self, "오류", f"종합 새로고침 실패: {e}")
+        finally:
+            if refresh_button is not None:
+                refresh_button.setEnabled(
+                    getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID
+                )
 
     def _add_section_from_current(self):
         if not self.onenote_window:
@@ -7075,7 +13010,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         if item:
             menu.addSeparator()
-            act_rename = QAction("이름 바꾸기 (F2)", self)
+            act_rename = QAction("이름바꾸기", self)
             act_rename.triggered.connect(self._rename_favorite_item)
             menu.addAction(act_rename)
 

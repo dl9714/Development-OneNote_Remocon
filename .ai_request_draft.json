@@ -63,7 +63,78 @@
       }
     },
     "_default": {
-      "saved_at": 1773159211.0891368,
+      "saved_at": 1776448237.082478,
+      "state": {
+        "single": {
+          "edit": {
+            "current_file": null
+          },
+          "multi_overwrite_1": {
+            "current_file": null,
+            "project_overwrite_scope_root": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+          },
+          "multi_overwrite_2": {
+            "current_file": null,
+            "project_overwrite_scope_root": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+          },
+          "multi_overwrite_3": {
+            "current_file": null,
+            "project_overwrite_scope_root": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+          },
+          "multi_overwrite_4": {
+            "current_file": null,
+            "project_overwrite_scope_root": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+          },
+          "new": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          },
+          "overwrite": {
+            "current_file": null,
+            "project_overwrite_scope_root": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+          },
+          "tpl": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          }
+        },
+        "split": {
+          "left": {
+            "edit": {
+              "current_file": null
+            },
+            "new": {
+              "current_file": null
+            },
+            "overwrite": {
+              "current_file": null
+            },
+            "tpl": {
+              "current_file": null
+            }
+          },
+          "right": {
+            "edit": {
+              "current_file": null
+            },
+            "new": {
+              "current_file": null
+            },
+            "overwrite": {
+              "current_file": null
+            },
+            "tpl": {
+              "current_file": null
+            }
+          }
+        }
+      },
+      "ui": {}
+    },
+    "_062bc1_html": {
+      "saved_at": 1774803491.5501661,
       "state": {
         "single": {
           "edit": {
@@ -123,10 +194,76 @@
         "split_left_idx": 0,
         "split_right_idx": 0
       }
+    },
+    "_78abe5_py": {
+      "saved_at": 1776215734.2199593,
+      "state": {
+        "single": {
+          "edit": {
+            "current_file": null
+          },
+          "multi_overwrite_1": {
+            "current_file": null
+          },
+          "multi_overwrite_2": {
+            "current_file": null
+          },
+          "multi_overwrite_3": {
+            "current_file": null
+          },
+          "multi_overwrite_4": {
+            "current_file": null
+          },
+          "new": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          },
+          "overwrite": {
+            "current_file": null
+          },
+          "tpl": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          }
+        },
+        "split": {
+          "left": {
+            "edit": {
+              "current_file": null
+            },
+            "new": {
+              "current_file": null
+            },
+            "overwrite": {
+              "current_file": null
+            },
+            "tpl": {
+              "current_file": null
+            }
+          },
+          "right": {
+            "edit": {
+              "current_file": null
+            },
+            "new": {
+              "current_file": null
+            },
+            "overwrite": {
+              "current_file": null
+            },
+            "tpl": {
+              "current_file": null
+            }
+          }
+        }
+      },
+      "ui": {}
     }
   },
   "version": 2,
   "active_buffer": "_default",
-  "saved_at": 1773171026.0973978,
+  "saved_at": 1776448237.082478,
   "project_key": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
 }

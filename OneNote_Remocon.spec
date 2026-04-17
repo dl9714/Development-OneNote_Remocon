@@ -5,7 +5,7 @@ a = Analysis(
     ['C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.ico', 'assets'), ('C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.png', 'assets')],
+    datas=[('C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.ico', 'assets'), ('C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\assets\\app_icon.png', 'assets'), ('C:\\Users\\dl971\\Development\\project-Py\\py-Util-Development\\Development-OneNote_Remocon\\OneNote_Remocon_Setting.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

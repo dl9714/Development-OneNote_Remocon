@@ -1,19 +1,19 @@
 {
   "window_geometry": {
-    "x": 122,
-    "y": 124,
-    "width": 1157,
-    "height": 785
+    "x": 141,
+    "y": 130,
+    "width": 916,
+    "height": 848
   },
   "splitter_states": {
-    "main": "AAAA/wAAAAEAAAACAAACZwAAATwA/////wEAAAABAA==",
-    "left": "AAAA/wAAAAEAAAACAAABLwAAAQUA/////wEAAAABAA=="
+    "main": "AAAA/wAAAAEAAAACAAACpgAAAWQA/////wEAAAABAA==",
+    "left": "AAAA/wAAAAEAAAACAAABZwAAAZ4A/////wEAAAABAA=="
   },
   "connection_signature": {
-    "handle": 1052176,
-    "pid": 15012,
+    "handle": 921394,
+    "pid": 16004,
     "class_name": "Framework::CFrame",
-    "title": "업무 관제탑_exe. - OneNote",
+    "title": "커뮤니티 인프라 연결 - OneNote",
     "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
     "exe_name": "onenote.exe"
   },
@@ -32,10 +32,10 @@
           "locked": true,
           "data": [
             {
-              "id": "430239e6-182e-41bf-b289-08ad132ff09c",
-              "name": "IT-기초이론",
+              "id": "d58945de-6bb0-4891-b96f-348bf13e0648",
+              "name": "전자 필기장",
               "target": {
-                "notebook_text": "IT-기초이론",
+                "notebook_text": "전자 필기장",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -43,806 +43,6 @@
                   "handle": 14158858,
                   "pid": 41896,
                   "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "76d624d7-161c-454c-bcc1-13d64b0fc61a",
-              "name": "IT-기초이론",
-              "target": {
-                "notebook_text": "IT-기초이론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1f4dbb15-308f-4203-91e2-0de91be45c22",
-              "name": "IT-실력쌓기",
-              "target": {
-                "notebook_text": "IT-실력쌓기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "63ecdb5c-6f46-4060-b750-4528045aa738",
-              "name": "IT-실력쌓기",
-              "target": {
-                "notebook_text": "IT-실력쌓기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "4d06dfa0-215e-4590-ab92-58f6b1dc5002",
-              "name": "IT-통합분류-실무",
-              "target": {
-                "notebook_text": "IT-통합분류-실무",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "d7fe859b-c3e4-41f7-880f-bd9627e8b844",
-              "name": "IT-통합분류-실무",
-              "target": {
-                "notebook_text": "IT-통합분류-실무",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "da3326fd-0499-456f-af67-737ceee64903",
-              "name": "IT-통합분류-실전",
-              "target": {
-                "notebook_text": "IT-통합분류-실전",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "858e90b1-5007-4fcf-8739-14f1437b9f68",
-              "name": "IT-통합분류-실전",
-              "target": {
-                "notebook_text": "IT-통합분류-실전",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "8f186ffe-9e0a-46c7-9033-e3cbf26c2bd4",
-              "name": "IT-통합분류-이론",
-              "target": {
-                "notebook_text": "IT-통합분류-이론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "d20201c6-da37-4764-925e-862ac99b2304",
-              "name": "IT-통합분류-이론",
-              "target": {
-                "notebook_text": "IT-통합분류-이론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b6330b53-67a5-4031-963b-8bff6fd1ac19",
-              "name": "IT-파이썬",
-              "target": {
-                "notebook_text": "IT-파이썬",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "04ccf409-3b8b-46fd-b82a-8d61745ff527",
-              "name": "IT-파이썬",
-              "target": {
-                "notebook_text": "IT-파이썬",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "41047a3f-3579-47b6-b09a-bda5cf49afd7",
-              "name": "금융-주식-이론",
-              "target": {
-                "notebook_text": "금융-주식-이론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "10b7e234-73f7-4fea-802a-3b4d3da753fe",
-              "name": "금융-주식-이론",
-              "target": {
-                "notebook_text": "금융-주식-이론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "febefb09-934e-4c29-917b-02127c00fc9b",
-              "name": "금융-주식-종가베팅",
-              "target": {
-                "notebook_text": "금융-주식-종가베팅",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "3a73a2ac-d841-4db2-a679-f1b76f99df10",
-              "name": "금융-주식-종가베팅",
-              "target": {
-                "notebook_text": "금융-주식-종가베팅",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "e045a680-15bb-43d6-9e71-13a63b7abbbc",
-              "name": "사업체-유튜브-1대중성",
-              "target": {
-                "notebook_text": "사업체-유튜브-1대중성",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "4d86ca1d-0535-4d0f-b018-3374caeb62f4",
-              "name": "사업체-유튜브-1대중성",
-              "target": {
-                "notebook_text": "사업체-유튜브-1대중성",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "d803e6a2-5b1c-4138-8500-c32e356c8ee7",
-              "name": "사업체-유튜브-2썰 채널",
-              "target": {
-                "notebook_text": "사업체-유튜브-2썰 채널",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "f830393b-1243-45c0-8554-f0b08ff2655e",
-              "name": "사업체-유튜브-2썰 채널",
-              "target": {
-                "notebook_text": "사업체-유튜브-2썰 채널",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "ad89b912-8384-46c1-9dd8-637b4174b94a",
-              "name": "사업체-유튜브-4판매",
-              "target": {
-                "notebook_text": "사업체-유튜브-4판매",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "9b2146b7-2fdb-4c06-9542-bc5bce357d90",
-              "name": "사업체-유튜브-4판매",
-              "target": {
-                "notebook_text": "사업체-유튜브-4판매",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "64aa1eed-79bf-4966-990f-e2357ab63078",
-              "name": "사업체-유튜브-5시니어",
-              "target": {
-                "notebook_text": "사업체-유튜브-5시니어",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1a6706ed-c08f-4b7f-b4e6-86e277806b55",
-              "name": "사업체-유튜브-5시니어",
-              "target": {
-                "notebook_text": "사업체-유튜브-5시니어",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "844a4247-8ef1-45c5-ac4a-27ac3708b30d",
-              "name": "사업체-유튜브-9기타",
-              "target": {
-                "notebook_text": "사업체-유튜브-9기타",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "3604eaa6-8f02-4fcd-8e83-2c72feb02a78",
-              "name": "사업체-유튜브-9기타",
-              "target": {
-                "notebook_text": "사업체-유튜브-9기타",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b8fee077-5e29-406c-862c-eae1924cb1e5",
-              "name": "사업체-유튜브-채널관리자",
-              "target": {
-                "notebook_text": "사업체-유튜브-채널관리자",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "c41a6ed6-22cc-409a-b54a-af2076239453",
-              "name": "사업체-유튜브-채널관리자",
-              "target": {
-                "notebook_text": "사업체-유튜브-채널관리자",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b45d5f7e-5e57-4c05-b84a-4af0265dff30",
-              "name": "사업체-유튜브-판매-요즘뭐가좋니",
-              "target": {
-                "notebook_text": "사업체-유튜브-판매-요즘뭐가좋니",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2af7bd63-b3d7-4b2f-97d4-28602b0a4f8d",
-              "name": "사업체-유튜브-판매-요즘뭐가좋니",
-              "target": {
-                "notebook_text": "사업체-유튜브-판매-요즘뭐가좋니",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "c479c47e-e809-4a40-aeda-53db323a2f28",
-              "name": "사업체-주식 바이럴",
-              "target": {
-                "section_text": "사업체-주식 바이럴",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "section"
-            },
-            {
-              "id": "aa1e4e2e-445a-45c8-9773-e4cd1068304e",
-              "name": "사업체-판매-A프로젝트",
-              "target": {
-                "notebook_text": "사업체-판매-A프로젝트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "92fb568e-2db5-4d7a-877f-f756c945cc53",
-              "name": "사업체-판매-A프로젝트",
-              "target": {
-                "notebook_text": "사업체-판매-A프로젝트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "5ddb6eb4-9da4-4801-8aad-8109f7a65d62",
-              "name": "사업체-판매-프로젝트 생계유지",
-              "target": {
-                "notebook_text": "사업체-판매-프로젝트 생계유지",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2b3b7e78-cc4b-4dc9-a423-d5c5edce3e82",
-              "name": "사업체-판매-프로젝트 생계유지",
-              "target": {
-                "notebook_text": "사업체-판매-프로젝트 생계유지",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "9f3a12bb-ee2b-496d-9d30-e5f28519aa06",
-              "name": "생산성도구-개발방법론",
-              "target": {
-                "notebook_text": "생산성도구-개발방법론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "0f896650-e058-4879-8abe-71be10127b6e",
-              "name": "생산성도구-개발방법론",
-              "target": {
-                "notebook_text": "생산성도구-개발방법론",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "94504534-42c8-438b-9721-12c751ae1418",
-              "name": "생산성도구-도구-클립보드",
-              "target": {
-                "notebook_text": "생산성도구-도구-클립보드",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1c314710-bb93-4c6b-92a4-adfe6f1c9eec",
-              "name": "생산성도구-도구-클립보드",
-              "target": {
-                "section_text": "생산성도구-도구-클립보드",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 9899582,
-                  "pid": 25868,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "section"
-            },
-            {
-              "id": "ed3483cc-ced3-4c90-8c66-6dcf747876f2",
-              "name": "생산성도구-생산성업무_요령",
-              "target": {
-                "notebook_text": "생산성도구-생산성업무_요령",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "87729a77-a8ec-478d-a6d2-684109b8dabc",
-              "name": "생산성도구-생산성업무_요령",
-              "target": {
-                "notebook_text": "생산성도구-생산성업무_요령",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "4d83cf35-661d-44c7-ad89-a3b2f5bcbb20",
-              "name": "생산성도구-성장일기",
-              "target": {
-                "notebook_text": "생산성도구-성장일기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "38352fff-fd50-4158-a182-8e02eeaed5f2",
-              "name": "생산성도구-성장일기",
-              "target": {
-                "notebook_text": "생산성도구-성장일기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b55f7199-6f1e-4c7e-bdea-cbd40d3c6ef4",
-              "name": "생산성도구-업무목표-미니프로젝트",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-미니프로젝트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "63d8bb2a-41e9-458d-8ddc-ad2453afc93a",
-              "name": "생산성도구-업무목표-미니프로젝트",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-미니프로젝트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "ff4e2b1b-3c3c-4754-bfc2-6ebba48d9470",
-              "name": "생산성도구-업무목표-전문사업",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-전문사업",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b97f8aea-b485-4f29-95e7-33638cd2c604",
-              "name": "생산성도구-업무목표-전문사업",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-전문사업",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "8e9152b8-13c2-4911-88fa-7f04c1b75553",
-              "name": "생산성도구-업무목표-플래너종합",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-플래너종합",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "ca9a5b7c-5a5b-41a6-b60a-eacbe44c9f07",
-              "name": "생산성도구-업무목표-플래너종합",
-              "target": {
-                "notebook_text": "생산성도구-업무목표-플래너종합",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "068dda0c-eada-485b-9d80-13dfd0a0ea91",
-              "name": "생산성도구-업무목표_요령",
-              "target": {
-                "notebook_text": "생산성도구-업무목표_요령",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "67ced17f-c833-47ac-856b-ce6b2beca50c",
-              "name": "생산성도구-업무목표_요령",
-              "target": {
-                "notebook_text": "생산성도구-업무목표_요령",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
                 }
               },
               "type": "notebook"
@@ -864,26 +64,10 @@
               "type": "notebook"
             },
             {
-              "id": "adf33075-abde-427e-998d-cc51d716cfea",
-              "name": "생산성도구-임시 메모",
+              "id": "8e9152b8-13c2-4911-88fa-7f04c1b75553",
+              "name": "생산성도구-업무목표-플래너종합",
               "target": {
-                "notebook_text": "생산성도구-임시 메모",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1e03fae3-887b-4b83-b85b-c4be79be7c5b",
-              "name": "생산성도구-현장-미니프로젝트 템플릿",
-              "target": {
-                "notebook_text": "생산성도구-현장-미니프로젝트 템플릿",
+                "notebook_text": "생산성도구-업무목표-플래너종합",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -896,17 +80,17 @@
               "type": "notebook"
             },
             {
-              "id": "eed2be56-7111-4e89-b30e-edb3c2f63a1e",
-              "name": "생산성도구-현장-미니프로젝트 템플릿",
+              "id": "ff4e2b1b-3c3c-4754-bfc2-6ebba48d9470",
+              "name": "생산성도구-업무목표-전문사업",
               "target": {
-                "notebook_text": "생산성도구-현장-미니프로젝트 템플릿",
+                "notebook_text": "생산성도구-업무목표-전문사업",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -928,22 +112,6 @@
               "type": "notebook"
             },
             {
-              "id": "315d136f-751c-4fff-acd2-b58074abc96c",
-              "name": "생산성도구-현장-미니프로젝트A",
-              "target": {
-                "notebook_text": "생산성도구-현장-미니프로젝트A",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
               "id": "4f037036-e94d-4e5b-85a8-08b93aec10b6",
               "name": "생산성도구-현장-미니프로젝트B",
               "target": {
@@ -960,26 +128,10 @@
               "type": "notebook"
             },
             {
-              "id": "cad45324-8849-4bb9-9fa1-564ced6a035b",
-              "name": "생산성도구-현장-미니프로젝트B",
+              "id": "1e03fae3-887b-4b83-b85b-c4be79be7c5b",
+              "name": "생산성도구-현장-미니프로젝트 템플릿",
               "target": {
-                "notebook_text": "생산성도구-현장-미니프로젝트B",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "adcec193-4b72-4360-9cd5-c2aa9aa4eb8d",
-              "name": "생활-인프라구축",
-              "target": {
-                "notebook_text": "생활-인프라구축",
+                "notebook_text": "생산성도구-현장-미니프로젝트 템플릿",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -992,26 +144,10 @@
               "type": "notebook"
             },
             {
-              "id": "4d799ea2-3184-448c-a851-d39c45f959f0",
-              "name": "생활-인프라구축",
+              "id": "b55f7199-6f1e-4c7e-bdea-cbd40d3c6ef4",
+              "name": "생산성도구-업무목표-미니프로젝트",
               "target": {
-                "notebook_text": "생활-인프라구축",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "e7d84132-ed88-4018-8b8a-611fe68cdf27",
-              "name": "생활-자료",
-              "target": {
-                "notebook_text": "생활-자료",
+                "notebook_text": "생산성도구-업무목표-미니프로젝트",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1024,26 +160,10 @@
               "type": "notebook"
             },
             {
-              "id": "bece0d1b-426b-4115-b807-7c53eeb9d423",
-              "name": "생활-자료",
+              "id": "d803e6a2-5b1c-4138-8500-c32e356c8ee7",
+              "name": "사업체-유튜브-2썰 채널",
               "target": {
-                "notebook_text": "생활-자료",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "377f8f24-c0a7-4cd9-a386-5ffcc991bdce",
-              "name": "소비자사업-관리-계정",
-              "target": {
-                "notebook_text": "소비자사업-관리-계정",
+                "notebook_text": "사업체-유튜브-2썰 채널",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1056,26 +176,10 @@
               "type": "notebook"
             },
             {
-              "id": "7ce4fc19-0382-4faf-8418-08c0d4a1b65c",
-              "name": "소비자사업-관리-계정",
+              "id": "844a4247-8ef1-45c5-ac4a-27ac3708b30d",
+              "name": "사업체-유튜브-9기타",
               "target": {
-                "notebook_text": "소비자사업-관리-계정",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "8d73592c-67cc-4ac2-96e0-dc88f8fa8a8d",
-              "name": "소비자사업-관리-대시보드-배치처리",
-              "target": {
-                "notebook_text": "소비자사업-관리-대시보드-배치처리",
+                "notebook_text": "사업체-유튜브-9기타",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1088,26 +192,10 @@
               "type": "notebook"
             },
             {
-              "id": "8bf901af-2cf9-44cf-85c9-af9e5902a034",
-              "name": "소비자사업-관리-대시보드-배치처리",
+              "id": "e045a680-15bb-43d6-9e71-13a63b7abbbc",
+              "name": "사업체-유튜브-1대중성",
               "target": {
-                "notebook_text": "소비자사업-관리-대시보드-배치처리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "4b6970be-76f8-405c-8b60-0a2d6ac4dd49",
-              "name": "소비자사업-관리-사업장관리-행정관리",
-              "target": {
-                "notebook_text": "소비자사업-관리-사업장관리-행정관리",
+                "notebook_text": "사업체-유튜브-1대중성",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1115,86 +203,6 @@
                   "handle": 14158858,
                   "pid": 41896,
                   "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "9c2e89c8-b936-43ae-b88a-4031d65830f0",
-              "name": "소비자사업-관리-사업장관리-행정관리",
-              "target": {
-                "notebook_text": "소비자사업-관리-사업장관리-행정관리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "7964b06f-17e8-4550-9071-e0bf740a85fb",
-              "name": "소비자사업-기반-통합",
-              "target": {
-                "notebook_text": "소비자사업-기반-통합",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "86a9b093-195f-44f4-acc5-0ee8cdb914a8",
-              "name": "소비자사업-기반-통합",
-              "target": {
-                "notebook_text": "소비자사업-기반-통합",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "76138737-9ddb-481c-b246-8135428e336d",
-              "name": "소비자사업-기획-관리자-기획관리자",
-              "target": {
-                "notebook_text": "소비자사업-기획-관리자-기획관리자",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "cfbc0039-3469-4a79-9b5d-5ee8a4103822",
-              "name": "소비자사업-기획-관리자-기획관리자",
-              "target": {
-                "notebook_text": "소비자사업-기획-관리자-기획관리자",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
                 }
               },
               "type": "notebook"
@@ -1216,26 +224,10 @@
               "type": "notebook"
             },
             {
-              "id": "3f6c2b47-5ece-424c-84b0-f96c3922016e",
-              "name": "소비자사업-기획-관리자-사업체관리자",
+              "id": "b45d5f7e-5e57-4c05-b84a-4af0265dff30",
+              "name": "사업체-유튜브-판매-요즘뭐가좋니",
               "target": {
-                "notebook_text": "소비자사업-기획-관리자-사업체관리자",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "f93c7f4f-7e96-4828-a660-1fcea6b337ed",
-              "name": "소비자사업-기획-창작도구-인간이해",
-              "target": {
-                "notebook_text": "소비자사업-기획-창작도구-인간이해",
+                "notebook_text": "사업체-유튜브-판매-요즘뭐가좋니",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1248,17 +240,33 @@
               "type": "notebook"
             },
             {
-              "id": "6a46ac1a-780d-4e74-8527-56a8f2def29f",
-              "name": "소비자사업-기획-창작도구-인간이해",
+              "id": "377f8f24-c0a7-4cd9-a386-5ffcc991bdce",
+              "name": "소비자사업-관리-계정",
               "target": {
-                "notebook_text": "소비자사업-기획-창작도구-인간이해",
+                "notebook_text": "소비자사업-관리-계정",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "8d73592c-67cc-4ac2-96e0-dc88f8fa8a8d",
+              "name": "소비자사업-관리-대시보드-배치처리",
+              "target": {
+                "notebook_text": "소비자사업-관리-대시보드-배치처리",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -1280,22 +288,6 @@
               "type": "notebook"
             },
             {
-              "id": "eb4e4e1e-102a-4282-8a5f-3339c1ced53d",
-              "name": "소비자사업-기획-창작도구-콘텐츠트릭",
-              "target": {
-                "notebook_text": "소비자사업-기획-창작도구-콘텐츠트릭",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
               "id": "3ae8f88a-38f8-437a-bf46-0846e578b7da",
               "name": "소비자사업-기획-창작도구-타깃",
               "target": {
@@ -1307,22 +299,6 @@
                   "handle": 14158858,
                   "pid": 41896,
                   "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2d5707c0-fd90-4ce7-b2f9-759cd4fac7f4",
-              "name": "소비자사업-기획-창작도구-타깃",
-              "target": {
-                "notebook_text": "소비자사업-기획-창작도구-타깃",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
                 }
               },
               "type": "notebook"
@@ -1344,26 +320,10 @@
               "type": "notebook"
             },
             {
-              "id": "59cbad21-e288-40d4-a598-1d8df607ae34",
-              "name": "소비자사업-기획-창작도구-플랫폼",
+              "id": "f93c7f4f-7e96-4828-a660-1fcea6b337ed",
+              "name": "소비자사업-기획-창작도구-인간이해",
               "target": {
-                "notebook_text": "소비자사업-기획-창작도구-플랫폼",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "0bcedcd1-0eff-4a3f-9d20-acd4e215d773",
-              "name": "소비자사업-마케팅-디자인",
-              "target": {
-                "notebook_text": "소비자사업-마케팅-디자인",
+                "notebook_text": "소비자사업-기획-창작도구-인간이해",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1376,26 +336,10 @@
               "type": "notebook"
             },
             {
-              "id": "618baaae-045a-403f-905e-5ccb69ec8b30",
-              "name": "소비자사업-마케팅-디자인",
+              "id": "76138737-9ddb-481c-b246-8135428e336d",
+              "name": "소비자사업-기획-관리자-기획관리자",
               "target": {
-                "notebook_text": "소비자사업-마케팅-디자인",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "9344a50d-df0f-4307-8447-0cf94e316887",
-              "name": "소비자사업-사업운영 실력",
-              "target": {
-                "notebook_text": "소비자사업-사업운영 실력",
+                "notebook_text": "소비자사업-기획-관리자-기획관리자",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1408,17 +352,49 @@
               "type": "notebook"
             },
             {
-              "id": "193d36fd-3cef-4006-b2ee-d1ea9526541e",
-              "name": "소비자사업-사업운영 실력",
+              "id": "5ddb6eb4-9da4-4801-8aad-8109f7a65d62",
+              "name": "사업체-판매-프로젝트 생계유지",
               "target": {
-                "notebook_text": "소비자사업-사업운영 실력",
+                "notebook_text": "사업체-판매-프로젝트 생계유지",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "7964b06f-17e8-4550-9071-e0bf740a85fb",
+              "name": "소비자사업-기반-통합",
+              "target": {
+                "notebook_text": "소비자사업-기반-통합",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "81419a68-d90f-4e66-acaa-142b52199721",
+              "name": "판매-성장-실력쌓기",
+              "target": {
+                "notebook_text": "판매-성장-실력쌓기",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -1440,26 +416,10 @@
               "type": "notebook"
             },
             {
-              "id": "b604493c-9e52-42e6-98c7-3f432ab4d3d0",
-              "name": "소비자사업-성장-학습허브",
+              "id": "051c9d7b-da01-4870-9827-08921203c85b",
+              "name": "판매-성장-학습허브",
               "target": {
-                "notebook_text": "소비자사업-성장-학습허브",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1dcd69a6-74bf-45c9-80d5-03cb1ca5d877",
-              "name": "소비자사업-컨텐츠-블로그",
-              "target": {
-                "notebook_text": "소비자사업-컨텐츠-블로그",
+                "notebook_text": "판매-성장-학습허브",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1472,26 +432,10 @@
               "type": "notebook"
             },
             {
-              "id": "d75543a3-63a4-4d5a-85b8-7d2411fcc5c4",
-              "name": "소비자사업-컨텐츠-블로그",
+              "id": "27db75d0-0512-447e-ac15-3e98a6a071d8",
+              "name": "판매-성장-작업화",
               "target": {
-                "notebook_text": "소비자사업-컨텐츠-블로그",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "75a7bf77-1600-4df8-b770-48aa998467ac",
-              "name": "유튜브-3후속관리-분쟁",
-              "target": {
-                "notebook_text": "유튜브-3후속관리-분쟁",
+                "notebook_text": "판매-성장-작업화",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1504,26 +448,10 @@
               "type": "notebook"
             },
             {
-              "id": "829d09f8-6178-4994-9d6c-249feda83fef",
-              "name": "유튜브-3후속관리-분쟁",
+              "id": "1feebd94-29cb-4e7d-ace0-b93d8d2ab233",
+              "name": "판매-관리-대시보드-배치처리",
               "target": {
-                "notebook_text": "유튜브-3후속관리-분쟁",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "eff39fbd-a593-40ea-9071-c3a954721e20",
-              "name": "자기개발-운동-헬스",
-              "target": {
-                "notebook_text": "자기개발-운동-헬스",
+                "notebook_text": "판매-관리-대시보드-배치처리",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1536,26 +464,10 @@
               "type": "notebook"
             },
             {
-              "id": "96772a99-85d1-4151-ac7a-51830d784d01",
-              "name": "자기개발-운동-헬스",
+              "id": "3488b223-2130-483d-89d3-21e1580b7c65",
+              "name": "판매-관리-대시보드-실시간",
               "target": {
-                "notebook_text": "자기개발-운동-헬스",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "7e1140fc-785e-4d58-a694-0cfc9962ea49",
-              "name": "자기개발-학습-게임",
-              "target": {
-                "notebook_text": "자기개발-학습-게임",
+                "notebook_text": "판매-관리-대시보드-실시간",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1568,26 +480,10 @@
               "type": "notebook"
             },
             {
-              "id": "06a27a10-bb0e-4586-a2ec-090160a49ab9",
-              "name": "자기개발-학습-게임",
+              "id": "9fcbe51d-aaa0-4f05-b642-b8f33478093a",
+              "name": "판매-관리-후속관리",
               "target": {
-                "notebook_text": "자기개발-학습-게임",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "a77e2c37-2617-47f5-9e15-cdca9a997b9d",
-              "name": "자기개발-학습-공부",
-              "target": {
-                "notebook_text": "자기개발-학습-공부",
+                "notebook_text": "판매-관리-후속관리",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1600,26 +496,10 @@
               "type": "notebook"
             },
             {
-              "id": "2f09d7a1-0176-4cbf-ab5a-2d68ddae01c7",
-              "name": "자기개발-학습-공부",
+              "id": "4b6970be-76f8-405c-8b60-0a2d6ac4dd49",
+              "name": "소비자사업-관리-사업장관리-행정관리",
               "target": {
-                "notebook_text": "자기개발-학습-공부",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "7e3ea187-c3dd-442f-b217-024b434a610d",
-              "name": "자기개발-학습-언어",
-              "target": {
-                "notebook_text": "자기개발-학습-언어",
+                "notebook_text": "소비자사업-관리-사업장관리-행정관리",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1632,26 +512,10 @@
               "type": "notebook"
             },
             {
-              "id": "bbb79330-b795-42c8-9979-7fc3fb7685a1",
-              "name": "자기개발-학습-언어",
+              "id": "55ad0429-5c50-412b-8867-9485690ec8b6",
+              "name": "판매-1소싱-진열구상-소싱컨셉",
               "target": {
-                "notebook_text": "자기개발-학습-언어",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "5a9ad4c1-5698-437c-a253-ccca98b96d59",
-              "name": "자기개발-학습-자가학습 공부법",
-              "target": {
-                "notebook_text": "자기개발-학습-자가학습 공부법",
+                "notebook_text": "판매-1소싱-진열구상-소싱컨셉",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1664,26 +528,58 @@
               "type": "notebook"
             },
             {
-              "id": "f7ff3c23-4f1d-4122-b5eb-3ac103d44eaf",
-              "name": "자기개발-학습-자가학습 공부법",
+              "id": "05f39cc2-1daa-4f68-bf2d-96c1e7a72bb4",
+              "name": "판매-1소싱-진열구상-상품군취급",
               "target": {
-                "notebook_text": "자기개발-학습-자가학습 공부법",
+                "notebook_text": "판매-1소싱-진열구상-상품군취급",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
             },
             {
-              "id": "d58945de-6bb0-4891-b96f-348bf13e0648",
-              "name": "전자 필기장",
+              "id": "2e8cbb7e-482e-4ac0-add1-f48f0fc6a06b",
+              "name": "판매-1소싱-상품준비-상품찾기",
               "target": {
-                "notebook_text": "전자 필기장",
+                "notebook_text": "판매-1소싱-상품준비-상품찾기",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "3fbd5306-2baf-453a-b74f-11f881d3e639",
+              "name": "판매-1소싱-상품준비-소싱리스트",
+              "target": {
+                "notebook_text": "판매-1소싱-상품준비-소싱리스트",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "0ce24d65-2914-4546-a6f8-a43fb214865b",
+              "name": "판매-1소싱-상품준비-상품등록",
+              "target": {
+                "notebook_text": "판매-1소싱-상품준비-상품등록",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1712,182 +608,6 @@
               "type": "notebook"
             },
             {
-              "id": "ecafd879-f279-499d-b6e6-f31f5e3a9cf4",
-              "name": "판매-1소싱-미정리",
-              "target": {
-                "notebook_text": "판매-1소싱-미정리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "0ce24d65-2914-4546-a6f8-a43fb214865b",
-              "name": "판매-1소싱-상품준비-상품등록",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-상품등록",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "018d7f40-ae22-44f8-b24c-3b2c9bca4e07",
-              "name": "판매-1소싱-상품준비-상품등록",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-상품등록",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2e8cbb7e-482e-4ac0-add1-f48f0fc6a06b",
-              "name": "판매-1소싱-상품준비-상품찾기",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-상품찾기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "c14d48eb-ad32-46b9-ba4b-a99d4b8c8d36",
-              "name": "판매-1소싱-상품준비-상품찾기",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-상품찾기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "3fbd5306-2baf-453a-b74f-11f881d3e639",
-              "name": "판매-1소싱-상품준비-소싱리스트",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-소싱리스트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2baf1331-53ac-482a-80bb-19ce9ae0fd50",
-              "name": "판매-1소싱-상품준비-소싱리스트",
-              "target": {
-                "notebook_text": "판매-1소싱-상품준비-소싱리스트",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "05f39cc2-1daa-4f68-bf2d-96c1e7a72bb4",
-              "name": "판매-1소싱-진열구상-상품군취급",
-              "target": {
-                "notebook_text": "판매-1소싱-진열구상-상품군취급",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "06b442ba-b56c-42e7-b64d-c6aedca158dd",
-              "name": "판매-1소싱-진열구상-상품군취급",
-              "target": {
-                "notebook_text": "판매-1소싱-진열구상-상품군취급",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "55ad0429-5c50-412b-8867-9485690ec8b6",
-              "name": "판매-1소싱-진열구상-소싱컨셉",
-              "target": {
-                "notebook_text": "판매-1소싱-진열구상-소싱컨셉",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "730b2c43-7aed-481a-97b1-dd0fe2fffe2e",
-              "name": "판매-1소싱-진열구상-소싱컨셉",
-              "target": {
-                "notebook_text": "판매-1소싱-진열구상-소싱컨셉",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
               "id": "6469cb2c-a86b-4716-823d-562d8550d8bd",
               "name": "판매-2마케팅",
               "target": {
@@ -1899,54 +619,6 @@
                   "handle": 14158858,
                   "pid": 41896,
                   "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "ede16c47-8998-43c5-9e02-0e66da8e1022",
-              "name": "판매-2마케팅",
-              "target": {
-                "notebook_text": "판매-2마케팅",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "938dc2d6-947d-436b-a253-fda2a8fc1e50",
-              "name": "판매-3후속관리-비즈니스 분쟁",
-              "target": {
-                "notebook_text": "판매-3후속관리-비즈니스 분쟁",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "178fd087-a275-402f-a82b-e93938f80822",
-              "name": "판매-3후속관리-비즈니스 분쟁",
-              "target": {
-                "notebook_text": "판매-3후속관리-비즈니스 분쟁",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
                 }
               },
               "type": "notebook"
@@ -1968,26 +640,10 @@
               "type": "notebook"
             },
             {
-              "id": "520b0b20-23c6-4851-b390-b81e1bf3d760",
-              "name": "판매-3후속관리-상품CS",
+              "id": "938dc2d6-947d-436b-a253-fda2a8fc1e50",
+              "name": "판매-3후속관리-비즈니스 분쟁",
               "target": {
-                "notebook_text": "판매-3후속관리-상품CS",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "1feebd94-29cb-4e7d-ace0-b93d8d2ab233",
-              "name": "판매-관리-대시보드-배치처리",
-              "target": {
-                "notebook_text": "판매-관리-대시보드-배치처리",
+                "notebook_text": "판매-3후속관리-비즈니스 분쟁",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -1995,246 +651,6 @@
                   "handle": 14158858,
                   "pid": 41896,
                   "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "2ef822c6-5141-4e62-9a4d-c8fe440c27a8",
-              "name": "판매-관리-대시보드-배치처리",
-              "target": {
-                "notebook_text": "판매-관리-대시보드-배치처리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "3488b223-2130-483d-89d3-21e1580b7c65",
-              "name": "판매-관리-대시보드-실시간",
-              "target": {
-                "notebook_text": "판매-관리-대시보드-실시간",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "14774603-453a-4533-8a8d-12ba9c60dcb3",
-              "name": "판매-관리-대시보드-실시간",
-              "target": {
-                "notebook_text": "판매-관리-대시보드-실시간",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "9fcbe51d-aaa0-4f05-b642-b8f33478093a",
-              "name": "판매-관리-후속관리",
-              "target": {
-                "notebook_text": "판매-관리-후속관리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "a2c6389a-a512-4e51-84dd-98530e8d890e",
-              "name": "판매-관리-후속관리",
-              "target": {
-                "notebook_text": "판매-관리-후속관리",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "81419a68-d90f-4e66-acaa-142b52199721",
-              "name": "판매-성장-실력쌓기",
-              "target": {
-                "notebook_text": "판매-성장-실력쌓기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "b7b00454-a2dc-4c8c-a5bd-fe8b61d1b803",
-              "name": "판매-성장-실력쌓기",
-              "target": {
-                "notebook_text": "판매-성장-실력쌓기",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "27db75d0-0512-447e-ac15-3e98a6a071d8",
-              "name": "판매-성장-작업화",
-              "target": {
-                "notebook_text": "판매-성장-작업화",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "d48649a5-36c7-48d5-b163-80163d08093f",
-              "name": "판매-성장-작업화",
-              "target": {
-                "notebook_text": "판매-성장-작업화",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "051c9d7b-da01-4870-9827-08921203c85b",
-              "name": "판매-성장-학습허브",
-              "target": {
-                "notebook_text": "판매-성장-학습허브",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "099946a6-a956-4bc2-9cd8-88aa57e3804e",
-              "name": "판매-성장-학습허브",
-              "target": {
-                "notebook_text": "판매-성장-학습허브",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "d0524c24-2eb9-4a97-8392-406e3d40925e",
-              "name": "판매-통합분류-실무",
-              "target": {
-                "notebook_text": "판매-통합분류-실무",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "6f480a47-16c7-46c2-8407-aa8dcc7c3a35",
-              "name": "판매-통합분류-실무",
-              "target": {
-                "notebook_text": "판매-통합분류-실무",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "ef58835a-1a2d-4e41-b41f-90d506f33026",
-              "name": "판매-통합분류-실전",
-              "target": {
-                "notebook_text": "판매-통합분류-실전",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 14158858,
-                  "pid": 41896,
-                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "0d1507ec-f208-42ea-8a19-d6f5a0339e68",
-              "name": "판매-통합분류-실전",
-              "target": {
-                "notebook_text": "판매-통합분류-실전",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
                 }
               },
               "type": "notebook"
@@ -2256,17 +672,33 @@
               "type": "notebook"
             },
             {
-              "id": "7b10f444-e6ea-4c05-a79c-9d97ece0126a",
-              "name": "판매-통합분류-이론",
+              "id": "d0524c24-2eb9-4a97-8392-406e3d40925e",
+              "name": "판매-통합분류-실무",
               "target": {
-                "notebook_text": "판매-통합분류-이론",
+                "notebook_text": "판매-통합분류-실무",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "ef58835a-1a2d-4e41-b41f-90d506f33026",
+              "name": "판매-통합분류-실전",
+              "target": {
+                "notebook_text": "판매-통합분류-실전",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -2288,26 +720,10 @@
               "type": "notebook"
             },
             {
-              "id": "52203e54-58a7-4c8f-b19a-0a823afd1796",
-              "name": "판매-통합분류-이론-협업정보",
+              "id": "9344a50d-df0f-4307-8447-0cf94e316887",
+              "name": "소비자사업-사업운영 실력",
               "target": {
-                "notebook_text": "판매-통합분류-이론-협업정보",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
-              "id": "553c4ecc-adc6-4592-b009-91ed144db606",
-              "name": "플레이어-가족",
-              "target": {
-                "notebook_text": "플레이어-가족",
+                "notebook_text": "소비자사업-사업운영 실력",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
@@ -2320,17 +736,161 @@
               "type": "notebook"
             },
             {
-              "id": "49de7ed1-a883-4788-8e71-21cb2ae6ff90",
-              "name": "플레이어-가족",
+              "id": "0bcedcd1-0eff-4a3f-9d20-acd4e215d773",
+              "name": "소비자사업-마케팅-디자인",
               "target": {
-                "notebook_text": "플레이어-가족",
+                "notebook_text": "소비자사업-마케팅-디자인",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "1dcd69a6-74bf-45c9-80d5-03cb1ca5d877",
+              "name": "소비자사업-컨텐츠-블로그",
+              "target": {
+                "notebook_text": "소비자사업-컨텐츠-블로그",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "1f4dbb15-308f-4203-91e2-0de91be45c22",
+              "name": "IT-실력쌓기",
+              "target": {
+                "notebook_text": "IT-실력쌓기",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "b6330b53-67a5-4031-963b-8bff6fd1ac19",
+              "name": "IT-파이썬",
+              "target": {
+                "notebook_text": "IT-파이썬",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "430239e6-182e-41bf-b289-08ad132ff09c",
+              "name": "IT-기초이론",
+              "target": {
+                "notebook_text": "IT-기초이론",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "eff39fbd-a593-40ea-9071-c3a954721e20",
+              "name": "자기개발-운동-헬스",
+              "target": {
+                "notebook_text": "자기개발-운동-헬스",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "5a9ad4c1-5698-437c-a253-ccca98b96d59",
+              "name": "자기개발-학습-자가학습 공부법",
+              "target": {
+                "notebook_text": "자기개발-학습-자가학습 공부법",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "a77e2c37-2617-47f5-9e15-cdca9a997b9d",
+              "name": "자기개발-학습-공부",
+              "target": {
+                "notebook_text": "자기개발-학습-공부",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "7e3ea187-c3dd-442f-b217-024b434a610d",
+              "name": "자기개발-학습-언어",
+              "target": {
+                "notebook_text": "자기개발-학습-언어",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "7e1140fc-785e-4d58-a694-0cfc9962ea49",
+              "name": "자기개발-학습-게임",
+              "target": {
+                "notebook_text": "자기개발-학습-게임",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -2352,22 +912,6 @@
               "type": "notebook"
             },
             {
-              "id": "9cbfe178-5b03-4b6d-bdcd-cda45c3fb2dd",
-              "name": "플레이어-메타인지",
-              "target": {
-                "notebook_text": "플레이어-메타인지",
-                "sig": {
-                  "class_name": "Framework::CFrame",
-                  "exe_name": "onenote.exe",
-                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
-                }
-              },
-              "type": "notebook"
-            },
-            {
               "id": "c5c500fc-45e7-4e2f-9a99-fa373ceae4ab",
               "name": "플레이어-자기개발",
               "target": {
@@ -2384,17 +928,289 @@
               "type": "notebook"
             },
             {
-              "id": "612ded9c-7f34-4dd9-b4d0-0e4038bca177",
-              "name": "플레이어-자기개발",
+              "id": "553c4ecc-adc6-4592-b009-91ed144db606",
+              "name": "플레이어-가족",
               "target": {
-                "notebook_text": "플레이어-자기개발",
+                "notebook_text": "플레이어-가족",
                 "sig": {
                   "class_name": "Framework::CFrame",
                   "exe_name": "onenote.exe",
                   "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                  "handle": 8328460,
-                  "pid": 56340,
-                  "title": "제목 없음 - OneNote"
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "e7d84132-ed88-4018-8b8a-611fe68cdf27",
+              "name": "생활-자료",
+              "target": {
+                "notebook_text": "생활-자료",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "adcec193-4b72-4360-9cd5-c2aa9aa4eb8d",
+              "name": "생활-인프라구축",
+              "target": {
+                "notebook_text": "생활-인프라구축",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "9f3a12bb-ee2b-496d-9d30-e5f28519aa06",
+              "name": "생산성도구-개발방법론",
+              "target": {
+                "notebook_text": "생산성도구-개발방법론",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "ed3483cc-ced3-4c90-8c66-6dcf747876f2",
+              "name": "생산성도구-생산성업무_요령",
+              "target": {
+                "notebook_text": "생산성도구-생산성업무_요령",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "068dda0c-eada-485b-9d80-13dfd0a0ea91",
+              "name": "생산성도구-업무목표_요령",
+              "target": {
+                "notebook_text": "생산성도구-업무목표_요령",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "4d83cf35-661d-44c7-ad89-a3b2f5bcbb20",
+              "name": "생산성도구-성장일기",
+              "target": {
+                "notebook_text": "생산성도구-성장일기",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "64aa1eed-79bf-4966-990f-e2357ab63078",
+              "name": "사업체-유튜브-5시니어",
+              "target": {
+                "notebook_text": "사업체-유튜브-5시니어",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "b8fee077-5e29-406c-862c-eae1924cb1e5",
+              "name": "사업체-유튜브-채널관리자",
+              "target": {
+                "notebook_text": "사업체-유튜브-채널관리자",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "ad89b912-8384-46c1-9dd8-637b4174b94a",
+              "name": "사업체-유튜브-4판매",
+              "target": {
+                "notebook_text": "사업체-유튜브-4판매",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "41047a3f-3579-47b6-b09a-bda5cf49afd7",
+              "name": "금융-주식-이론",
+              "target": {
+                "notebook_text": "금융-주식-이론",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "febefb09-934e-4c29-917b-02127c00fc9b",
+              "name": "금융-주식-종가베팅",
+              "target": {
+                "notebook_text": "금융-주식-종가베팅",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "aa1e4e2e-445a-45c8-9773-e4cd1068304e",
+              "name": "사업체-판매-A프로젝트",
+              "target": {
+                "notebook_text": "사업체-판매-A프로젝트",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "75a7bf77-1600-4df8-b770-48aa998467ac",
+              "name": "유튜브-3후속관리-분쟁",
+              "target": {
+                "notebook_text": "유튜브-3후속관리-분쟁",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "da3326fd-0499-456f-af67-737ceee64903",
+              "name": "IT-통합분류-실전",
+              "target": {
+                "notebook_text": "IT-통합분류-실전",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "8f186ffe-9e0a-46c7-9033-e3cbf26c2bd4",
+              "name": "IT-통합분류-이론",
+              "target": {
+                "notebook_text": "IT-통합분류-이론",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "4d06dfa0-215e-4590-ab92-58f6b1dc5002",
+              "name": "IT-통합분류-실무",
+              "target": {
+                "notebook_text": "IT-통합분류-실무",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
+                }
+              },
+              "type": "notebook"
+            },
+            {
+              "id": "94504534-42c8-438b-9721-12c751ae1418",
+              "name": "생산성도구-도구-클립보드",
+              "target": {
+                "notebook_text": "생산성도구-도구-클립보드",
+                "sig": {
+                  "class_name": "Framework::CFrame",
+                  "exe_name": "onenote.exe",
+                  "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                  "handle": 14158858,
+                  "pid": 41896,
+                  "title": "신채널 개설예정. 2025-09-23 - OneNote"
                 }
               },
               "type": "notebook"
@@ -2440,6 +1256,40 @@
                 {
                   "children": [
                     {
+                      "children": [
+                        {
+                          "id": "1c314710-bb93-4c6b-92a4-adfe6f1c9eec",
+                          "name": "생산성도구-도구-클립보드",
+                          "target": {
+                            "section_text": "생산성도구-도구-클립보드",
+                            "sig": {
+                              "class_name": "Framework::CFrame",
+                              "exe_name": "onenote.exe",
+                              "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                              "handle": 9899582,
+                              "pid": 25868,
+                              "title": "제목 없음 - OneNote"
+                            }
+                          },
+                          "type": "section"
+                        },
+                        {
+                          "id": "de2726ff-71c4-4285-b6a2-92949947a9aa",
+                          "name": "생산성도구-도구-클립보드",
+                          "target": {
+                            "section_text": "생산성도구-도구-클립보드",
+                            "sig": {
+                              "class_name": "Framework::CFrame",
+                              "exe_name": "onenote.exe",
+                              "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
+                              "handle": 9899582,
+                              "pid": 25868,
+                              "title": "제목 없음 - OneNote"
+                            }
+                          },
+                          "type": "section"
+                        }
+                      ],
                       "id": "63d8bb2a-41e9-458d-8ddc-ad2453afc93a",
                       "name": "생산성도구-업무목표-미니프로젝트",
                       "target": {
@@ -2502,22 +1352,6 @@
                         }
                       },
                       "type": "notebook"
-                    },
-                    {
-                      "id": "1c314710-bb93-4c6b-92a4-adfe6f1c9eec",
-                      "name": "생산성도구-도구-클립보드",
-                      "target": {
-                        "section_text": "생산성도구-도구-클립보드",
-                        "sig": {
-                          "class_name": "Framework::CFrame",
-                          "exe_name": "onenote.exe",
-                          "exe_path": "C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE",
-                          "handle": 9899582,
-                          "pid": 25868,
-                          "title": "제목 없음 - OneNote"
-                        }
-                      },
-                      "type": "section"
                     }
                   ],
                   "id": "ef392abf-99dd-460e-bd59-6ecaae3e9c4c",
@@ -3951,7 +2785,7 @@
       "children": []
     }
   ],
-  "active_buffer_id": "bc8bae2d-b105-4331-867c-b5cd0bc25710",
+  "active_buffer_id": "d8ae884e-c149-494c-bca3-2c3a99416c76",
   "debug_hotpaths": false,
   "debug_perf_logs": false,
   "last_backup_dir": "C:/Users/dl971/OneDrive/7.코딩/만든 프로그램 exe/py-Util-Development/OneNote_Remocon/OneNote_Remocon_아카이빙"
