@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QPushButton,
     QLabel,
     QDialog,
@@ -53,6 +54,8 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QComboBox,
     QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
 )
 from PyQt6.QtCore import (
     QThread,
@@ -3593,7 +3596,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
 
         return {
             "title": title or "코덱스 작업",
-            "body": body or "코덱스가 OneNote COM API로 작성한 메모입니다.",
+            "body": body or "코덱스가 작성한 메모입니다.",
             "target": target or profile.get("path", ""),
             "notebook": profile.get("notebook", ""),
             "section_group": profile.get("section_group", ""),
@@ -3865,8 +3868,7 @@ $json
                 self._codex_requests_dir(),
                 f"{time.strftime('%Y%m%d-%H%M%S')}-codex-target-audit.md",
             )
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self._codex_target_audit_report_text())
+            self._write_text_file_atomic(path, self._codex_target_audit_report_text())
             self._refresh_codex_work_order_list(path)
             QMessageBox.information(self, "작업 위치 진단 저장 완료", path)
         except Exception as e:
@@ -4403,7 +4405,39 @@ $one.NavigateTo($newNotebookId)
         preview = getattr(self, "codex_template_preview", None)
         if preview is None:
             return
-        preview.setPlainText(self._selected_codex_template_text())
+        self._set_plain_text_if_changed(preview, self._selected_codex_template_text())
+
+    def _set_plain_text_if_changed(self, widget: Optional[QTextEdit], text: str) -> None:
+        if widget is None:
+            return
+        if widget.toPlainText() != text:
+            widget.setPlainText(text)
+
+    def _set_label_text_if_changed(self, widget: Optional[QLabel], text: str) -> None:
+        if widget is None:
+            return
+        if widget.text() != text:
+            widget.setText(text)
+
+    def _schedule_codex_codegen_previews(self, *args) -> None:
+        timer = getattr(self, "_codex_codegen_preview_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(120)
+            timer.timeout.connect(self._update_codex_codegen_previews)
+            self._codex_codegen_preview_timer = timer
+        timer.start()
+
+    def _schedule_codex_skill_call_preview(self, *args) -> None:
+        timer = getattr(self, "_codex_skill_preview_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(120)
+            timer.timeout.connect(self._update_codex_skill_call_preview)
+            self._codex_skill_preview_timer = timer
+        timer.start()
 
     def _update_codex_codegen_previews(self) -> None:
         self._update_codex_request_preview()
@@ -4424,6 +4458,20 @@ $one.NavigateTo($newNotebookId)
     def _codex_skills_dir(self) -> str:
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         return os.path.join(root, "docs", "codex", "skills")
+
+    def _codex_instructions_dir(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "instructions")
+
+    def _codex_internal_instructions_path(self) -> str:
+        return os.path.join(self._codex_instructions_dir(), "onenote-com-internal.md")
+
+    def _codex_internal_reference_text(self) -> str:
+        return (
+            "OneNote 조작 방식, 대상 ID, PowerShell 패턴, 검증 기준은 "
+            "`docs/codex/instructions/`와 `docs/codex/onenote-targets.json`에서 "
+            "필요할 때 조회한다. 사용자 요청문이나 작업 주문서에는 내부 지침 전문을 붙이지 않는다."
+        )
 
     def _codex_requests_dir(self) -> str:
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -4446,6 +4494,162 @@ $one.NavigateTo($newNotebookId)
     def _codex_skill_audit_path(self) -> str:
         return os.path.join(self._codex_skills_dir(), "skill-audit.md")
 
+    def _write_text_file_atomic(self, path: str, text: str) -> bool:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                if f.read() == text:
+                    return False
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+        tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+        return True
+
+    def _write_json_file_atomic(self, path: str, payload: Any) -> bool:
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        return self._write_text_file_atomic(path, text)
+
+    def _codex_builtin_internal_instructions_text(self) -> str:
+        return """# 코덱스 전용 OneNote 조작 지침
+
+이 문서는 사용자 스킬이 아니다. OneNote 작업을 수행하는 Codex가 항상 전제로 삼는 내부 실행 지침이다.
+
+## 기본 원칙
+
+- OneNote 조작은 화면 클릭 자동화보다 Windows OneNote COM API를 우선 사용한다.
+- PowerShell에서는 `New-Object -ComObject OneNote.Application`으로 연결한다.
+- 구조 탐색은 기본적으로 `GetHierarchy('', hsSections, ref xml)`까지만 사용한다. `hsPages` 전체 조회는 페이지가 많으면 느리므로 필요한 경우에만 제한적으로 사용한다.
+- `docs/codex/onenote-targets.json`에 대상 ID가 있으면 전체 계층 탐색보다 ID 직접 호출을 우선한다.
+- 완료 검증은 화면 캡처보다 `GetHierarchy` 또는 `GetPageContent` 결과로 확인한다.
+
+## 대상 ID 확인
+
+- 전자필기장, 섹션 그룹, 섹션 이름이 중복될 수 있으므로 상위 경로까지 함께 제한해 찾는다.
+- 새 대상 ID를 찾으면 `docs/codex/onenote-targets.json`에 저장한다.
+- ID가 비었거나 실패할 때만 `GetHierarchy('', hsSections, ref xml)`로 다시 찾아 갱신한다.
+
+## 페이지 추가
+
+- 페이지 추가는 대상 `Section ID`로 `CreateNewPage`를 호출한다.
+- 새 페이지 XML은 `GetPageContent`로 읽고 제목과 본문을 수정한다.
+- 반영은 `UpdatePageContent`로 처리한다.
+- 작성 후 `GetPageContent`로 제목과 본문 일부가 들어갔는지 확인한다.
+- 사용자가 화면 확인을 원할 때만 마지막에 `NavigateTo(pageId)`를 호출한다.
+
+## 섹션 생성
+
+- 섹션 생성은 대상 `SectionGroup ID`를 먼저 확보한다.
+- `OpenHierarchy("섹션명.one", sectionGroupId, ref newId, cftSection)`를 사용한다.
+- 섹션명은 파일명으로 쓸 수 없는 문자를 정리하고 `.one` 확장자를 붙인다.
+- 생성 후 `GetHierarchy(sectionGroupId, hsSections, ref xml)`로 새 섹션 이름을 확인한다.
+
+## 섹션 그룹 생성
+
+- 섹션 그룹의 부모는 전자필기장 또는 기존 섹션 그룹이어야 한다. 섹션 안에는 만들 수 없다.
+- `OpenHierarchy("그룹명", parentId, ref newId, cftFolder)`를 사용한다.
+- 생성 후 `GetHierarchy(parentId, hsSections, ref xml)`로 새 그룹 이름을 확인한다.
+- 자주 쓸 그룹이면 새 ID를 대상 캐시에 저장한다.
+
+## 전자필기장 생성/열기
+
+- 새 전자필기장은 OneNote가 열 수 있는 로컬 또는 동기화 경로를 먼저 확정한다.
+- 웹 OneDrive URL을 그대로 쓰지 말고 실제 파일 시스템 경로를 확인한다.
+- `OpenHierarchy(notebookPath, "", ref newId, cftNotebook)`를 사용한다.
+- 완료 후 `GetHierarchy("", hsNotebooks, ref xml)` 또는 `hsSections`로 열린 전자필기장을 확인한다.
+
+## 보고 기준
+
+- 사용자 요청문, 작업 주문서, 사용자 스킬 호출문에는 이 문서의 전문이나 PowerShell 템플릿을 붙이지 않는다.
+- 사용자가 별도로 내부 절차를 요청하지 않았다면 코덱스가 필요할 때 이 폴더의 지침과 대상 캐시를 직접 조회한다.
+- 사용자가 내부 구현 절차를 요청하지 않았다면 COM 호출 세부사항을 길게 설명하지 않는다.
+- 최종 보고에는 변경한 OneNote 항목과 검증 결과만 간단히 남긴다.
+- 실패하면 어느 대상 ID, 경로, 검증 단계에서 막혔는지 짧게 보고한다.
+"""
+
+    def _codex_internal_instructions_text(self) -> str:
+        path = self._codex_internal_instructions_path()
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    text = f.read().strip()
+                if text:
+                    return text
+        except Exception:
+            pass
+        return self._codex_builtin_internal_instructions_text()
+
+    def _ensure_codex_internal_instructions_file(self) -> str:
+        path = self._codex_internal_instructions_path()
+        if not os.path.exists(path):
+            self._write_text_file_atomic(
+                path,
+                self._codex_builtin_internal_instructions_text(),
+            )
+        return path
+
+    def _save_codex_internal_instructions(self) -> None:
+        editor = getattr(self, "codex_internal_instructions_editor", None)
+        if editor is None:
+            return
+        try:
+            path = self._codex_internal_instructions_path()
+            text = editor.toPlainText().strip()
+            if not text:
+                text = self._codex_builtin_internal_instructions_text()
+                editor.setPlainText(text)
+            self._write_text_file_atomic(path, text + "\n")
+            self._update_codex_codegen_previews()
+            try:
+                self.connection_status_label.setText(f"코덱스 전용 지침 저장 완료: {path}")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "코덱스 전용 지침 저장 실패", str(e))
+
+    def _reload_codex_internal_instructions(self) -> None:
+        editor = getattr(self, "codex_internal_instructions_editor", None)
+        if editor is None:
+            return
+        try:
+            self._ensure_codex_internal_instructions_file()
+            editor.setPlainText(self._codex_internal_instructions_text())
+            self._update_codex_codegen_previews()
+            try:
+                self.connection_status_label.setText("코덱스 전용 지침을 다시 불러왔습니다.")
+            except Exception:
+                pass
+        except Exception as e:
+            QMessageBox.warning(self, "코덱스 전용 지침 불러오기 실패", str(e))
+
+    def _copy_codex_internal_instructions_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_internal_instructions_text())
+        try:
+            self.connection_status_label.setText("코덱스 전용 지침을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _open_codex_instructions_folder(self) -> None:
+        try:
+            os.makedirs(self._codex_instructions_dir(), exist_ok=True)
+            os.startfile(self._codex_instructions_dir())
+        except Exception as e:
+            QMessageBox.warning(self, "코덱스 전용 지침 폴더 열기 실패", str(e))
+
     def _codex_skill_templates(self) -> Dict[str, Dict[str, str]]:
         return {
             "writing": {
@@ -4466,7 +4670,7 @@ $one.NavigateTo($newNotebookId)
 - OneNote에는 제목과 본문을 분리해서 작성한다.
 
 검증:
-- 생성된 페이지 제목과 본문을 `GetPageContent`로 확인한다.
+- 제목과 본문이 위 형식을 충족하는지 확인한다.
 """,
             },
             "daily_log": {
@@ -4598,7 +4802,7 @@ $one.NavigateTo($newNotebookId)
 작업 기준:
 - 삭제보다 이동/이름 변경을 우선한다.
 - 전자필기장/섹션/페이지 계층을 먼저 조회한 뒤 작업한다.
-- 가능한 경우 OneNote COM API의 `GetHierarchy` 결과로 대상을 확인한다.
+- 보존할 항목과 바꿀 위치를 작업 전에 분리해서 적는다.
 
 검증:
 - 작업 전후 계층 구조를 비교한다.
@@ -4659,17 +4863,52 @@ $one.NavigateTo($newNotebookId)
             "body": body,
         }
 
+    def _codex_skill_metadata_from_file(
+        self, path: str, fallback_name: str = ""
+    ) -> Dict[str, str]:
+        stat = os.stat(path)
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cache = getattr(self, "_codex_skill_metadata_cache", {})
+        cached = cache.get(path)
+        if cached and cached[0] == signature:
+            return dict(cached[1])
+
+        with open(path, "r", encoding="utf-8") as f:
+            meta = self._codex_skill_metadata_from_text(f.read(), fallback_name)
+
+        cache[path] = (signature, dict(meta))
+        if len(cache) > 256:
+            for old_path in list(cache)[: len(cache) - 256]:
+                cache.pop(old_path, None)
+        self._codex_skill_metadata_cache = cache
+        return dict(meta)
+
     def _codex_next_skill_order(self) -> str:
         used: Set[int] = set()
         skills_dir = self._codex_skills_dir()
+        try:
+            records = getattr(self, "_codex_skill_records", [])
+            records_mtime = getattr(self, "_codex_skill_records_dir_mtime", None)
+            if records and records_mtime == os.path.getmtime(skills_dir):
+                for record in records:
+                    match = re.search(r"(\d+)", record.get("order", ""))
+                    if match:
+                        used.add(int(match.group(1)))
+                n = 1
+                while n in used:
+                    n += 1
+                return f"SK-{n:03d}"
+        except Exception:
+            used.clear()
+
         try:
             for filename in os.listdir(skills_dir):
                 if not filename.lower().endswith(".md"):
                     continue
                 if filename in ("README.md", "skill-order-index.md", "skill-audit.md"):
                     continue
-                with open(os.path.join(skills_dir, filename), "r", encoding="utf-8") as f:
-                    meta = self._codex_skill_metadata_from_text(f.read(), filename[:-3])
+                path = os.path.join(skills_dir, filename)
+                meta = self._codex_skill_metadata_from_file(path, filename[:-3])
                 match = re.search(r"(\d+)", meta.get("order", ""))
                 if match:
                     used.add(int(match.group(1)))
@@ -4693,9 +4932,9 @@ $one.NavigateTo($newNotebookId)
 
         text = "\n".join(
             [
-                "# 코덱스 & 원노트 스킬 주문번호표",
+                "# 사용자 스킬 주문번호표",
                 "",
-                "사용자가 주문번호로 스킬을 지시하면 이 표에서 해당 Markdown 파일을 찾아 따른다.",
+                "사용자가 주문번호로 스킬을 지시하면 이 표에서 해당 Markdown 파일을 찾아 따른다. OneNote 조작 방식은 `docs/codex/instructions`의 코덱스 전용 지침에서 관리한다.",
                 "",
                 "| 주문번호 | 스킬 이름 | 파일 | 호출 조건 |",
                 "| --- | --- | --- | --- |",
@@ -4703,8 +4942,7 @@ $one.NavigateTo($newNotebookId)
                 "",
             ]
         )
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
+        self._write_text_file_atomic(path, text)
 
     def _codex_skill_search_key(self, *parts: Any) -> str:
         text = " ".join("" if p is None else str(p) for p in parts)
@@ -4714,6 +4952,8 @@ $one.NavigateTo($newNotebookId)
         skill_list = getattr(self, "codex_skill_list", None)
         if skill_list is None:
             return
+        current_path = self._selected_codex_skill_path()
+        skill_list.blockSignals(True)
         skill_list.clear()
         for skill in records:
             order_no = skill.get("order", "")
@@ -4722,6 +4962,23 @@ $one.NavigateTo($newNotebookId)
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, skill.get("path", ""))
             skill_list.addItem(item)
+        if current_path:
+            for i in range(skill_list.count()):
+                item = skill_list.item(i)
+                if item.data(Qt.ItemDataRole.UserRole) == current_path:
+                    skill_list.setCurrentRow(i)
+                    break
+        skill_list.blockSignals(False)
+
+    def _schedule_filter_codex_skill_list(self, *args) -> None:
+        timer = getattr(self, "_codex_skill_filter_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(120)
+            timer.timeout.connect(self._filter_codex_skill_list)
+            self._codex_skill_filter_timer = timer
+        timer.start()
 
     def _filter_codex_skill_list(self) -> None:
         records = getattr(self, "_codex_skill_records", [])
@@ -4789,7 +5046,7 @@ $one.NavigateTo($newNotebookId)
         request_title = _line_text("codex_request_title_input")
         request_body = _plain_text("codex_request_body_editor")
 
-        return f"""이 프로젝트의 코덱스 & 원노트 스킬 주문번호 `{order_no}`를 조회해서 그대로 따라라.
+        return f"""이 프로젝트의 사용자 스킬 주문번호 `{order_no}`를 조회해서 요청에 맞게 적용해라.
 
 조회 위치:
 - docs/codex/skills/skill-order-index.md
@@ -4809,10 +5066,9 @@ $one.NavigateTo($newNotebookId)
 추가 내용:
 {request_body or "- 현재 선택된 스킬의 Instructions를 우선 적용한다."}
 
-실행 기준:
-- 스킬 파일의 `## Instructions`와 `## OneNote COM Guardrails`를 우선 따른다.
-- OneNote는 가능하면 화면 클릭보다 COM API로 조작한다.
-- 완료 검증은 가능한 한 OneNote 내부 조회 결과로 확인한다.
+적용 기준:
+- 사용자 스킬 파일에서는 `## Instructions`만 요청에 맞게 적용한다.
+- OneNote 내부 조작 방식은 사용자 스킬이 아니라 코덱스 전용 지침에서 필요할 때 조회한다.
 """
 
     def _update_codex_skill_call_preview(self) -> None:
@@ -4821,7 +5077,7 @@ $one.NavigateTo($newNotebookId)
             self._update_codex_work_order_preview()
             self._update_codex_status_summary()
             return
-        preview.setPlainText(self._codex_skill_call_prompt_text())
+        self._set_plain_text_if_changed(preview, self._codex_skill_call_prompt_text())
         self._update_codex_work_order_preview()
         self._update_codex_status_summary()
 
@@ -4878,20 +5134,11 @@ $one.NavigateTo($newNotebookId)
         except Exception:
             request_text = ""
 
-        try:
-            template_text = self._selected_codex_template_text()
-        except Exception:
-            template_text = ""
-
         return f"""# 코덱스 작업 주문서
 
 생성 시각: {timestamp}
 
-## 스킬 호출
-
-{self._codex_skill_call_prompt_text()}
-
-## 선택 스킬
+## 사용자 스킬
 
 - 주문번호: {order_no or "미지정"}
 - 스킬명: {skill_name or "미지정"}
@@ -4910,19 +5157,13 @@ $one.NavigateTo($newNotebookId)
 ```text
 {request_text}
 ```
-
-## 작업 템플릿
-
-```powershell
-{template_text}
-```
 """
 
     def _update_codex_work_order_preview(self) -> None:
         preview = getattr(self, "codex_work_order_preview", None)
         if preview is None:
             return
-        preview.setPlainText(self._codex_work_order_text())
+        self._set_plain_text_if_changed(preview, self._codex_work_order_text())
 
     def _copy_codex_work_order_to_clipboard(self) -> None:
         QApplication.clipboard().setText(self._codex_work_order_text())
@@ -4938,10 +5179,8 @@ $one.NavigateTo($newNotebookId)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         filename = f"{stamp}-{order_no}-{self._codex_skill_slug(name)}.md"
         try:
-            os.makedirs(self._codex_requests_dir(), exist_ok=True)
             path = os.path.join(self._codex_requests_dir(), filename)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
+            self._write_text_file_atomic(path, text)
             try:
                 self.connection_status_label.setText(f"코덱스 작업 주문서 저장 완료: {path}")
             except Exception:
@@ -4953,16 +5192,6 @@ $one.NavigateTo($newNotebookId)
 
     def _codex_context_pack_text(self) -> str:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-
-        try:
-            target_json = self._codex_target_profile_json_text()
-        except Exception:
-            target_json = "{}"
-
-        try:
-            target_audit = self._codex_target_audit_report_text()
-        except Exception:
-            target_audit = ""
 
         try:
             page_reader_summary = self._codex_page_reader_result_summary_text()
@@ -4978,11 +5207,6 @@ $one.NavigateTo($newNotebookId)
             request_text = self._codex_request_text()
         except Exception:
             request_text = ""
-
-        try:
-            template_text = self._selected_codex_template_text()
-        except Exception:
-            template_text = ""
 
         try:
             work_order_text = self._codex_work_order_text()
@@ -5046,11 +5270,15 @@ $one.NavigateTo($newNotebookId)
         return f"""# 코덱스 컨텍스트 패키지
 생성 시각: {timestamp}
 
-이 문서는 다음 코덱스 작업에 필요한 현재 OneNote 작업 위치, 요청문, 스킬 호출문, 템플릿, 주문번호표를 한 번에 묶은 자료입니다.
+이 문서는 다음 코덱스 작업에 필요한 사용자 요청, 작업 위치, 사용자 스킬 자료를 묶은 자료입니다.
 
 ## 바로 실행할 지시
 
-아래 `스킬 호출문`과 `작업 주문서`를 기준으로 OneNote 작업을 수행해라. 화면 클릭보다 OneNote COM API 조회/수정/검증을 우선한다.
+아래 사용자 요청과 작업 주문서를 기준으로 OneNote 작업을 수행해라.
+
+## 내부 자료 위치
+
+{self._codex_internal_reference_text()}
 
 ## 초압축 실행 프롬프트
 
@@ -5086,18 +5314,6 @@ $one.NavigateTo($newNotebookId)
 
 {skill_call}
 
-## 작업 위치 JSON
-
-```json
-{target_json}
-```
-
-## 작업 위치 진단
-
-```markdown
-{target_audit}
-```
-
 ## 페이지 읽기 결과 요약
 
 ```markdown
@@ -5128,12 +5344,6 @@ $one.NavigateTo($newNotebookId)
 {checklist_text}
 ```
 
-## OneNote PowerShell 템플릿
-
-```powershell
-{template_text}
-```
-
 ## 현재 스킬 초안
 
 ````markdown
@@ -5157,7 +5367,7 @@ $one.NavigateTo($newNotebookId)
         preview = getattr(self, "codex_context_pack_preview", None)
         if preview is None:
             return
-        preview.setPlainText(self._codex_context_pack_text())
+        self._set_plain_text_if_changed(preview, self._codex_context_pack_text())
 
     def _copy_codex_context_pack_to_clipboard(self) -> None:
         QApplication.clipboard().setText(self._codex_context_pack_text())
@@ -5173,10 +5383,8 @@ $one.NavigateTo($newNotebookId)
         stamp = time.strftime("%Y%m%d-%H%M%S")
         filename = f"{stamp}-codex-context-pack.md"
         try:
-            os.makedirs(self._codex_requests_dir(), exist_ok=True)
             path = os.path.join(self._codex_requests_dir(), filename)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(text)
+            self._write_text_file_atomic(path, text)
             try:
                 self.connection_status_label.setText(
                     f"코덱스 컨텍스트 패키지 저장 완료: {path}"
@@ -5192,12 +5400,21 @@ $one.NavigateTo($newNotebookId)
         try:
             if not os.path.isdir(folder):
                 return 0
-            return sum(
+            folder_mtime = os.path.getmtime(folder)
+            cache = getattr(self, "_codex_markdown_file_count_cache", {})
+            cached = cache.get(folder)
+            if cached and cached[0] == folder_mtime:
+                return cached[1]
+
+            count = sum(
                 1
                 for filename in os.listdir(folder)
                 if filename.lower().endswith(".md")
                 and filename not in ("README.md", "skill-order-index.md", "skill-audit.md")
             )
+            cache[folder] = (folder_mtime, count)
+            self._codex_markdown_file_count_cache = cache
+            return count
         except Exception:
             return 0
 
@@ -5231,6 +5448,18 @@ $one.NavigateTo($newNotebookId)
             target = {}
 
         draft_state = "있음" if os.path.exists(self._codex_request_draft_path()) else "없음"
+        self._codex_last_status_snapshot = {
+            "skill_count": skill_count,
+            "request_count": request_count,
+            "target_count": target_count,
+            "draft_state": draft_state,
+            "target": target,
+            "action": action,
+            "title": title,
+            "request_target": request_target,
+            "skill_order": skill_order,
+            "skill_name": skill_name,
+        }
 
         return f"""코덱스 현재 상태
 
@@ -5257,25 +5486,23 @@ $one.NavigateTo($newNotebookId)
 
     def _update_codex_status_summary(self) -> None:
         preview = getattr(self, "codex_status_summary_preview", None)
+        summary_text = self._codex_status_summary_text()
         if preview is not None:
-            preview.setPlainText(self._codex_status_summary_text())
+            self._set_plain_text_if_changed(preview, summary_text)
 
         try:
-            skill_count = self._codex_markdown_file_count(self._codex_skills_dir())
-            request_count = self._codex_markdown_file_count(self._codex_requests_dir())
-            target_count = len(self._load_codex_targets())
+            snapshot = getattr(self, "_codex_last_status_snapshot", {})
+            skill_count = snapshot.get("skill_count", 0)
+            request_count = snapshot.get("request_count", 0)
+            target_count = snapshot.get("target_count", 0)
             draft_state = (
-                "저장됨" if os.path.exists(self._codex_request_draft_path()) else "대기"
+                "저장됨" if snapshot.get("draft_state") == "있음" else "대기"
             )
-            target = self._codex_target_from_fields()
-
-            action = ""
-            title = ""
-            try:
-                action = self.codex_request_action_combo.currentText().strip()
-                title = self.codex_request_title_input.text().strip()
-            except Exception:
-                pass
+            target = snapshot.get("target", {})
+            action = snapshot.get("action", "")
+            title = snapshot.get("title", "")
+            skill_order = snapshot.get("skill_order", "")
+            skill_name = snapshot.get("skill_name", "")
 
             hero_values = {
                 "codex_metric_target_value": f"{target_count}개",
@@ -5288,11 +5515,23 @@ $one.NavigateTo($newNotebookId)
                     or "작업 위치 미지정"
                 ),
                 "codex_hero_request_value": title or action or "요청 대기 중",
+                "codex_copy_target_value": (
+                    target.get("path")
+                    or target.get("name")
+                    or "작업 위치 미지정"
+                ),
+                "codex_copy_skill_value": (
+                    " / ".join(
+                        part for part in (skill_order, skill_name) if part
+                    )
+                    or "선택 스킬 미지정"
+                ),
+                "codex_copy_request_value": title or action or "요청 대기 중",
             }
             for attr, value in hero_values.items():
                 widget = getattr(self, attr, None)
                 if widget is not None:
-                    widget.setText(value)
+                    self._set_label_text_if_changed(widget, value)
         except Exception:
             pass
 
@@ -5300,6 +5539,64 @@ $one.NavigateTo($newNotebookId)
         QApplication.clipboard().setText(self._codex_status_summary_text())
         try:
             self.connection_status_label.setText("코덱스 현재 상태 요약을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_current_target_copy_text(self) -> str:
+        try:
+            target = self._codex_target_from_fields()
+        except Exception:
+            target = {}
+        path = target.get("path", "") or target.get("name", "")
+        parts = [
+            f"작업 위치: {path or '미지정'}",
+            f"전자필기장: {target.get('notebook', '') or '미지정'}",
+            f"섹션 그룹: {target.get('section_group', '') or '미지정'}",
+            f"섹션: {target.get('section', '') or '미지정'}",
+        ]
+        return "\n".join(parts)
+
+    def _copy_codex_current_target_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_current_target_copy_text())
+        try:
+            self.connection_status_label.setText("현재 작업 위치를 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_current_skill_copy_text(self) -> str:
+        order_no = ""
+        skill_name = ""
+        try:
+            order_no = self.codex_skill_order_input.text().strip()
+            skill_name = self.codex_skill_name_input.text().strip()
+        except Exception:
+            pass
+        path = self._selected_codex_skill_path()
+        return "\n".join(
+            [
+                f"주문번호: {order_no or '미지정'}",
+                f"스킬명: {skill_name or '미지정'}",
+                f"파일: {path or '미선택'}",
+            ]
+        )
+
+    def _copy_codex_current_skill_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_current_skill_copy_text())
+        try:
+            self.connection_status_label.setText("현재 선택 스킬을 클립보드에 복사했습니다.")
+        except Exception:
+            pass
+
+    def _codex_current_request_copy_text(self) -> str:
+        try:
+            return self._codex_visible_request_text()
+        except Exception:
+            return ""
+
+    def _copy_codex_current_request_to_clipboard(self) -> None:
+        QApplication.clipboard().setText(self._codex_current_request_copy_text())
+        try:
+            self.connection_status_label.setText("현재 요청 요약을 클립보드에 복사했습니다.")
         except Exception:
             pass
 
@@ -5316,6 +5613,41 @@ $one.NavigateTo($newNotebookId)
             return ""
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
+
+    def _schedule_refresh_codex_work_order_list(self, *args) -> None:
+        timer = getattr(self, "_codex_work_order_list_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(160)
+            timer.timeout.connect(self._refresh_codex_work_order_list)
+            self._codex_work_order_list_timer = timer
+        timer.start()
+
+    def _codex_work_order_search_text(self, path: str, filename: str) -> str:
+        try:
+            mtime = os.path.getmtime(path)
+        except Exception:
+            return filename
+
+        cache = getattr(self, "_codex_work_order_search_text_cache", {})
+        cached = cache.get(path)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
+        text = filename
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text += "\n" + f.read(8000)
+        except Exception:
+            pass
+
+        cache[path] = (mtime, text)
+        if len(cache) > 256:
+            for old_path in list(cache)[: len(cache) - 256]:
+                cache.pop(old_path, None)
+        self._codex_work_order_search_text_cache = cache
+        return text
 
     def _refresh_codex_work_order_list(self, selected_path: str = "") -> None:
         order_list = getattr(self, "codex_work_order_list", None)
@@ -5340,12 +5672,7 @@ $one.NavigateTo($newNotebookId)
                 except Exception:
                     mtime = 0.0
                 if query_key:
-                    haystack = filename
-                    try:
-                        with open(path, "r", encoding="utf-8") as f:
-                            haystack += "\n" + f.read(8000)
-                    except Exception:
-                        pass
+                    haystack = self._codex_work_order_search_text(path, filename)
                     if query_key not in self._codex_skill_search_key(haystack):
                         continue
                 records.append((mtime, filename, path))
@@ -5520,7 +5847,7 @@ $one.NavigateTo($newNotebookId)
         prompt = f"""아래 이전 OneNote 작업 주문서를 이어서 처리해라.
 
 먼저 기존 주문서의 대상 위치, 스킬, 요청문을 요약하고, 이어서 필요한 다음 행동만 제안해라.
-실행이 필요하면 OneNote COM API를 우선 사용하고, 완료 후 `GetHierarchy` 또는 `GetPageContent`로 검증해라.
+실행이 필요하면 코덱스 전용 OneNote 조작 지침을 따르고, 완료 후 변경 항목과 검증 결과만 간단히 보고해라.
 
 ## 이전 작업 주문서
 
@@ -5558,8 +5885,10 @@ $one.NavigateTo($newNotebookId)
                     text = f.read()
                 if "## Instructions" not in text:
                     issues.append(f"- Instructions 섹션 없음: `{record.get('filename', '')}`")
-                if "## OneNote COM Guardrails" not in text:
-                    issues.append(f"- Guardrails 섹션 없음: `{record.get('filename', '')}`")
+                if "## OneNote COM Guardrails" in text:
+                    issues.append(
+                        f"- 사용자 스킬에 내부 지침 섹션이 남아 있음: `{record.get('filename', '')}`"
+                    )
             except Exception as e:
                 issues.append(f"- 파일 읽기 실패: `{record.get('filename', '')}` ({e})")
 
@@ -5575,7 +5904,7 @@ $one.NavigateTo($newNotebookId)
         issue_text = "\n".join(issues) if issues else "- 문제 없음"
         return "\n".join(
             [
-                "# 코덱스 & 원노트 스킬 진단",
+                "# 사용자 스킬 진단",
                 "",
                 f"생성 시각: {time.strftime('%Y-%m-%d %H:%M:%S')}",
                 f"스킬 수: {len(records)}",
@@ -5602,9 +5931,10 @@ $one.NavigateTo($newNotebookId)
 
     def _save_codex_skill_audit_report(self) -> None:
         try:
-            os.makedirs(self._codex_skills_dir(), exist_ok=True)
-            with open(self._codex_skill_audit_path(), "w", encoding="utf-8") as f:
-                f.write(self._codex_skill_audit_report())
+            self._write_text_file_atomic(
+                self._codex_skill_audit_path(),
+                self._codex_skill_audit_report(),
+            )
             try:
                 self.connection_status_label.setText(
                     f"스킬 진단 리포트 저장 완료: {self._codex_skill_audit_path()}"
@@ -5659,22 +5989,11 @@ $one.NavigateTo($newNotebookId)
                 return
 
     def _recommended_codex_skill_order(self) -> str:
-        action = ""
-        try:
-            action = self.codex_request_action_combo.currentText()
-        except Exception:
-            pass
-
-        if "전자필기장" in action:
-            return "SK-005"
-        if "섹션 그룹" in action or "섹션그룹" in action:
-            return "SK-004"
-        if "섹션" in action:
-            return "SK-003"
-        if "글쓰기" in action:
-            return "SK-001"
-        if "페이지" in action:
-            return "SK-002"
+        ranked = self._rank_codex_skill_records()
+        if ranked:
+            order_no = ranked[0].get("record", {}).get("order", "")
+            if order_no:
+                return order_no
         return "SK-001"
 
     def _select_recommended_codex_skill(self) -> None:
@@ -5706,8 +6025,7 @@ $one.NavigateTo($newNotebookId)
         path = self._selected_codex_skill_path()
         if path and os.path.exists(path):
             try:
-                with open(path, "r", encoding="utf-8") as f:
-                    meta = self._codex_skill_metadata_from_text(f.read(), os.path.basename(path)[:-3])
+                meta = self._codex_skill_metadata_from_file(path, os.path.basename(path)[:-3])
             except Exception as e:
                 QMessageBox.warning(self, "스킬 복제 실패", str(e))
                 return
@@ -5729,8 +6047,10 @@ $one.NavigateTo($newNotebookId)
             path = os.path.join(skills_dir, self._codex_skill_slug(new_name) + ".md")
             if os.path.exists(path):
                 path = os.path.join(skills_dir, self._codex_skill_slug(f"{new_name}-{new_order}") + ".md")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self._codex_skill_markdown(new_name, new_trigger, new_body, new_order))
+            self._write_text_file_atomic(
+                path,
+                self._codex_skill_markdown(new_name, new_trigger, new_body, new_order),
+            )
             self._refresh_codex_skill_list()
             self.codex_skill_order_lookup_input.setText(new_order)
             self._select_codex_skill_by_order_input()
@@ -5809,13 +6129,7 @@ $one.NavigateTo($newNotebookId)
 
 ## Instructions
 
-{body or "여기에 스킬 실행 절차, OneNote 대상 경로, COM API 템플릿, 검증 방법을 적는다."}
-
-## OneNote COM Guardrails
-
-- 화면 클릭보다 OneNote COM API를 우선 사용한다.
-- 대상 ID가 있으면 `GetHierarchy` 전체 탐색보다 ID 직접 호출을 우선한다.
-- 검증은 `GetHierarchy` 또는 `GetPageContent`를 우선 사용한다.
+{body or "여기에 스킬 실행 절차, 입력 형식, 출력 기준, 검증 기준을 적는다."}
 """
 
     def _new_codex_skill_draft(self) -> None:
@@ -5850,8 +6164,7 @@ $one.NavigateTo($newNotebookId)
                     continue
                 path = os.path.join(skills_dir, filename)
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        meta = self._codex_skill_metadata_from_text(f.read(), filename[:-3])
+                    meta = self._codex_skill_metadata_from_file(path, filename[:-3])
                     existing_names.add(self._codex_skill_search_key(meta.get("name", "")))
                 except Exception:
                     existing_names.add(self._codex_skill_search_key(filename[:-3]))
@@ -5867,15 +6180,15 @@ $one.NavigateTo($newNotebookId)
                     path = os.path.join(
                         skills_dir, self._codex_skill_slug(f"{name}-{order_no}") + ".md"
                     )
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(
-                        self._codex_skill_markdown(
-                            name,
-                            template.get("trigger", ""),
-                            template.get("body", ""),
-                            order_no,
-                        )
-                    )
+                self._write_text_file_atomic(
+                    path,
+                    self._codex_skill_markdown(
+                        name,
+                        template.get("trigger", ""),
+                        template.get("body", ""),
+                        order_no,
+                    ),
+                )
                 created.append(f"{order_no} {name}")
                 existing_names.add(self._codex_skill_search_key(name))
 
@@ -5900,7 +6213,6 @@ $one.NavigateTo($newNotebookId)
         skill_list = getattr(self, "codex_skill_list", None)
         if skill_list is None:
             return
-        skill_list.clear()
         skills_dir = self._codex_skills_dir()
         try:
             os.makedirs(skills_dir, exist_ok=True)
@@ -5917,8 +6229,7 @@ $one.NavigateTo($newNotebookId)
                 name = filename[:-3]
                 trigger = ""
                 try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        meta = self._codex_skill_metadata_from_text(f.read(), name)
+                    meta = self._codex_skill_metadata_from_file(path, name)
                     order_no = meta.get("order", "")
                     name = meta.get("name", name)
                     trigger = meta.get("trigger", "")
@@ -5937,6 +6248,10 @@ $one.NavigateTo($newNotebookId)
                 key=lambda s: (s.get("order") or "ZZZ", s.get("name") or "")
             )
             self._codex_skill_records = skill_index_rows
+            try:
+                self._codex_skill_records_dir_mtime = os.path.getmtime(skills_dir)
+            except Exception:
+                self._codex_skill_records_dir_mtime = None
             self._filter_codex_skill_list()
             self._write_codex_skill_order_index(skill_index_rows)
         except Exception as e:
@@ -5970,10 +6285,11 @@ $one.NavigateTo($newNotebookId)
             self.codex_skill_order_input.setText(order_no)
         skills_dir = self._codex_skills_dir()
         try:
-            os.makedirs(skills_dir, exist_ok=True)
             path = os.path.join(skills_dir, self._codex_skill_slug(name) + ".md")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(self._codex_skill_markdown(name, trigger, body, order_no))
+            self._write_text_file_atomic(
+                path,
+                self._codex_skill_markdown(name, trigger, body, order_no),
+            )
             self._refresh_codex_skill_list()
             self._update_codex_skill_call_preview()
             try:
@@ -5986,6 +6302,8 @@ $one.NavigateTo($newNotebookId)
             QMessageBox.warning(self, "스킬 저장 실패", str(e))
 
     def _load_selected_codex_skill(self, item: Optional[QListWidgetItem] = None) -> None:
+        if item is not None and not isinstance(item, QListWidgetItem):
+            item = None
         if item is None:
             skill_list = getattr(self, "codex_skill_list", None)
             item = skill_list.currentItem() if skill_list is not None else None
@@ -5995,13 +6313,11 @@ $one.NavigateTo($newNotebookId)
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-            meta = self._codex_skill_metadata_from_text(text, item.text())
+            meta = self._codex_skill_metadata_from_file(path, item.text())
             self.codex_skill_order_input.setText(meta.get("order", ""))
             self.codex_skill_name_input.setText(meta.get("name", ""))
             self.codex_skill_trigger_input.setText(meta.get("trigger", ""))
-            self.codex_skill_body_editor.setPlainText(meta.get("body", text))
+            self.codex_skill_body_editor.setPlainText(meta.get("body", ""))
             self._update_codex_skill_call_preview()
             try:
                 self.connection_status_label.setText(f"코덱스 스킬 불러옴: {path}")
@@ -6039,27 +6355,41 @@ $one.NavigateTo($newNotebookId)
         path = self._codex_targets_path()
         try:
             if os.path.exists(path):
+                file_mtime = os.path.getmtime(path)
+                cached = getattr(self, "_codex_targets_cache", None)
+                if cached and cached[0] == file_mtime:
+                    return [dict(t) for t in cached[1]]
+
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 targets = data.get("targets") if isinstance(data, dict) else data
                 if isinstance(targets, list) and targets:
-                    return [t for t in targets if isinstance(t, dict)]
+                    normalized = [dict(t) for t in targets if isinstance(t, dict)]
+                    self._codex_targets_cache = (file_mtime, normalized)
+                    return [dict(t) for t in normalized]
         except Exception as e:
             try:
                 self.connection_status_label.setText(f"코덱스 작업 위치 로드 실패: {e}")
             except Exception:
                 pass
-        return self._default_codex_targets()
+        defaults = self._default_codex_targets()
+        self._codex_targets_cache = (None, defaults)
+        return [dict(t) for t in defaults]
 
     def _write_codex_targets(self, targets: List[Dict[str, str]]) -> None:
         path = self._codex_targets_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
         payload = {
             "version": 1,
             "targets": targets,
         }
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
+        self._write_json_file_atomic(path, payload)
+        try:
+            self._codex_targets_cache = (
+                os.path.getmtime(path),
+                [dict(t) for t in targets if isinstance(t, dict)],
+            )
+        except Exception:
+            self._codex_targets_cache = None
 
     def _selected_codex_target_profile(self) -> Dict[str, str]:
         combo = getattr(self, "codex_target_combo", None)
@@ -6102,6 +6432,8 @@ $one.NavigateTo($newNotebookId)
         for attr, value in mapping.items():
             widget = getattr(self, attr, None)
             if widget is not None:
+                if widget.text() == value:
+                    continue
                 widget.blockSignals(True)
                 widget.setText(value)
                 widget.blockSignals(False)
@@ -6131,11 +6463,167 @@ $one.NavigateTo($newNotebookId)
         if target_input is None:
             return
         profile = self._codex_target_from_fields()
-        target_input.setText(
+        target_text = (
             profile.get("path")
             or "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
         )
-        self._update_codex_codegen_previews()
+        if target_input.text() != target_text:
+            target_input.setText(target_text)
+        self._schedule_codex_codegen_previews()
+
+    def _codex_target_profile_from_fav_item(
+        self, item: Optional[QTreeWidgetItem]
+    ) -> Dict[str, str]:
+        if item is None:
+            return {}
+
+        try:
+            node_type = item.data(0, ROLE_TYPE)
+        except Exception:
+            return {}
+
+        if node_type not in ("section", "notebook"):
+            return {}
+
+        def _clean(value: Any) -> str:
+            if value is None:
+                return ""
+            return str(value).strip()
+
+        try:
+            payload = item.data(0, ROLE_DATA) or {}
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        target = payload.get("target") or {}
+        if not isinstance(target, dict):
+            target = {}
+
+        display_name = _clean(item.text(0))
+        notebook = _clean(
+            target.get("notebook")
+            or target.get("notebook_text")
+            or target.get("notebookName")
+        )
+        section_group = _clean(
+            target.get("section_group")
+            or target.get("section_group_text")
+            or target.get("sectionGroup")
+            or target.get("sectionGroupName")
+        )
+        section = _clean(
+            target.get("section")
+            or target.get("section_text")
+            or target.get("sectionName")
+        )
+
+        ancestors: List[tuple[str, str]] = []
+        parent = item.parent()
+        while parent is not None:
+            try:
+                parent_type = _clean(parent.data(0, ROLE_TYPE))
+                parent_name = _clean(parent.text(0))
+            except Exception:
+                parent_type = ""
+                parent_name = ""
+            if parent_name:
+                ancestors.append((parent_type, parent_name))
+            parent = parent.parent()
+        ancestors.reverse()
+
+        if node_type == "notebook":
+            notebook = notebook or display_name
+            section_group = ""
+            section = ""
+        else:
+            section = section or display_name
+            if not notebook:
+                for ancestor_type, ancestor_name in ancestors:
+                    if ancestor_type == "notebook":
+                        notebook = ancestor_name
+                        break
+            if not section_group:
+                group_names = [
+                    ancestor_name
+                    for ancestor_type, ancestor_name in ancestors
+                    if ancestor_type == "group"
+                ]
+                if group_names:
+                    section_group = group_names[-1]
+
+        path = _clean(target.get("path") or target.get("hierarchy_path"))
+        if not path:
+            path_parts: List[str] = []
+            for candidate in (notebook, section_group, section):
+                if candidate and candidate not in path_parts:
+                    path_parts.append(candidate)
+            if not path_parts:
+                path_parts = [name for _, name in ancestors]
+                if display_name:
+                    path_parts.append(display_name)
+            path = " > ".join(path_parts)
+
+        if node_type == "notebook":
+            name = notebook or display_name or path or "전자필기장"
+        else:
+            name_parts = [part for part in (notebook, section) if part]
+            name = " - ".join(name_parts) or display_name or path or "섹션"
+
+        section_group_id = _clean(
+            target.get("section_group_id")
+            or target.get("sectionGroupId")
+            or target.get("section_group_id_text")
+        )
+        section_id = _clean(target.get("section_id") or target.get("sectionId"))
+        if node_type == "section" and not section_id:
+            section_id = _clean(target.get("id"))
+
+        return {
+            "name": name,
+            "path": path,
+            "notebook": notebook,
+            "section_group": section_group,
+            "section": section,
+            "section_group_id": section_group_id,
+            "section_id": section_id,
+        }
+
+    def _sync_codex_target_from_fav_item(
+        self,
+        item: Optional[QTreeWidgetItem],
+        *,
+        switch_to_codex: bool = False,
+    ) -> bool:
+        profile = self._codex_target_profile_from_fav_item(item)
+        if not profile:
+            return False
+
+        self._populate_codex_target_fields(profile)
+        self._apply_codex_target_to_request()
+        try:
+            self._update_codex_status_summary()
+        except Exception:
+            pass
+
+        if switch_to_codex:
+            self._scroll_codex_to_widget("codex_target_group_widget")
+
+        try:
+            self.connection_status_label.setText(
+                f"코덱스 작업 위치 반영: {profile.get('path') or profile.get('name')}"
+            )
+        except Exception:
+            pass
+        return True
+
+    def _sync_codex_target_from_current_fav_item(self) -> None:
+        try:
+            item = self.fav_tree.currentItem()
+        except Exception:
+            item = None
+        self._sync_codex_target_from_fav_item(item)
 
     def _save_codex_target_profile(self) -> None:
         profile = self._codex_target_from_fields()
@@ -6180,139 +6668,131 @@ $one.NavigateTo($newNotebookId)
         self._apply_codex_target_to_request()
 
     def _build_codex_target_group(self) -> QWidget:
-        group = QGroupBox("OneNote 작업 위치")
+        group = QWidget()
+        group.setObjectName("CodexCard")
         layout = QVBoxLayout(group)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
 
-        desc = QLabel(
-            "코덱스가 OneNote에서 작업할 위치입니다. 자주 쓰는 위치는 내부적으로 "
-            "자동 기억해서 다음 작업을 더 빠르게 준비합니다."
-        )
+        header = QLabel("📍 OneNote 작업 위치 설정")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
+
+        desc = QLabel("코덱스가 작업할 원노트 위치를 관리합니다. 선택된 위치는 자동으로 기억됩니다.")
+        desc.setObjectName("CodexHeroSubtitle")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         top = QHBoxLayout()
         self.codex_target_combo = QComboBox()
-        self.codex_target_combo.currentIndexChanged.connect(
-            self._on_codex_target_selected
-        )
-        top.addWidget(QLabel("작업 위치"))
+        self.codex_target_combo.currentIndexChanged.connect(self._on_codex_target_selected)
+        top.addWidget(QLabel("저장된 위치"))
         top.addWidget(self.codex_target_combo, stretch=1)
-
-        apply_button = QToolButton()
-        apply_button.setText("요청에 넣기")
-        apply_button.clicked.connect(self._apply_codex_target_to_request)
-        top.addWidget(apply_button)
-
-        save_button = QToolButton()
-        save_button.setText("위치 저장")
-        save_button.clicked.connect(self._save_codex_target_profile)
-        top.addWidget(save_button)
-
-        copy_json_button = QToolButton()
-        copy_json_button.setText("JSON 복사")
-        copy_json_button.clicked.connect(self._copy_codex_target_profile_json_to_clipboard)
-        top.addWidget(copy_json_button)
-
-        copy_all_json_button = QToolButton()
-        copy_all_json_button.setText("전체 JSON")
-        copy_all_json_button.clicked.connect(self._copy_codex_all_targets_json_to_clipboard)
-        top.addWidget(copy_all_json_button)
-
-        paste_json_button = QToolButton()
-        paste_json_button.setText("JSON 불러오기")
-        paste_json_button.clicked.connect(self._save_codex_target_from_clipboard_json)
-        top.addWidget(paste_json_button)
-
-        inventory_import_button = QToolButton()
-        inventory_import_button.setText("인벤토리 등록")
-        inventory_import_button.clicked.connect(self._import_codex_targets_from_clipboard_inventory)
-        top.addWidget(inventory_import_button)
-
-        inventory_preview_button = QToolButton()
-        inventory_preview_button.setText("후보 복사")
-        inventory_preview_button.clicked.connect(self._copy_codex_inventory_target_preview_to_clipboard)
-        top.addWidget(inventory_preview_button)
-
-        target_audit_button = QToolButton()
-        target_audit_button.setText("위치 진단")
-        target_audit_button.clicked.connect(self._copy_codex_target_audit_report_to_clipboard)
-        top.addWidget(target_audit_button)
+        new_target_btn = QToolButton()
+        new_target_btn.setText("➕ 새 위치")
+        new_target_btn.clicked.connect(self._new_codex_target_profile)
+        top.addWidget(new_target_btn)
         layout.addLayout(top)
 
-        def add_line(
-            label_text: str,
-            attr: str,
-            placeholder: str = "",
-            hidden: bool = False,
-        ) -> QLineEdit:
-            row_widget = QWidget()
-            row = QHBoxLayout(row_widget)
-            row.setContentsMargins(0, 0, 0, 0)
-            label = QLabel(label_text)
-            label.setMinimumWidth(110)
-            row.addWidget(label)
+        form_layout = QGridLayout()
+        form_layout.setSpacing(6)
+
+        def add_line(label_text: str, attr: str, placeholder: str = "", hidden: bool = False) -> QLineEdit:
+            lbl = QLabel(label_text)
+            lbl.setMinimumWidth(64)
             field = QLineEdit()
             field.setPlaceholderText(placeholder)
             setattr(self, attr, field)
+
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0,0,0,0)
+            row_layout.setSpacing(4)
+            row_layout.addWidget(lbl)
+            row_layout.addWidget(field, stretch=1)
+
             setattr(self, f"{attr}_row", row_widget)
-            row.addWidget(field, stretch=1)
-            layout.addWidget(row_widget)
+            form_layout.addWidget(row_widget, form_layout.rowCount(), 0)
             row_widget.setVisible(not hidden)
             return field
 
-        self.codex_target_name_input = add_line("위치 이름", "codex_target_name_input")
-        self.codex_target_path_input = add_line(
-            "작업 경로",
-            "codex_target_path_input",
-            "전자필기장 > 섹션그룹 > 섹션",
-        )
-        self.codex_target_notebook_input = add_line(
-            "전자필기장", "codex_target_notebook_input"
-        )
-        self.codex_target_group_input = add_line(
-            "섹션 그룹", "codex_target_group_input"
-        )
+        self.codex_target_name_input = add_line("위치 이름", "codex_target_name_input", "예: 업무일지 전용")
+        self.codex_target_path_input = add_line("작업 경로", "codex_target_path_input", "전자필기장 > 섹션그룹 > 섹션")
+        self.codex_target_notebook_input = add_line("전자필기장", "codex_target_notebook_input")
+        self.codex_target_group_input = add_line("섹션 그룹", "codex_target_group_input")
         self.codex_target_section_input = add_line("섹션", "codex_target_section_input")
-        self.codex_target_group_id_input = add_line(
-            "내부 그룹 ID", "codex_target_group_id_input", hidden=True
-        )
-        self.codex_target_section_id_input = add_line(
-            "내부 섹션 ID", "codex_target_section_id_input", hidden=True
-        )
+        self.codex_target_group_id_input = add_line("그룹 ID", "codex_target_group_id_input", hidden=True)
+        self.codex_target_section_id_input = add_line("섹션 ID", "codex_target_section_id_input", hidden=True)
+        layout.addLayout(form_layout)
 
-        self.codex_target_path_input.textChanged.connect(
-            self._apply_codex_target_to_request
-        )
-        self.codex_target_group_id_input.textChanged.connect(
-            self._update_codex_codegen_previews
-        )
-        self.codex_target_section_id_input.textChanged.connect(
-            self._update_codex_codegen_previews
-        )
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
 
+        apply_btn = QToolButton()
+        apply_btn.setText("🎯 요청에 넣기")
+        apply_btn.setProperty("variant", "primary")
+        apply_btn.clicked.connect(self._apply_codex_target_to_request)
+
+        save_btn = QToolButton()
+        save_btn.setText("💾 위치 저장")
+        save_btn.clicked.connect(self._save_codex_target_profile)
+
+        actions.addWidget(apply_btn, stretch=2)
+        actions.addWidget(save_btn, stretch=1)
+        layout.addLayout(actions)
+
+        util_buttons = QGridLayout()
+        util_buttons.setHorizontalSpacing(6)
+        util_buttons.setVerticalSpacing(6)
+        target_tools = [
+            ("📋 현재 JSON", self._copy_codex_target_profile_json_to_clipboard),
+            ("🗂️ 전체 JSON", self._copy_codex_all_targets_json_to_clipboard),
+            ("📥 JSON 로드", self._save_codex_target_from_clipboard_json),
+            ("🔎 자동 찾기", self._copy_codex_target_discovery_script_to_clipboard),
+            ("🔍 위치 진단", self._copy_codex_target_audit_report_to_clipboard),
+            ("💾 진단 저장", self._save_codex_target_audit_report),
+            ("🧭 인벤토리 스크립트", self._copy_codex_onenote_inventory_script_to_clipboard),
+            ("📌 후보 복사", self._copy_codex_inventory_target_preview_to_clipboard),
+            ("📦 인벤토리 등록", self._import_codex_targets_from_clipboard_inventory),
+            ("📄 페이지 읽기", self._copy_codex_page_reader_script_to_clipboard),
+            ("📝 결과 요약", self._copy_codex_page_reader_result_summary_to_clipboard),
+            ("➕ 결과 반영", self._append_codex_page_reader_result_to_request_body),
+        ]
+        for index, (text, cb) in enumerate(target_tools):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumHeight(28)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(cb)
+            util_buttons.addWidget(btn, index // 2, index % 2)
+        layout.addLayout(util_buttons)
+
+        for attr in (
+            "codex_target_name_input",
+            "codex_target_path_input",
+            "codex_target_notebook_input",
+            "codex_target_group_input",
+            "codex_target_section_input",
+            "codex_target_group_id_input",
+            "codex_target_section_id_input",
+        ):
+            widget = getattr(self, attr, None)
+            if widget is not None:
+                widget.textChanged.connect(self._schedule_codex_codegen_previews)
+        self.codex_target_path_input.textChanged.connect(self._apply_codex_target_to_request)
         self._refresh_codex_target_combo()
+        self._update_codex_codegen_previews()
+
         return group
 
-    def _codex_request_text(self) -> str:
+    def _codex_visible_request_text(self) -> str:
         action = self.codex_request_action_combo.currentText()
         target = self.codex_request_target_input.text().strip()
         title = self.codex_request_title_input.text().strip()
         body = self.codex_request_body_editor.toPlainText().strip()
-        profile = self._codex_target_from_fields()
-        section_group_id = (
-            profile.get("section_group_id")
-            or "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}"
-        )
-        section_id = (
-            profile.get("section_id")
-            or "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}"
-        )
 
-        return f"""OneNote는 화면 클릭으로 조작하지 말고 Windows OneNote COM API를 PowerShell에서 사용해라.
-먼저 `New-Object -ComObject OneNote.Application`으로 연결하고,
-`GetHierarchy('', hsSections, ref xml)`로 전자필기장/섹션그룹/섹션 구조를 확인해라.
-
-작업:
+        return f"""작업:
 {action}
 
 대상 경로:
@@ -6323,24 +6803,16 @@ $one.NavigateTo($newNotebookId)
 
 본문/내용:
 {body or "- 필요한 내용을 여기에 작성한다."}
-
-내부 빠른 위치 정보 (코덱스용):
-- SectionGroup ID: {section_group_id}
-- Section ID: {section_id}
-
-구현 지침:
-- 페이지 추가는 Section ID로 `CreateNewPage + GetPageContent + UpdatePageContent`를 사용해라.
-- 섹션 생성은 SectionGroup ID로 `OpenHierarchy("섹션명.one", sectionGroupId, ref newId, cftSection)`를 사용해라.
-- 섹션 그룹 생성은 `OpenHierarchy("그룹명", parentId, ref newId, cftFolder)`를 사용해라.
-- 새 전자필기장은 저장 경로를 먼저 확인하고 `OpenHierarchy(notebookPath, "", ref newId, cftNotebook)`를 사용해라.
-- 완료 검증은 화면 캡처보다 `GetHierarchy` 또는 `GetPageContent`로 해라.
 """
+
+    def _codex_request_text(self) -> str:
+        return self._codex_visible_request_text()
 
     def _update_codex_request_preview(self) -> None:
         preview = getattr(self, "codex_request_preview", None)
         if preview is None:
             return
-        preview.setPlainText(self._codex_request_text())
+        self._set_plain_text_if_changed(preview, self._codex_visible_request_text())
 
     def _copy_codex_request_to_clipboard(self) -> None:
         text = self._codex_request_text()
@@ -6401,9 +6873,7 @@ $one.NavigateTo($newNotebookId)
     def _save_codex_request_draft(self) -> None:
         try:
             path = self._codex_request_draft_path()
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self._codex_request_draft_payload(), f, ensure_ascii=False, indent=2)
+            self._write_json_file_atomic(path, self._codex_request_draft_payload())
             try:
                 self.connection_status_label.setText(f"코덱스 요청 초안 저장 완료: {path}")
             except Exception:
@@ -6466,27 +6936,27 @@ $one.NavigateTo($newNotebookId)
 - 작업: {request.get("action", "") or "미지정"}
 - 제목/이름: {request.get("title", "") or "미지정"}
 - 대상 경로: {request.get("target", "") or target.get("path", "") or "미지정"}
-- SectionGroup ID: {target.get("section_group_id", "") or "미지정"}
-- Section ID: {target.get("section_id", "") or "미지정"}
+
+## 기준 문서
+
+{self._codex_internal_reference_text()}
 
 ## 실행 전
 
-- OneNote COM 연결을 먼저 확인한다.
-- 대상 전자필기장/섹션/섹션 그룹을 `GetHierarchy`로 조회한다.
-- 내부 ID가 있으면 이름 탐색보다 ID 직접 사용을 우선한다.
+- 필요한 경우 코덱스 전용 OneNote 조작 지침과 대상 캐시를 확인한다.
+- 대상 전자필기장/섹션/섹션 그룹이 맞는지 확인한다.
 - 삭제/이동 작업은 작업 전 구조를 기록한다.
 
 ## 실행 중
 
-- 화면 클릭 자동화보다 OneNote COM API를 우선 사용한다.
-- 페이지 추가는 `CreateNewPage`, `GetPageContent`, `UpdatePageContent` 순서로 처리한다.
-- 섹션/섹션 그룹 생성은 `OpenHierarchy`를 사용한다.
-- 예외가 나면 OneNote 상태와 대상 ID를 다시 조회한다.
+- 실제 OneNote 조작은 코덱스 전용 지침의 작업별 절차를 따른다.
+- 사용자 스킬은 형식/내용 처리 기준으로만 적용한다.
+- 예외가 나면 OneNote 상태와 대상 캐시를 다시 조회한다.
 
 ## 실행 후 검증
 
-- `GetHierarchy` 또는 `GetPageContent`로 결과를 확인한다.
-- 생성/수정한 제목과 본문 일부가 실제 XML에 있는지 확인한다.
+- 코덱스 전용 지침의 검증 기준으로 결과를 확인한다.
+- 생성/수정한 제목과 본문 일부가 실제 반영됐는지 확인한다.
 - 검증 결과와 다음 확인 항목을 사용자에게 짧게 보고한다.
 """
 
@@ -6550,7 +7020,7 @@ $one.NavigateTo($newNotebookId)
         except Exception:
             pass
 
-        return f"""OneNote COM API로 아래 작업을 바로 수행해라. 화면 클릭보다 COM 조회/수정/검증을 우선한다.
+        return f"""코덱스 전용 OneNote 조작 지침에 따라 아래 작업을 바로 수행해라.
 
 스킬:
 - 주문번호: {order_no or "미지정"}
@@ -6560,13 +7030,14 @@ $one.NavigateTo($newNotebookId)
 - 유형: {request.get("action", "") or "미지정"}
 - 제목/이름: {request.get("title", "") or "미지정"}
 - 대상 경로: {request.get("target", "") or target.get("path", "") or "미지정"}
-- SectionGroup ID: {target.get("section_group_id", "") or "미지정"}
-- Section ID: {target.get("section_id", "") or "미지정"}
 
 본문:
 {request.get("body", "") or "- 사용자가 제공한 내용을 OneNote에 정리한다."}
 
-완료 후 `GetHierarchy` 또는 `GetPageContent`로 검증하고, 변경한 항목과 검증 결과만 간단히 보고해라.
+내부 자료:
+{self._codex_internal_reference_text()}
+
+완료 후 변경한 항목과 검증 결과만 간단히 보고해라.
 """
 
     def _copy_codex_compact_prompt_to_clipboard(self) -> None:
@@ -6577,7 +7048,7 @@ $one.NavigateTo($newNotebookId)
             pass
 
     def _codex_review_prompt_text(self) -> str:
-        return f"""아래 OneNote 작업 계획을 검토해라. 실행하지 말고 위험 요소, 빠진 검증, 잘못된 대상 ID 가능성만 점검해라.
+        return f"""아래 OneNote 작업 계획을 검토해라. 실행하지 말고 위험 요소, 빠진 검증, 잘못된 대상 위치 가능성만 점검해라.
 
 ## 현재 상태
 
@@ -6594,7 +7065,6 @@ $one.NavigateTo($newNotebookId)
 검토 결과는 다음 형식으로 짧게 작성해라.
 - 실행 전 막아야 할 문제:
 - 대상 위치 확인 필요:
-- COM API 사용 시 주의:
 - 검증 방법:
 """
 
@@ -6612,11 +7082,9 @@ $one.NavigateTo($newNotebookId)
 
 {self._codex_request_text()}
 
-## 현재 작업 위치
+## 내부 자료
 
-```json
-{self._codex_target_profile_json_text()}
-```
+{self._codex_internal_reference_text()}
 
 출력 형식:
 - 목표:
@@ -6648,7 +7116,7 @@ $one.NavigateTo($newNotebookId)
 
 ## 수행한 작업
 
-- 
+-
 
 ## 변경한 OneNote 항목
 
@@ -6659,13 +7127,13 @@ $one.NavigateTo($newNotebookId)
 
 ## 검증 결과
 
-- 조회 방식: GetHierarchy / GetPageContent
+ - 확인 방식: 코덱스 전용 지침 기준
 - 확인한 값:
 - 결과:
 
 ## 남은 확인 사항
 
-- 
+-
 """
 
     def _copy_codex_completion_report_template_to_clipboard(self) -> None:
@@ -6714,10 +7182,9 @@ $one.NavigateTo($newNotebookId)
             try:
                 path = record.get("path", "")
                 if path and os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
-                        text += "\n" + self._codex_skill_metadata_from_text(
-                            f.read(), record.get("name", "")
-                        ).get("body", "")
+                    text += "\n" + self._codex_skill_metadata_from_file(
+                        path, record.get("name", "")
+                    ).get("body", "")
             except Exception:
                 pass
 
@@ -6822,13 +7289,13 @@ $one.NavigateTo($newNotebookId)
                 "action": "페이지 추가",
                 "title": f"{today} 빠른 메모",
                 "body": """핵심:
-- 
+-
 
 세부 내용:
-- 
+-
 
 다음 행동:
-- 
+-
 """,
             },
             "meeting": {
@@ -6839,16 +7306,16 @@ $one.NavigateTo($newNotebookId)
 참석자:
 
 논의 요약:
-- 
+-
 
 결정 사항:
-- 
+-
 
 액션 아이템:
 - 담당자 / 마감 / 확인 방법:
 
 보류/리스크:
-- 
+-
 """,
             },
             "daily_log": {
@@ -6856,16 +7323,16 @@ $one.NavigateTo($newNotebookId)
                 "action": "나의 기본 글쓰기 형식으로 페이지 작성",
                 "title": f"{today} 업무일지",
                 "body": """오늘 한 일:
-- 
+-
 
 결정한 것:
-- 
+-
 
 막힌 것:
-- 
+-
 
 다음 행동:
-- 
+-
 """,
             },
             "project_plan": {
@@ -6873,22 +7340,22 @@ $one.NavigateTo($newNotebookId)
                 "action": "페이지 추가",
                 "title": "작업 계획",
                 "body": """목표:
-- 
+-
 
 범위:
 - 포함:
 - 제외:
 
 실행 순서:
-1. 
-2. 
-3. 
+1.
+2.
+3.
 
 검증:
-- 
+-
 
 리스크:
-- 
+-
 """,
             },
             "cleanup": {
@@ -6896,19 +7363,19 @@ $one.NavigateTo($newNotebookId)
                 "action": "나의 기본 글쓰기 형식으로 페이지 작성",
                 "title": "OneNote 정리 계획",
                 "body": """현재 위치:
-- 
+-
 
 바꿀 위치:
-- 
+-
 
 정리할 항목:
-- 
+-
 
 보존할 항목:
-- 
+-
 
 검증 방법:
-- GetHierarchy 결과로 전후 구조 확인
+- 작업 전후 구조 확인
 """,
             },
             "weekly_review": {
@@ -6916,18 +7383,18 @@ $one.NavigateTo($newNotebookId)
                 "action": "페이지 추가",
                 "title": f"{today} 주간 회고",
                 "body": """이번 주 완료:
-- 
+-
 
 이번 주 미완료:
-- 
+-
 
 배운 점:
-- 
+-
 
 다음 주 우선순위:
-1. 
-2. 
-3. 
+1.
+2.
+3.
 """,
             },
         }
@@ -7002,8 +7469,8 @@ $one.NavigateTo($newNotebookId)
 
 처리 방식:
 - 작업 위치를 먼저 확인한다.
-- 화면 클릭보다 OneNote COM API를 우선 사용한다.
-- 작성/생성 후 `GetHierarchy` 또는 `GetPageContent`로 결과를 검증한다.
+- 사용자 요청의 형식과 출력 기준을 먼저 정한다.
+- 실제 OneNote 조작 방식은 코덱스 전용 지침을 따른다.
 
 출력:
 - OneNote에 반영한 항목
@@ -7026,146 +7493,136 @@ $one.NavigateTo($newNotebookId)
             pass
 
     def _build_codex_request_group(self) -> QWidget:
-        group = QGroupBox("코덱스 요청 생성기")
+        group = QWidget()
+        group.setObjectName("CodexCard")
         layout = QVBoxLayout(group)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
 
-        preset_row = QHBoxLayout()
+        header = QLabel("✍️ 작업 내용 작성")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
+
+        form = QGridLayout()
+        form.setVerticalSpacing(8)
+        form.setHorizontalSpacing(6)
+        form.setColumnStretch(1, 1)
+
         self.codex_request_preset_combo = QComboBox()
         for key, preset in self._codex_request_presets().items():
             self.codex_request_preset_combo.addItem(preset.get("name", key), key)
-        preset_row.addWidget(QLabel("요청 프리셋"))
+        form.addWidget(QLabel("프리셋"), 0, 0)
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(6)
         preset_row.addWidget(self.codex_request_preset_combo, stretch=1)
+        preset_apply_btn = QToolButton()
+        preset_apply_btn.setText("적용")
+        preset_apply_btn.clicked.connect(self._apply_codex_request_preset)
+        preset_row.addWidget(preset_apply_btn)
+        form.addLayout(preset_row, 0, 1)
 
-        apply_preset_button = QToolButton()
-        apply_preset_button.setText("프리셋 적용")
-        apply_preset_button.clicked.connect(self._apply_codex_request_preset)
-        preset_row.addWidget(apply_preset_button)
-        layout.addLayout(preset_row)
-
-        row1 = QHBoxLayout()
         self.codex_request_action_combo = QComboBox()
         self.codex_request_action_combo.addItems(
-            [
-                "페이지 추가",
-                "새 섹션 생성",
-                "새 섹션 그룹 생성",
-                "새 전자필기장 생성",
-                "나의 기본 글쓰기 형식으로 페이지 작성",
-            ]
+            ["페이지 추가", "새 섹션 생성", "섹션 그룹 생성", "기본 형식 작성"]
         )
-        self.codex_request_action_combo.currentIndexChanged.connect(
-            self._update_codex_codegen_previews
-        )
-        row1.addWidget(QLabel("작업"))
-        row1.addWidget(self.codex_request_action_combo, stretch=1)
-        layout.addLayout(row1)
+        self.codex_request_action_combo.currentIndexChanged.connect(self._schedule_codex_codegen_previews)
+        form.addWidget(QLabel("수행 작업"), 1, 0)
+        form.addWidget(self.codex_request_action_combo, 1, 1)
 
         self.codex_request_target_input = QLineEdit()
-        self.codex_request_target_input.setText(
-            "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
-        )
-        self.codex_request_target_input.textChanged.connect(
-            self._update_codex_codegen_previews
-        )
-        layout.addWidget(QLabel("대상 경로"))
-        layout.addWidget(self.codex_request_target_input)
+        self.codex_request_target_input.setPlaceholderText("전자필기장 > 섹션그룹 > 섹션")
+        self.codex_request_target_input.textChanged.connect(self._schedule_codex_codegen_previews)
+        form.addWidget(QLabel("작업 경로"), 2, 0)
+        form.addWidget(self.codex_request_target_input, 2, 1)
 
         self.codex_request_title_input = QLineEdit()
-        self.codex_request_title_input.setText("코덱스가 사용함")
-        self.codex_request_title_input.textChanged.connect(
-            self._update_codex_codegen_previews
-        )
-        layout.addWidget(QLabel("제목/이름"))
-        layout.addWidget(self.codex_request_title_input)
+        self.codex_request_title_input.setPlaceholderText("항목의 이름을 입력하세요...")
+        self.codex_request_title_input.textChanged.connect(self._schedule_codex_codegen_previews)
+        form.addWidget(QLabel("대상 제목"), 3, 0)
+        form.addWidget(self.codex_request_title_input, 3, 1)
+
+        layout.addLayout(form)
 
         self.codex_request_body_editor = QTextEdit()
-        self.codex_request_body_editor.setMinimumHeight(90)
-        self.codex_request_body_editor.setPlainText("코덱스가 OneNote COM API로 작성한 메모입니다.")
-        self.codex_request_body_editor.textChanged.connect(
-            self._update_codex_codegen_previews
-        )
-        layout.addWidget(QLabel("본문/내용"))
+        self.codex_request_body_editor.setPlaceholderText("구체적인 작업 지시 내용을 입력하세요. (Shift+Enter로 줄바꿈)")
+        self.codex_request_body_editor.setMinimumHeight(130)
+        self.codex_request_body_editor.textChanged.connect(self._schedule_codex_codegen_previews)
         layout.addWidget(self.codex_request_body_editor)
 
-        buttons = QHBoxLayout()
-        copy_button = QToolButton()
-        copy_button.setText("요청문 복사")
-        copy_button.clicked.connect(self._copy_codex_request_to_clipboard)
-        buttons.addWidget(copy_button)
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
 
-        save_draft_button = QToolButton()
-        save_draft_button.setText("초안 저장")
-        save_draft_button.clicked.connect(self._save_codex_request_draft)
-        buttons.addWidget(save_draft_button)
+        copy_btn = QToolButton()
+        copy_btn.setText("🚀 지시문 복사")
+        copy_btn.setProperty("variant", "primary")
+        copy_btn.setMinimumHeight(38)
+        copy_btn.setMinimumWidth(0)
+        copy_btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        copy_btn.clicked.connect(self._copy_codex_request_to_clipboard)
 
-        load_draft_button = QToolButton()
-        load_draft_button.setText("초안 복구")
-        load_draft_button.clicked.connect(self._load_codex_request_draft)
-        buttons.addWidget(load_draft_button)
+        draft_btn = QToolButton()
+        draft_btn.setText("💾 초안")
+        draft_btn.setMinimumHeight(38)
+        draft_btn.setFixedWidth(66)
+        draft_btn.clicked.connect(self._save_codex_request_draft)
 
-        checklist_button = QToolButton()
-        checklist_button.setText("체크리스트 복사")
-        checklist_button.clicked.connect(self._copy_codex_execution_checklist_to_clipboard)
-        buttons.addWidget(checklist_button)
+        load_btn = QToolButton()
+        load_btn.setText("📂 불러오기")
+        load_btn.setMinimumHeight(38)
+        load_btn.setFixedWidth(86)
+        load_btn.clicked.connect(self._load_codex_request_draft)
 
-        append_clip_button = QToolButton()
-        append_clip_button.setText("클립보드 추가")
-        append_clip_button.clicked.connect(self._append_clipboard_to_codex_request_body)
-        buttons.addWidget(append_clip_button)
+        actions.addWidget(copy_btn)
+        actions.addWidget(draft_btn)
+        actions.addWidget(load_btn)
+        layout.addLayout(actions)
 
-        replace_clip_button = QToolButton()
-        replace_clip_button.setText("본문 교체")
-        replace_clip_button.clicked.connect(self._replace_codex_request_body_from_clipboard)
-        buttons.addWidget(replace_clip_button)
+        tool_grid = QGridLayout()
+        tool_grid.setHorizontalSpacing(6)
+        tool_grid.setVerticalSpacing(6)
+        tool_specs = [
+            ("📎 클립보드 추가", self._append_clipboard_to_codex_request_body),
+            ("♻️ 클립보드 교체", self._replace_codex_request_body_from_clipboard),
+            ("➕ 페이지결과 추가", self._append_codex_page_reader_result_to_request_body),
+            ("✔️ 체크리스트", self._copy_codex_execution_checklist_to_clipboard),
+            ("🧩 압축 프롬프트", self._copy_codex_compact_prompt_to_clipboard),
+            ("🛡️ 검토 프롬프트", self._copy_codex_review_prompt_to_clipboard),
+            ("🪜 작업 분해", self._copy_codex_task_breakdown_prompt_to_clipboard),
+            ("📣 완료보고", self._copy_codex_completion_report_template_to_clipboard),
+            ("🎯 추천 스킬 선택", self._select_recommended_codex_skill),
+            ("🧠 요청→스킬", self._new_codex_skill_from_current_request),
+        ]
+        for index, (text, cb) in enumerate(tool_specs):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumHeight(28)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(cb)
+            tool_grid.addWidget(btn, index // 2, index % 2)
+        layout.addLayout(tool_grid)
 
-        page_result_button = QToolButton()
-        page_result_button.setText("페이지결과 추가")
-        page_result_button.clicked.connect(self._append_codex_page_reader_result_to_request_body)
-        buttons.addWidget(page_result_button)
-
-        compact_button = QToolButton()
-        compact_button.setText("압축 프롬프트")
-        compact_button.clicked.connect(self._copy_codex_compact_prompt_to_clipboard)
-        buttons.addWidget(compact_button)
-
-        review_button = QToolButton()
-        review_button.setText("검토 프롬프트")
-        review_button.clicked.connect(self._copy_codex_review_prompt_to_clipboard)
-        buttons.addWidget(review_button)
-
-        breakdown_button = QToolButton()
-        breakdown_button.setText("작업 분해")
-        breakdown_button.clicked.connect(self._copy_codex_task_breakdown_prompt_to_clipboard)
-        buttons.addWidget(breakdown_button)
-
-        report_button = QToolButton()
-        report_button.setText("완료보고")
-        report_button.clicked.connect(self._copy_codex_completion_report_template_to_clipboard)
-        buttons.addWidget(report_button)
-
-        recommend_button = QToolButton()
-        recommend_button.setText("작업별 스킬 선택")
-        recommend_button.clicked.connect(self._select_recommended_codex_skill)
-        buttons.addWidget(recommend_button)
-
-        skill_from_request_button = QToolButton()
-        skill_from_request_button.setText("요청→스킬 초안")
-        skill_from_request_button.clicked.connect(self._new_codex_skill_from_current_request)
-        buttons.addWidget(skill_from_request_button)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
-
+        layout.addWidget(QLabel("생성된 요청문 미리보기"))
         self.codex_request_preview = QTextEdit()
         self.codex_request_preview.setReadOnly(True)
-        self.codex_request_preview.setMinimumHeight(170)
-        layout.addWidget(QLabel("생성된 요청문 (코덱스용)"))
+        self.codex_request_preview.setMinimumHeight(130)
         layout.addWidget(self.codex_request_preview)
         self._update_codex_request_preview()
+
         return group
 
+
+
     def _build_codex_template_group(self) -> QWidget:
-        group = QGroupBox("OneNote 작업 템플릿")
-        layout = QVBoxLayout(group)
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        header = QLabel("📄 OneNote 작업 템플릿")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
         row = QHBoxLayout()
         self.codex_template_combo = QComboBox()
@@ -7173,570 +7630,617 @@ $one.NavigateTo($newNotebookId)
         self.codex_template_combo.addItem("새 섹션 생성", "add_section")
         self.codex_template_combo.addItem("새 섹션 그룹 생성", "add_section_group")
         self.codex_template_combo.addItem("새 전자필기장 생성", "add_notebook")
-        self.codex_template_combo.currentIndexChanged.connect(
-            self._update_codex_template_preview
-        )
+        self.codex_template_combo.currentIndexChanged.connect(self._update_codex_template_preview)
         row.addWidget(self.codex_template_combo, stretch=1)
 
         copy_button = QToolButton()
-        copy_button.setText("템플릿 복사")
+        copy_button.setText("📋 템플릿 복사")
         copy_button.clicked.connect(self._copy_codex_template_to_clipboard)
         row.addWidget(copy_button)
         layout.addLayout(row)
 
         self.codex_template_preview = QTextEdit()
         self.codex_template_preview.setReadOnly(True)
-        self.codex_template_preview.setMinimumHeight(220)
+        self.codex_template_preview.setMinimumHeight(140)
         layout.addWidget(self.codex_template_preview)
         self._update_codex_template_preview()
 
-        return group
+        return card
+
 
     def _build_codex_skill_group(self) -> QWidget:
-        group = QGroupBox("스킬 도움말")
-        layout = QVBoxLayout(group)
-        memo = QTextEdit()
-        memo.setReadOnly(True)
-        memo.setPlainText(
-            """코덱스 & 원노트 스킬은 주문번호로 호출하는 작업 형식입니다.
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-예시:
-- "SK-001 형식으로 임시메모에 페이지 만들어줘"
-- "스킬 주문번호 SK-003 조회해서 그 방식대로 해"
+        header = QLabel("스킬/진단 도구")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
-- 주문번호 검색으로 스킬을 빠르게 찾습니다.
-- 요청 생성기의 작업 종류에 맞는 기본 스킬을 자동으로 선택합니다.
-- 스킬 호출문 복사로 코덱스에게 바로 넘길 문장을 만듭니다.
-- 빠른 도구에서 자주 쓰는 복사/열기/설정 확인 작업을 실행합니다.
-- 작업 주문서로 스킬, 작업 위치, 요청문, 템플릿을 하나의 Markdown으로 묶습니다.
-- 주문서 기록에서 이전 작업 주문서를 다시 복사하거나 열 수 있습니다.
-- 스킬 진단으로 주문번호 중복/누락과 필수 섹션 누락을 점검합니다.
-- 나의 기본 글쓰기 형식
-- OneNote 페이지 생성 템플릿
-- 회의록 / 업무일지 / 아이디어 정리 템플릿
-- 섹션/섹션그룹 생성 규칙
-- 자주 쓰는 작업 위치 자동 기억
+        desc = QLabel("주문번호표, 추천, 진단처럼 자주 쓰지 않는 관리 작업만 모았습니다.")
+        desc.setObjectName("CodexPageSubtitle")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
 
-운영 원칙:
-스킬은 주문번호 + 자연어 지시문 + 필요한 OneNote 작업 방식 + 검증 방법을 같이 저장해야 합니다.
-"""
-        )
-        layout.addWidget(memo)
-        return group
+        tools = QGridLayout()
+        tools.setHorizontalSpacing(6)
+        tools.setVerticalSpacing(6)
+        specs = [
+            ("주문표 복사", self._copy_codex_skill_order_index_to_clipboard),
+            ("추천 리포트", self._copy_codex_skill_recommendation_report_to_clipboard),
+            ("스킬 진단", self._copy_codex_skill_audit_report_to_clipboard),
+            ("진단 저장", self._save_codex_skill_audit_report),
+            ("기본 세트", self._create_default_codex_skill_set),
+            ("스킬 폴더", self._open_codex_skills_folder),
+        ]
+        for index, (text, cb) in enumerate(specs):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumHeight(28)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(cb)
+            tools.addWidget(btn, index // 3, index % 3)
+        layout.addLayout(tools)
+        return card
+
 
     def _build_codex_skill_editor_group(self) -> QWidget:
-        group = QGroupBox("코덱스 & 원노트 스킬")
-        layout = QHBoxLayout(group)
+        root = QWidget()
+        root.setObjectName("CodexSkillEditorRoot")
+        main_layout = QVBoxLayout(root)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(8)
 
-        left = QVBoxLayout()
-        self.codex_skill_list = QListWidget()
-        self.codex_skill_list.itemDoubleClicked.connect(self._load_selected_codex_skill)
-        left.addWidget(QLabel("스킬 주문번호 목록"))
+        editor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        editor_splitter.setChildrenCollapsible(False)
+        editor_splitter.setHandleWidth(4)
+
+        list_panel = QWidget()
+        list_panel.setObjectName("CodexCard")
+        list_layout = QVBoxLayout(list_panel)
+        list_layout.setContentsMargins(8, 8, 8, 8)
+        list_layout.setSpacing(6)
+
+        list_header = QLabel("스킬 목록")
+        list_header.setObjectName("CodexCardTitle")
+        list_layout.addWidget(list_header)
 
         self.codex_skill_search_input = QLineEdit()
-        self.codex_skill_search_input.setPlaceholderText("주문번호/스킬명 검색")
-        self.codex_skill_search_input.textChanged.connect(self._filter_codex_skill_list)
-        left.addWidget(self.codex_skill_search_input)
+        self.codex_skill_search_input.setPlaceholderText("스킬 검색")
+        self.codex_skill_search_input.textChanged.connect(self._schedule_filter_codex_skill_list)
+        list_layout.addWidget(self.codex_skill_search_input)
 
-        lookup_row = QHBoxLayout()
         self.codex_skill_order_lookup_input = QLineEdit()
-        self.codex_skill_order_lookup_input.setPlaceholderText("SK-001 바로 선택")
-        self.codex_skill_order_lookup_input.returnPressed.connect(
-            self._select_codex_skill_by_order_input
-        )
-        lookup_row.addWidget(self.codex_skill_order_lookup_input, stretch=1)
-        lookup_button = QToolButton()
-        lookup_button.setText("선택")
-        lookup_button.clicked.connect(self._select_codex_skill_by_order_input)
-        lookup_row.addWidget(lookup_button)
-        left.addLayout(lookup_row)
+        self.codex_skill_order_lookup_input.setPlaceholderText("주문번호 바로가기")
+        self.codex_skill_order_lookup_input.returnPressed.connect(self._select_codex_skill_by_order_input)
+        list_layout.addWidget(self.codex_skill_order_lookup_input)
 
-        left.addWidget(self.codex_skill_list)
-        refresh_button = QToolButton()
-        refresh_button.setText("주문번호표 새로고침")
-        refresh_button.clicked.connect(self._refresh_codex_skill_list)
-        left.addWidget(refresh_button)
+        self.codex_skill_list = QListWidget()
+        self.codex_skill_list.itemDoubleClicked.connect(self._load_selected_codex_skill)
+        self.codex_skill_list.setMinimumWidth(120)
+        list_layout.addWidget(self.codex_skill_list, stretch=1)
 
-        copy_index_button = QToolButton()
-        copy_index_button.setText("주문번호표 복사")
-        copy_index_button.clicked.connect(self._copy_codex_skill_order_index_to_clipboard)
-        left.addWidget(copy_index_button)
+        list_actions = QGridLayout()
+        list_actions.setHorizontalSpacing(6)
+        list_actions.setVerticalSpacing(6)
+        for index, (text, cb) in enumerate(
+            [
+                ("갱신", self._refresh_codex_skill_list),
+                ("폴더", self._open_codex_skills_folder),
+                ("주문표", self._copy_codex_skill_order_index_to_clipboard),
+                ("추천", self._select_best_codex_skill_recommendation),
+            ]
+        ):
+            btn = QToolButton()
+            btn.setText(text)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(cb)
+            list_actions.addWidget(btn, index // 2, index % 2)
+        list_layout.addLayout(list_actions)
 
-        open_folder_button = QToolButton()
-        open_folder_button.setText("스킬 폴더 열기")
-        open_folder_button.clicked.connect(self._open_codex_skills_folder)
-        left.addWidget(open_folder_button)
+        editor_area = QWidget()
+        editor_area.setObjectName("CodexCard")
+        editor_layout = QVBoxLayout(editor_area)
+        editor_layout.setContentsMargins(8, 8, 8, 8)
+        editor_layout.setSpacing(6)
 
-        path_button = QToolButton()
-        path_button.setText("선택 경로 복사")
-        path_button.clicked.connect(self._copy_selected_codex_skill_path_to_clipboard)
-        left.addWidget(path_button)
+        header_layout = QHBoxLayout()
+        header_title = QLabel("스킬 편집")
+        header_title.setObjectName("CodexCardTitle")
+        header_layout.addWidget(header_title)
+        header_layout.addStretch()
 
-        layout.addLayout(left, stretch=1)
-
-        right = QVBoxLayout()
-        template_row = QHBoxLayout()
         self.codex_skill_template_combo = QComboBox()
         for key, template in self._codex_skill_templates().items():
             self.codex_skill_template_combo.addItem(template.get("name", key), key)
-        template_row.addWidget(QLabel("스킬 템플릿"))
-        template_row.addWidget(self.codex_skill_template_combo, stretch=1)
-        apply_template_button = QToolButton()
-        apply_template_button.setText("템플릿 적용")
-        apply_template_button.clicked.connect(self._apply_codex_skill_template)
-        template_row.addWidget(apply_template_button)
-        right.addLayout(template_row)
+        header_layout.addWidget(QLabel("템플릿"))
+        header_layout.addWidget(self.codex_skill_template_combo)
+
+        apply_btn = QToolButton()
+        apply_btn.setText("적용")
+        apply_btn.setProperty("variant", "secondary")
+        apply_btn.clicked.connect(self._apply_codex_skill_template)
+        header_layout.addWidget(apply_btn)
+        editor_layout.addLayout(header_layout)
+
+        form_layout = QGridLayout()
+        form_layout.setHorizontalSpacing(8)
+        form_layout.setVerticalSpacing(6)
+
+        def add_field(row: int, col: int, label: str, field: QLineEdit, placeholder: str = "", stretch: int = 1):
+            lbl = QLabel(label)
+            lbl.setObjectName("CodexFieldLabel")
+            field.setPlaceholderText(placeholder)
+            form_layout.addWidget(lbl, row, col)
+            form_layout.addWidget(field, row, col + 1)
+            form_layout.setColumnStretch(col + 1, stretch)
 
         self.codex_skill_order_input = QLineEdit()
-        self.codex_skill_order_input.setPlaceholderText("예: SK-001")
-        self.codex_skill_order_input.textChanged.connect(self._update_codex_skill_call_preview)
-        right.addWidget(QLabel("주문번호"))
-        right.addWidget(self.codex_skill_order_input)
+        self.codex_skill_order_input.textChanged.connect(self._schedule_codex_skill_call_preview)
+        self.codex_skill_order_input.setMaximumWidth(92)
+        add_field(0, 0, "번호", self.codex_skill_order_input, "SK-001", 0)
 
         self.codex_skill_name_input = QLineEdit()
-        self.codex_skill_name_input.setPlaceholderText("스킬 이름")
-        self.codex_skill_name_input.textChanged.connect(self._update_codex_skill_call_preview)
-        right.addWidget(QLabel("스킬 이름"))
-        right.addWidget(self.codex_skill_name_input)
+        self.codex_skill_name_input.textChanged.connect(self._schedule_codex_skill_call_preview)
+        add_field(0, 2, "이름", self.codex_skill_name_input, "스킬명", 2)
 
         self.codex_skill_trigger_input = QLineEdit()
-        self.codex_skill_trigger_input.setPlaceholderText("언제 이 스킬을 쓸지")
-        self.codex_skill_trigger_input.textChanged.connect(self._update_codex_skill_call_preview)
-        right.addWidget(QLabel("호출 조건"))
-        right.addWidget(self.codex_skill_trigger_input)
+        self.codex_skill_trigger_input.textChanged.connect(self._schedule_codex_skill_call_preview)
+        trigger_label = QLabel("조건")
+        trigger_label.setObjectName("CodexFieldLabel")
+        self.codex_skill_trigger_input.setPlaceholderText("이 스킬이 사용될 상황")
+        form_layout.addWidget(trigger_label, 1, 0)
+        form_layout.addWidget(self.codex_skill_trigger_input, 1, 1, 1, 3)
 
+        editor_layout.addLayout(form_layout)
+
+        body_preview_splitter = QSplitter(Qt.Orientation.Horizontal)
+        body_preview_splitter.setChildrenCollapsible(False)
+        body_preview_splitter.setHandleWidth(4)
+
+        body_panel = QWidget()
+        body_layout = QVBoxLayout(body_panel)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(6)
+        body_layout.addWidget(QLabel("Instructions"))
         self.codex_skill_body_editor = QTextEdit()
-        self.codex_skill_body_editor.setMinimumHeight(170)
-        self.codex_skill_body_editor.textChanged.connect(self._update_codex_skill_call_preview)
-        right.addWidget(QLabel("스킬 내용"))
-        right.addWidget(self.codex_skill_body_editor)
+        self.codex_skill_body_editor.setPlaceholderText("사용자 요청에 적용할 처리 기준을 작성하세요.")
+        self.codex_skill_body_editor.textChanged.connect(self._schedule_codex_skill_call_preview)
+        self.codex_skill_body_editor.setMinimumHeight(210)
+        body_layout.addWidget(self.codex_skill_body_editor, stretch=1)
 
-        buttons = QHBoxLayout()
-        new_button = QToolButton()
-        new_button.setText("새 스킬")
-        new_button.clicked.connect(self._new_codex_skill_draft)
-        buttons.addWidget(new_button)
-
-        save_button = QToolButton()
-        save_button.setText("스킬 저장")
-        save_button.clicked.connect(self._save_codex_skill_draft)
-        buttons.addWidget(save_button)
-
-        copy_button = QToolButton()
-        copy_button.setText("초안 복사")
-        copy_button.clicked.connect(self._copy_codex_skill_prompt_to_clipboard)
-        buttons.addWidget(copy_button)
-
-        load_button = QToolButton()
-        load_button.setText("선택 불러오기")
-        load_button.clicked.connect(self._load_selected_codex_skill)
-        buttons.addWidget(load_button)
-
-        duplicate_button = QToolButton()
-        duplicate_button.setText("복제")
-        duplicate_button.clicked.connect(self._duplicate_selected_codex_skill)
-        buttons.addWidget(duplicate_button)
-
-        delete_button = QToolButton()
-        delete_button.setText("삭제")
-        delete_button.clicked.connect(self._delete_selected_codex_skill)
-        buttons.addWidget(delete_button)
-
-        clipboard_button = QToolButton()
-        clipboard_button.setText("클립보드→스킬")
-        clipboard_button.clicked.connect(self._new_codex_skill_from_clipboard)
-        buttons.addWidget(clipboard_button)
-
-        open_button = QToolButton()
-        open_button.setText("파일 열기")
-        open_button.clicked.connect(self._open_selected_codex_skill_file)
-        buttons.addWidget(open_button)
-
-        call_button = QToolButton()
-        call_button.setText("호출문 복사")
-        call_button.clicked.connect(self._copy_codex_skill_call_prompt_to_clipboard)
-        buttons.addWidget(call_button)
-
-        recommend_report_button = QToolButton()
-        recommend_report_button.setText("추천 리포트")
-        recommend_report_button.clicked.connect(self._copy_codex_skill_recommendation_report_to_clipboard)
-        buttons.addWidget(recommend_report_button)
-
-        best_recommend_button = QToolButton()
-        best_recommend_button.setText("추천 선택")
-        best_recommend_button.clicked.connect(self._select_best_codex_skill_recommendation)
-        buttons.addWidget(best_recommend_button)
-        buttons.addStretch(1)
-        right.addLayout(buttons)
-
+        preview_panel = QWidget()
+        preview_layout = QVBoxLayout(preview_panel)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        preview_layout.setSpacing(6)
+        preview_layout.addWidget(QLabel("호출문 미리보기"))
         self.codex_skill_call_preview = QTextEdit()
         self.codex_skill_call_preview.setReadOnly(True)
-        self.codex_skill_call_preview.setMinimumHeight(130)
-        right.addWidget(QLabel("스킬 호출문 미리보기"))
-        right.addWidget(self.codex_skill_call_preview)
+        self.codex_skill_call_preview.setMinimumHeight(210)
+        preview_layout.addWidget(self.codex_skill_call_preview, stretch=1)
 
-        layout.addLayout(right, stretch=2)
+        body_preview_splitter.addWidget(body_panel)
+        body_preview_splitter.addWidget(preview_panel)
+        body_preview_splitter.setStretchFactor(0, 3)
+        body_preview_splitter.setStretchFactor(1, 2)
+        body_preview_splitter.setSizes([520, 300])
+        editor_layout.addWidget(body_preview_splitter, stretch=1)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+
+        save_btn = QToolButton()
+        save_btn.setText("저장")
+        save_btn.setProperty("variant", "primary")
+        save_btn.setMinimumHeight(34)
+        save_btn.clicked.connect(self._save_codex_skill_draft)
+
+        new_btn = QToolButton()
+        new_btn.setText("새 스킬")
+        new_btn.setMinimumHeight(34)
+        new_btn.clicked.connect(self._new_codex_skill_draft)
+
+        load_btn = QToolButton()
+        load_btn.setText("불러오기")
+        load_btn.setMinimumHeight(34)
+        load_btn.clicked.connect(self._load_selected_codex_skill)
+
+        copy_prompt_btn = QToolButton()
+        copy_prompt_btn.setText("초안 복사")
+        copy_prompt_btn.setMinimumHeight(34)
+        copy_prompt_btn.clicked.connect(self._copy_codex_skill_prompt_to_clipboard)
+
+        delete_btn = QToolButton()
+        delete_btn.setText("삭제")
+        delete_btn.setMinimumHeight(34)
+        delete_btn.clicked.connect(self._delete_selected_codex_skill)
+
+        more_btn = QToolButton()
+        more_btn.setText("더보기")
+        more_btn.setMinimumHeight(34)
+        more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        more_menu = QMenu(more_btn)
+
+        def add_more_action(text: str, cb: Callable[[], None]) -> None:
+            action = QAction(text, self)
+            action.triggered.connect(lambda checked=False, callback=cb: callback())
+            more_menu.addAction(action)
+
+        for text, cb in [
+            ("복제", self._duplicate_selected_codex_skill),
+            ("클립보드에서 스킬 만들기", self._new_codex_skill_from_clipboard),
+            ("현재 요청으로 스킬 만들기", self._new_codex_skill_from_current_request),
+            ("선택 스킬 열기", self._open_selected_codex_skill_file),
+            ("선택 경로 복사", self._copy_selected_codex_skill_path_to_clipboard),
+            ("호출문 복사", self._copy_codex_skill_call_prompt_to_clipboard),
+            ("추천 리포트 복사", self._copy_codex_skill_recommendation_report_to_clipboard),
+            ("스킬 진단 복사", self._copy_codex_skill_audit_report_to_clipboard),
+            ("스킬 진단 저장", self._save_codex_skill_audit_report),
+            ("기본 스킬 세트 생성", self._create_default_codex_skill_set),
+        ]:
+            add_more_action(text, cb)
+        more_btn.setMenu(more_menu)
+
+        actions.addWidget(save_btn, stretch=2)
+        actions.addWidget(new_btn, stretch=1)
+        actions.addWidget(load_btn, stretch=1)
+        actions.addWidget(copy_prompt_btn, stretch=1)
+        actions.addWidget(delete_btn)
+        actions.addWidget(more_btn)
+        editor_layout.addLayout(actions)
+
+        editor_splitter.addWidget(list_panel)
+        editor_splitter.addWidget(editor_area)
+        editor_splitter.setStretchFactor(0, 0)
+        editor_splitter.setStretchFactor(1, 1)
+        editor_splitter.setSizes([180, 760])
+        main_layout.addWidget(editor_splitter, stretch=1)
+
         self._refresh_codex_skill_list()
         self._new_codex_skill_draft()
-        return group
+        self._update_codex_skill_call_preview()
+
+        return root
+
+
+    def _build_codex_internal_instructions_group(self) -> QWidget:
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(8)
+
+        header = QLabel("코덱스 전용 지침")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
+
+        help_label = QLabel(
+            "OneNote COM 사용 방식, ID 우선순위, 검증 기준처럼 사용자가 매번 볼 필요 없는 실행 전제를 관리합니다."
+        )
+        help_label.setObjectName("CodexPageSubtitle")
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        self._ensure_codex_internal_instructions_file()
+        self.codex_internal_instructions_editor = QTextEdit()
+        self.codex_internal_instructions_editor.setPlainText(
+            self._codex_internal_instructions_text()
+        )
+        self.codex_internal_instructions_editor.setMinimumHeight(300)
+        layout.addWidget(self.codex_internal_instructions_editor)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(8)
+
+        save_btn = QToolButton()
+        save_btn.setText("저장")
+        save_btn.setProperty("variant", "primary")
+        save_btn.clicked.connect(self._save_codex_internal_instructions)
+
+        reload_btn = QToolButton()
+        reload_btn.setText("다시 불러오기")
+        reload_btn.clicked.connect(self._reload_codex_internal_instructions)
+
+        copy_btn = QToolButton()
+        copy_btn.setText("복사")
+        copy_btn.clicked.connect(self._copy_codex_internal_instructions_to_clipboard)
+
+        open_btn = QToolButton()
+        open_btn.setText("폴더 열기")
+        open_btn.clicked.connect(self._open_codex_instructions_folder)
+
+        for btn in (save_btn, reload_btn, copy_btn, open_btn):
+            btn.setMinimumHeight(30)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            actions.addWidget(btn, stretch=1)
+
+        layout.addLayout(actions)
+        return card
+
 
     def _build_codex_status_group(self) -> QWidget:
-        from PyQt6.QtWidgets import QSizePolicy
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        group = QGroupBox("코덱스 현재 상태")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
+        header = QLabel("📋 현재 선택값 복사")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
-        def add_button(row: QHBoxLayout, text: str, callback: Callable, primary: bool = False) -> None:
+        def _copy_row(label_text: str, value_attr: str, button_text: str, callback) -> None:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+
+            label = QLabel(label_text)
+            label.setMinimumWidth(58)
+            row.addWidget(label)
+
+            value = QLabel("미지정")
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value.setObjectName("CodexHeroMetaValue")
+            value.setWordWrap(True)
+            setattr(self, value_attr, value)
+            row.addWidget(value, stretch=1)
+
             btn = QToolButton()
-            btn.setText(text)
-            btn.setMinimumHeight(30)
+            btn.setText(button_text)
+            btn.setMinimumHeight(28)
             btn.setMinimumWidth(0)
             btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            if primary:
-                btn.setProperty("variant", "primary")
             btn.clicked.connect(callback)
             row.addWidget(btn)
-
-        button_specs = [
-            ("상태 새로고침", self._update_codex_status_summary, True),
-            ("상태 복사", self._copy_codex_status_summary_to_clipboard, False),
-            ("요청 초안 저장", self._save_codex_request_draft, False),
-            ("요청 초안 복구", self._load_codex_request_draft, False),
-            ("실행 체크리스트", self._copy_codex_execution_checklist_to_clipboard, False),
-            ("압축 프롬프트", self._copy_codex_compact_prompt_to_clipboard, False),
-            ("검토 프롬프트", self._copy_codex_review_prompt_to_clipboard, False),
-            ("인벤토리 스크립트", self._copy_codex_onenote_inventory_script_to_clipboard, False),
-            ("페이지 읽기", self._copy_codex_page_reader_script_to_clipboard, False),
-            ("페이지결과 요약", self._copy_codex_page_reader_result_summary_to_clipboard, False),
-            ("위치 진단", self._copy_codex_target_audit_report_to_clipboard, False),
-            ("인벤토리 위치 등록", self._import_codex_targets_from_clipboard_inventory, False),
-            ("스킬 추천", self._copy_codex_skill_recommendation_report_to_clipboard, False),
-            ("추천 스킬 선택", self._select_best_codex_skill_recommendation, False),
-            ("기본 스킬 세트", self._create_default_codex_skill_set, False),
-        ]
-        for index in range(0, len(button_specs), 2):
-            row = QHBoxLayout()
-            row.setSpacing(6)
-            for text, callback, primary in button_specs[index:index + 2]:
-                add_button(row, text, callback, primary)
             layout.addLayout(row)
 
-        self.codex_status_summary_preview = QTextEdit()
-        self.codex_status_summary_preview.setReadOnly(True)
-        self.codex_status_summary_preview.setMinimumHeight(140)
-        self.codex_status_summary_preview.setPlainText(self._codex_status_summary_text())
-        layout.addWidget(self.codex_status_summary_preview)
+        _copy_row(
+            "작업 위치",
+            "codex_copy_target_value",
+            "위치 복사",
+            self._copy_codex_current_target_to_clipboard,
+        )
+        _copy_row(
+            "선택 스킬",
+            "codex_copy_skill_value",
+            "스킬 복사",
+            self._copy_codex_current_skill_to_clipboard,
+        )
+        _copy_row(
+            "현재 요청",
+            "codex_copy_request_value",
+            "요청 복사",
+            self._copy_codex_current_request_to_clipboard,
+        )
 
-        return group
+        return card
+
 
     def _build_codex_quick_tools_group(self) -> QWidget:
-        from PyQt6.QtWidgets import QSizePolicy
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        group = QGroupBox("코덱스 빠른 도구")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
+        header = QLabel("⚡ 빠른 실행 도구")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
-        desc = QLabel("자주 쓰는 코덱스 준비 작업을 한 곳에서 실행합니다.")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
+        tools_layout = QGridLayout()
+        tools_layout.setSpacing(6)
 
-        def add_button(row: QHBoxLayout, text: str, callback: Callable, primary: bool = False) -> None:
+        tool_specs = [
+            ("📝 주문서 복사", self._copy_codex_work_order_to_clipboard, "primary"),
+            ("🚀 호출문 복사", self._copy_codex_skill_call_prompt_to_clipboard, "secondary"),
+            ("📦 패키지 복사", self._copy_codex_context_pack_to_clipboard, "secondary"),
+            ("🔍 위치 진단", self._copy_codex_target_audit_report_to_clipboard, ""),
+            ("📄 페이지 읽기", self._copy_codex_page_reader_script_to_clipboard, ""),
+            ("🛠️ 인벤토리", self._copy_codex_onenote_inventory_script_to_clipboard, ""),
+        ]
+
+        for i, (text, cb, variant) in enumerate(tool_specs):
             btn = QToolButton()
             btn.setText(text)
-            btn.setMinimumHeight(30)
+            btn.setMinimumHeight(28)
             btn.setMinimumWidth(0)
             btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            if primary:
-                btn.setProperty("variant", "primary")
-            btn.clicked.connect(callback)
-            row.addWidget(btn)
+            if variant: btn.setProperty("variant", variant)
+            btn.clicked.connect(cb)
+            tools_layout.addWidget(btn, i // 2, i % 2)
 
-        def add_cluster(title: str, rows: List[List[tuple]]) -> None:
-            title_label = QLabel(title)
-            title_label.setObjectName("CodexClusterLabel")
-            layout.addWidget(title_label)
-            flat_specs = [spec for row_specs in rows for spec in row_specs]
-            for index in range(0, len(flat_specs), 2):
-                row = QHBoxLayout()
-                row.setSpacing(6)
-                for spec in flat_specs[index:index + 2]:
-                    text, callback, primary = spec
-                    add_button(row, text, callback, primary)
-                layout.addLayout(row)
+        layout.addLayout(tools_layout)
 
-        add_cluster(
-            "작업 지시",
-            [
-                [
-                    ("주문서 복사", self._copy_codex_work_order_to_clipboard, True),
-                    ("주문서 저장", self._save_codex_work_order, False),
-                    ("요청문 복사", self._copy_codex_request_to_clipboard, False),
-                ],
-                [
-                    ("체크리스트", self._copy_codex_execution_checklist_to_clipboard, False),
-                    ("압축 프롬프트", self._copy_codex_compact_prompt_to_clipboard, False),
-                    ("검토 프롬프트", self._copy_codex_review_prompt_to_clipboard, False),
-                ],
-            ],
-        )
+        return card
 
-        add_cluster(
-            "컨텍스트",
-            [
-                [
-                    ("패키지 복사", self._copy_codex_context_pack_to_clipboard, True),
-                    ("패키지 저장", self._save_codex_context_pack, False),
-                    ("미리보기 갱신", self._update_codex_context_pack_preview, False),
-                ],
-                [
-                    ("페이지 읽기", self._copy_codex_page_reader_script_to_clipboard, False),
-                    ("페이지결과 요약", self._copy_codex_page_reader_result_summary_to_clipboard, False),
-                    ("본문에 추가", self._append_codex_page_reader_result_to_request_body, False),
-                ],
-            ],
-        )
-
-        add_cluster(
-            "스킬",
-            [
-                [
-                    ("스킬 호출문", self._copy_codex_skill_call_prompt_to_clipboard, True),
-                    ("작업별 선택", self._select_recommended_codex_skill, False),
-                    ("추천 리포트", self._copy_codex_skill_recommendation_report_to_clipboard, False),
-                ],
-                [
-                    ("주문번호표", self._copy_codex_skill_order_index_to_clipboard, False),
-                    ("클립보드→스킬", self._new_codex_skill_from_clipboard, False),
-                    ("기본 세트 생성", self._create_default_codex_skill_set, False),
-                ],
-            ],
-        )
-
-        add_cluster(
-            "위치와 진단",
-            [
-                [
-                    ("위치 자동 찾기", self._copy_codex_target_discovery_script_to_clipboard, True),
-                    ("인벤토리 스크립트", self._copy_codex_onenote_inventory_script_to_clipboard, False),
-                    ("위치 등록", self._import_codex_targets_from_clipboard_inventory, False),
-                ],
-                [
-                    ("상태 새로고침", self._update_codex_status_summary, False),
-                    ("상태 복사", self._copy_codex_status_summary_to_clipboard, False),
-                    ("설정 폴더", self._open_settings_json_folder, False),
-                ],
-            ],
-        )
-
-        return group
 
     def _build_codex_context_pack_group(self) -> QWidget:
-        group = QGroupBox("코덱스 컨텍스트 패키지")
-        layout = QVBoxLayout(group)
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        desc = QLabel(
-            "현재 작업 위치, 요청문, 스킬 호출문, 주문서, 템플릿, 스킬 주문번호표를 "
-            "하나의 Markdown 패키지로 묶습니다."
-        )
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        buttons = QHBoxLayout()
-        copy_button = QToolButton()
-        copy_button.setText("패키지 복사")
-        copy_button.clicked.connect(self._copy_codex_context_pack_to_clipboard)
-        buttons.addWidget(copy_button)
-
-        save_button = QToolButton()
-        save_button.setText("패키지 저장")
-        save_button.clicked.connect(self._save_codex_context_pack)
-        buttons.addWidget(save_button)
-
-        refresh_button = QToolButton()
-        refresh_button.setText("미리보기 갱신")
-        refresh_button.clicked.connect(self._update_codex_context_pack_preview)
-        buttons.addWidget(refresh_button)
-
-        target_json_button = QToolButton()
-        target_json_button.setText("위치 JSON 복사")
-        target_json_button.clicked.connect(self._copy_codex_target_profile_json_to_clipboard)
-        buttons.addWidget(target_json_button)
-
-        compact_button = QToolButton()
-        compact_button.setText("압축 프롬프트")
-        compact_button.clicked.connect(self._copy_codex_compact_prompt_to_clipboard)
-        buttons.addWidget(compact_button)
-
-        review_button = QToolButton()
-        review_button.setText("검토 프롬프트")
-        review_button.clicked.connect(self._copy_codex_review_prompt_to_clipboard)
-        buttons.addWidget(review_button)
-
-        breakdown_button = QToolButton()
-        breakdown_button.setText("작업 분해")
-        breakdown_button.clicked.connect(self._copy_codex_task_breakdown_prompt_to_clipboard)
-        buttons.addWidget(breakdown_button)
-
-        report_button = QToolButton()
-        report_button.setText("완료보고")
-        report_button.clicked.connect(self._copy_codex_completion_report_template_to_clipboard)
-        buttons.addWidget(report_button)
-
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
+        header = QLabel("📦 컨텍스트 패키지")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
         self.codex_context_pack_preview = QTextEdit()
         self.codex_context_pack_preview.setReadOnly(True)
-        self.codex_context_pack_preview.setMinimumHeight(190)
-        self.codex_context_pack_preview.setPlainText(
-            "미리보기 갱신을 누르면 현재 코덱스 작업 패키지가 표시됩니다. "
-            "복사/저장은 항상 최신 값으로 생성됩니다."
-        )
+        self.codex_context_pack_preview.setMinimumHeight(96)
+        self.codex_context_pack_preview.setPlaceholderText("패키지 미리보기가 여기에 표시됩니다.")
         layout.addWidget(self.codex_context_pack_preview)
 
-        return group
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        copy_btn = QToolButton()
+        copy_btn.setText("📋 패키지 복사")
+        copy_btn.setProperty("variant", "secondary")
+        copy_btn.clicked.connect(self._copy_codex_context_pack_to_clipboard)
+
+        save_btn = QToolButton()
+        save_btn.setText("💾 패키지 저장")
+        save_btn.clicked.connect(self._save_codex_context_pack)
+
+        refresh_btn = QToolButton()
+        refresh_btn.setText("🔄 미리보기 갱신")
+        refresh_btn.clicked.connect(self._update_codex_context_pack_preview)
+
+        for btn in (copy_btn, save_btn, refresh_btn):
+            btn.setMinimumWidth(0)
+            btn.setMinimumHeight(28)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            actions.addWidget(btn, stretch=1)
+        layout.addLayout(actions)
+
+        return card
+
 
     def _build_codex_work_order_group(self) -> QWidget:
-        group = QGroupBox("코덱스 작업 주문서")
-        layout = QVBoxLayout(group)
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        desc = QLabel(
-            "선택 스킬, 작업 위치, 요청문, 작업 템플릿을 한 번에 묶어 코덱스에게 넘기는 문서입니다."
-        )
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        buttons = QHBoxLayout()
-        copy_button = QToolButton()
-        copy_button.setText("주문서 복사")
-        copy_button.clicked.connect(self._copy_codex_work_order_to_clipboard)
-        buttons.addWidget(copy_button)
-
-        save_button = QToolButton()
-        save_button.setText("주문서 저장")
-        save_button.clicked.connect(self._save_codex_work_order)
-        buttons.addWidget(save_button)
-
-        open_button = QToolButton()
-        open_button.setText("주문서 폴더 열기")
-        open_button.clicked.connect(self._open_codex_requests_folder)
-        buttons.addWidget(open_button)
-
-        audit_copy_button = QToolButton()
-        audit_copy_button.setText("스킬 진단 복사")
-        audit_copy_button.clicked.connect(self._copy_codex_skill_audit_report_to_clipboard)
-        buttons.addWidget(audit_copy_button)
-
-        audit_save_button = QToolButton()
-        audit_save_button.setText("스킬 진단 저장")
-        audit_save_button.clicked.connect(self._save_codex_skill_audit_report)
-        buttons.addWidget(audit_save_button)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
+        header = QLabel("📝 작업 주문서")
+        header.setObjectName("CodexCardTitle")
+        layout.addWidget(header)
 
         self.codex_work_order_preview = QTextEdit()
         self.codex_work_order_preview.setReadOnly(True)
-        self.codex_work_order_preview.setMinimumHeight(190)
+        self.codex_work_order_preview.setMinimumHeight(96)
+        self.codex_work_order_preview.setPlaceholderText("생성된 주문서 미리보기가 여기에 표시됩니다.")
         layout.addWidget(self.codex_work_order_preview)
-        self._update_codex_work_order_preview()
 
-        return group
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+        copy_btn = QToolButton()
+        copy_btn.setText("🚀 주문서 복사")
+        copy_btn.setProperty("variant", "primary")
+        copy_btn.clicked.connect(self._copy_codex_work_order_to_clipboard)
+
+        save_btn = QToolButton()
+        save_btn.setText("💾 저장")
+        save_btn.clicked.connect(self._save_codex_work_order)
+
+        for btn in (copy_btn, save_btn):
+            btn.setMinimumWidth(0)
+            btn.setMinimumHeight(28)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        actions.addWidget(copy_btn, stretch=2)
+        actions.addWidget(save_btn, stretch=1)
+        layout.addLayout(actions)
+
+        self._update_codex_work_order_preview()
+        return card
+
 
     def _build_codex_work_order_history_group(self) -> QWidget:
-        group = QGroupBox("작업 주문서 기록")
-        layout = QVBoxLayout(group)
+        card = QWidget()
+        card.setObjectName("CodexCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        desc = QLabel(
-            "저장한 코덱스 작업 주문서를 다시 열거나 복사합니다. 다음 AI에게 이전 주문서를 그대로 넘길 때 사용합니다."
-        )
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
 
-        buttons = QHBoxLayout()
-        refresh_button = QToolButton()
-        refresh_button.setText("기록 새로고침")
-        refresh_button.clicked.connect(self._refresh_codex_work_order_list)
-        buttons.addWidget(refresh_button)
+        header = QLabel("작업 주문서 기록")
+        header.setObjectName("CodexCardTitle")
+        header_row.addWidget(header)
+        header_row.addStretch(1)
 
-        copy_button = QToolButton()
-        copy_button.setText("선택 주문서 복사")
-        copy_button.clicked.connect(self._copy_selected_codex_work_order_to_clipboard)
-        buttons.addWidget(copy_button)
-
-        open_button = QToolButton()
-        open_button.setText("파일 열기")
-        open_button.clicked.connect(self._open_selected_codex_work_order_file)
-        buttons.addWidget(open_button)
-
-        delete_button = QToolButton()
-        delete_button.setText("삭제")
-        delete_button.clicked.connect(self._delete_selected_codex_work_order)
-        buttons.addWidget(delete_button)
-
-        folder_button = QToolButton()
-        folder_button.setText("폴더 열기")
-        folder_button.clicked.connect(self._open_codex_requests_folder)
-        buttons.addWidget(folder_button)
-
-        load_button = QToolButton()
-        load_button.setText("요청으로 불러오기")
-        load_button.clicked.connect(self._load_selected_codex_work_order_into_request)
-        buttons.addWidget(load_button)
-
-        followup_button = QToolButton()
-        followup_button.setText("후속 프롬프트")
-        followup_button.clicked.connect(self._copy_selected_codex_work_order_followup_prompt)
-        buttons.addWidget(followup_button)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
+        folder_btn = QToolButton()
+        folder_btn.setText("폴더")
+        folder_btn.clicked.connect(self._open_codex_requests_folder)
+        header_row.addWidget(folder_btn)
+        layout.addLayout(header_row)
 
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("검색"))
+        search_row.setSpacing(6)
         self.codex_work_order_search_input = QLineEdit()
-        self.codex_work_order_search_input.setPlaceholderText("파일명/주문서 내용 검색")
-        self.codex_work_order_search_input.textChanged.connect(
-            lambda text: self._refresh_codex_work_order_list()
-        )
+        self.codex_work_order_search_input.setPlaceholderText("주문서 검색")
+        self.codex_work_order_search_input.textChanged.connect(self._schedule_refresh_codex_work_order_list)
         search_row.addWidget(self.codex_work_order_search_input, stretch=1)
 
-        clear_search_button = QToolButton()
-        clear_search_button.setText("검색 지우기")
-        clear_search_button.clicked.connect(self.codex_work_order_search_input.clear)
-        search_row.addWidget(clear_search_button)
+        refresh_btn = QToolButton()
+        refresh_btn.setText("갱신")
+        refresh_btn.clicked.connect(self._refresh_codex_work_order_list)
+        search_row.addWidget(refresh_btn)
         layout.addLayout(search_row)
 
-        body = QHBoxLayout()
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.setChildrenCollapsible(False)
+        body.setHandleWidth(4)
+
         self.codex_work_order_list = QListWidget()
-        self.codex_work_order_list.setMinimumHeight(150)
-        self.codex_work_order_list.currentItemChanged.connect(
-            lambda current, previous=None: self._on_codex_work_order_selected(current)
-        )
-        self.codex_work_order_list.itemDoubleClicked.connect(
-            lambda item: self._open_selected_codex_work_order_file()
-        )
-        body.addWidget(self.codex_work_order_list, stretch=1)
+        self.codex_work_order_list.setMinimumWidth(130)
+        self.codex_work_order_list.setMinimumHeight(220)
+        self.codex_work_order_list.currentItemChanged.connect(lambda current, prev=None: self._on_codex_work_order_selected(current))
+        body.addWidget(self.codex_work_order_list)
 
         self.codex_work_order_history_preview = QTextEdit()
         self.codex_work_order_history_preview.setReadOnly(True)
-        self.codex_work_order_history_preview.setMinimumHeight(150)
-        body.addWidget(self.codex_work_order_history_preview, stretch=2)
-        layout.addLayout(body)
+        self.codex_work_order_history_preview.setMinimumHeight(220)
+        body.addWidget(self.codex_work_order_history_preview)
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
+        body.setSizes([180, 700])
+        layout.addWidget(body, stretch=1)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(6)
+
+        copy_btn = QToolButton()
+        copy_btn.setText("복사")
+        copy_btn.setProperty("variant", "secondary")
+        copy_btn.clicked.connect(self._copy_selected_codex_work_order_to_clipboard)
+
+        load_btn = QToolButton()
+        load_btn.setText("요청로드")
+        load_btn.clicked.connect(self._load_selected_codex_work_order_into_request)
+
+        followup_btn = QToolButton()
+        followup_btn.setText("후속")
+        followup_btn.clicked.connect(self._copy_selected_codex_work_order_followup_prompt)
+
+        open_btn = QToolButton()
+        open_btn.setText("열기")
+        open_btn.clicked.connect(self._open_selected_codex_work_order_file)
+
+        delete_btn = QToolButton()
+        delete_btn.setText("삭제")
+        delete_btn.clicked.connect(self._delete_selected_codex_work_order)
+
+        for btn in (copy_btn, load_btn, followup_btn, open_btn, delete_btn):
+            btn.setMinimumHeight(28)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            actions.addWidget(btn, stretch=1)
+        layout.addLayout(actions)
 
         self._refresh_codex_work_order_list()
-        return group
+        return card
 
-    def _add_codex_menu_action(self, menu: QMenu, text: str, callback: Callable) -> None:
-        action = QAction(text, self)
-        action.triggered.connect(callback)
-        menu.addAction(action)
 
     def _scroll_codex_to_widget(self, attr_name: str) -> None:
         stacked = getattr(self, "codex_stacked_widget", None)
         widget = getattr(self, attr_name, None)
         if stacked is None or widget is None:
             return
-        
+
+        workspace_tabs = getattr(self, "remocon_workspace_tabs", None)
+        if workspace_tabs is not None:
+            try:
+                workspace_tabs.setCurrentIndex(1)
+            except Exception:
+                pass
+
         page_mapping = {
             "codex_status_summary_widget": 0,
             "codex_quick_tools_widget": 0,
@@ -7745,10 +8249,10 @@ $one.NavigateTo($newNotebookId)
             "codex_request_group_widget": 1,
             "codex_target_group_widget": 1,
             "codex_skill_editor_widget": 2,
-            "codex_work_order_history_widget": 2,
-            "codex_skill_guide_widget": 3,
+            "codex_internal_instructions_widget": 3,
             "codex_template_group_widget": 3,
-            "codex_guide_widget": 3,
+            "codex_work_order_history_widget": 4,
+            "codex_skill_guide_widget": 4,
         }
         idx = page_mapping.get(attr_name, -1)
         if idx >= 0:
@@ -7756,7 +8260,7 @@ $one.NavigateTo($newNotebookId)
             buttons = getattr(self, "_codex_nav_buttons", [])
             for i, b in enumerate(buttons):
                 b.setChecked(i == idx)
-                
+
             try:
                 scroll_area = stacked.currentWidget()
                 content = scroll_area.widget()
@@ -7766,263 +8270,246 @@ $one.NavigateTo($newNotebookId)
             except Exception:
                 pass
 
-    def _build_codex_hamburger_menu(self, button: QToolButton) -> None:
-        menu = QMenu(button)
+    def _workspace_mode_from_tab_index(self, index: int) -> str:
+        return "codex" if index == 1 else "remocon"
 
-        move_menu = QMenu("이동", menu)
-        self._add_codex_menu_action(
-            move_menu,
-            "현재 상태",
-            lambda: self._scroll_codex_to_widget("codex_status_summary_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "코덱스 & 원노트 스킬",
-            lambda: self._scroll_codex_to_widget("codex_skill_editor_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "빠른 도구",
-            lambda: self._scroll_codex_to_widget("codex_quick_tools_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "컨텍스트 패키지",
-            lambda: self._scroll_codex_to_widget("codex_context_pack_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "작업 주문서",
-            lambda: self._scroll_codex_to_widget("codex_work_order_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "주문서 기록",
-            lambda: self._scroll_codex_to_widget("codex_work_order_history_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "스킬 도움말",
-            lambda: self._scroll_codex_to_widget("codex_skill_guide_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "작업 위치",
-            lambda: self._scroll_codex_to_widget("codex_target_group_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "요청 생성기",
-            lambda: self._scroll_codex_to_widget("codex_request_group_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "작업 템플릿",
-            lambda: self._scroll_codex_to_widget("codex_template_group_widget"),
-        )
-        self._add_codex_menu_action(
-            move_menu,
-            "코덱스 도움말",
-            lambda: self._scroll_codex_to_widget("codex_guide_widget"),
-        )
-        menu.addMenu(move_menu)
+    def _current_workspace_splitter_mode(self) -> str:
+        tabs = getattr(self, "remocon_workspace_tabs", None)
+        if tabs is None:
+            return getattr(self, "_active_workspace_splitter_mode", "remocon")
+        try:
+            return self._workspace_mode_from_tab_index(tabs.currentIndex())
+        except Exception:
+            return getattr(self, "_active_workspace_splitter_mode", "remocon")
 
-        target_menu = QMenu("작업 위치", menu)
-        self._add_codex_menu_action(target_menu, "새 작업 위치", self._new_codex_target_profile)
-        self._add_codex_menu_action(target_menu, "작업 위치 저장", self._save_codex_target_profile)
-        self._add_codex_menu_action(
-            target_menu,
-            "현재 위치 JSON 복사",
-            self._copy_codex_target_profile_json_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "작업 위치 전체 JSON 복사",
-            self._copy_codex_all_targets_json_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "작업 위치 진단 복사",
-            self._copy_codex_target_audit_report_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "작업 위치 진단 저장",
-            self._save_codex_target_audit_report,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "작업 위치 자동 찾기",
-            self._copy_codex_target_discovery_script_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "OneNote 전체 구조 인벤토리",
-            self._copy_codex_onenote_inventory_script_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "현재 섹션 페이지 읽기",
-            self._copy_codex_page_reader_script_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "페이지 읽기 결과 요약",
-            self._copy_codex_page_reader_result_summary_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "페이지 읽기 결과 요청에 추가",
-            self._append_codex_page_reader_result_to_request_body,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "인벤토리 위치 후보 복사",
-            self._copy_codex_inventory_target_preview_to_clipboard,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "인벤토리 위치 등록",
-            self._import_codex_targets_from_clipboard_inventory,
-        )
-        self._add_codex_menu_action(
-            target_menu,
-            "자동 찾기 결과 저장",
-            self._save_codex_target_from_clipboard_json,
-        )
-        menu.addMenu(target_menu)
+    def _splitter_total_size(self, splitter: Optional[QSplitter], fallback: int) -> int:
+        if splitter is None:
+            return fallback
+        try:
+            total = sum(max(0, int(size)) for size in splitter.sizes())
+            if total > 0:
+                return total
+        except Exception:
+            pass
+        try:
+            width = int(splitter.width())
+            if width > 0:
+                return width
+        except Exception:
+            pass
+        return fallback
 
-        output_menu = QMenu("생성/복사", menu)
-        self._add_codex_menu_action(
-            output_menu, "요청문 복사", self._copy_codex_request_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "요청 프리셋 적용", self._apply_codex_request_preset
-        )
-        self._add_codex_menu_action(
-            output_menu, "요청 초안 저장", self._save_codex_request_draft
-        )
-        self._add_codex_menu_action(
-            output_menu, "요청 초안 복구", self._load_codex_request_draft
-        )
-        self._add_codex_menu_action(
-            output_menu, "클립보드 본문 추가", self._append_clipboard_to_codex_request_body
-        )
-        self._add_codex_menu_action(
-            output_menu, "클립보드로 본문 교체", self._replace_codex_request_body_from_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "페이지 읽기 결과 요청에 추가", self._append_codex_page_reader_result_to_request_body
-        )
-        self._add_codex_menu_action(
-            output_menu, "실행 체크리스트 복사", self._copy_codex_execution_checklist_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "초압축 프롬프트 복사", self._copy_codex_compact_prompt_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "검토 프롬프트 복사", self._copy_codex_review_prompt_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "작업 분해 프롬프트 복사", self._copy_codex_task_breakdown_prompt_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "완료보고 템플릿 복사", self._copy_codex_completion_report_template_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "상태 요약 복사", self._copy_codex_status_summary_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "상태 미리보기 갱신", self._update_codex_status_summary
-        )
-        self._add_codex_menu_action(
-            output_menu, "작업 템플릿 복사", self._copy_codex_template_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "스킬 초안 복사", self._copy_codex_skill_prompt_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "스킬 호출문 복사", self._copy_codex_skill_call_prompt_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "작업 주문서 복사", self._copy_codex_work_order_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "작업 주문서 저장", self._save_codex_work_order
-        )
-        self._add_codex_menu_action(
-            output_menu, "컨텍스트 패키지 복사", self._copy_codex_context_pack_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "컨텍스트 패키지 저장", self._save_codex_context_pack
-        )
-        self._add_codex_menu_action(
-            output_menu, "컨텍스트 미리보기 갱신", self._update_codex_context_pack_preview
-        )
-        self._add_codex_menu_action(
-            output_menu, "주문서 기록 새로고침", self._refresh_codex_work_order_list
-        )
-        self._add_codex_menu_action(
-            output_menu, "선택 주문서 복사", self._copy_selected_codex_work_order_to_clipboard
-        )
-        self._add_codex_menu_action(
-            output_menu, "선택 주문서를 요청으로 불러오기", self._load_selected_codex_work_order_into_request
-        )
-        self._add_codex_menu_action(
-            output_menu, "선택 주문서 후속 프롬프트", self._copy_selected_codex_work_order_followup_prompt
-        )
-        self._add_codex_menu_action(
-            output_menu, "선택 주문서 열기", self._open_selected_codex_work_order_file
-        )
-        self._add_codex_menu_action(
-            output_menu, "주문서 폴더 열기", self._open_codex_requests_folder
-        )
-        menu.addMenu(output_menu)
+    def _capture_workspace_splitter_profile(self, mode: Optional[str] = None) -> None:
+        mode = mode or self._current_workspace_splitter_mode()
+        if mode not in ("remocon", "codex"):
+            return
+        profiles = getattr(self, "_workspace_splitter_profiles", {})
+        try:
+            profiles[mode] = {
+                "main": list(self.main_splitter.sizes()),
+                "left": list(self.left_splitter.sizes()),
+                "codex": list(self.codex_splitter.sizes())
+                if getattr(self, "codex_splitter", None) is not None
+                else [],
+            }
+            self._workspace_splitter_profiles = profiles
+        except Exception:
+            pass
 
-        skill_menu = QMenu("스킬", menu)
-        self._add_codex_menu_action(skill_menu, "새 스킬", self._new_codex_skill_draft)
-        self._add_codex_menu_action(
-            skill_menu, "기본 스킬 세트 생성", self._create_default_codex_skill_set
-        )
-        self._add_codex_menu_action(skill_menu, "선택 템플릿 적용", self._apply_codex_skill_template)
-        self._add_codex_menu_action(
-            skill_menu, "현재 요청으로 스킬 초안", self._new_codex_skill_from_current_request
-        )
-        self._add_codex_menu_action(skill_menu, "작업별 스킬 선택", self._select_recommended_codex_skill)
-        self._add_codex_menu_action(
-            skill_menu, "현재 요청 스킬 추천 리포트", self._copy_codex_skill_recommendation_report_to_clipboard
-        )
-        self._add_codex_menu_action(
-            skill_menu, "최상위 추천 스킬 선택", self._select_best_codex_skill_recommendation
-        )
-        self._add_codex_menu_action(skill_menu, "클립보드로 스킬 초안", self._new_codex_skill_from_clipboard)
-        self._add_codex_menu_action(skill_menu, "선택 스킬 불러오기", self._load_selected_codex_skill)
-        self._add_codex_menu_action(skill_menu, "선택 스킬 복제", self._duplicate_selected_codex_skill)
-        self._add_codex_menu_action(skill_menu, "스킬 저장", self._save_codex_skill_draft)
-        self._add_codex_menu_action(skill_menu, "선택 스킬 삭제", self._delete_selected_codex_skill)
-        self._add_codex_menu_action(skill_menu, "선택 스킬 파일 열기", self._open_selected_codex_skill_file)
-        self._add_codex_menu_action(skill_menu, "선택 스킬 경로 복사", self._copy_selected_codex_skill_path_to_clipboard)
-        self._add_codex_menu_action(skill_menu, "스킬 폴더 열기", self._open_codex_skills_folder)
-        self._add_codex_menu_action(
-            skill_menu, "주문번호표 새로고침", self._refresh_codex_skill_list
-        )
-        self._add_codex_menu_action(
-            skill_menu, "주문번호표 복사", self._copy_codex_skill_order_index_to_clipboard
-        )
-        self._add_codex_menu_action(
-            skill_menu, "스킬 진단 복사", self._copy_codex_skill_audit_report_to_clipboard
-        )
-        self._add_codex_menu_action(
-            skill_menu, "스킬 진단 저장", self._save_codex_skill_audit_report
-        )
-        menu.addMenu(skill_menu)
+    def _restore_workspace_splitter_profile(self, mode: str) -> bool:
+        profile = getattr(self, "_workspace_splitter_profiles", {}).get(mode)
+        if not isinstance(profile, dict):
+            return False
+        try:
+            main_sizes = profile.get("main") or []
+            left_sizes = profile.get("left") or []
+            codex_sizes = profile.get("codex") or []
+            if len(main_sizes) >= 2 and sum(main_sizes) > 0:
+                self.main_splitter.setSizes(main_sizes)
+            if len(left_sizes) >= 2 and sum(left_sizes) > 0:
+                self.left_splitter.setSizes(left_sizes)
+            if (
+                len(codex_sizes) >= 2
+                and sum(codex_sizes) > 0
+                and getattr(self, "codex_splitter", None) is not None
+            ):
+                self.codex_splitter.setSizes(codex_sizes)
+            return bool(main_sizes or left_sizes or codex_sizes)
+        except Exception:
+            return False
 
-        button.setMenu(menu)
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    def _apply_workspace_splitter_preset(
+        self,
+        mode: Optional[str] = None,
+        *,
+        show_status: bool = True,
+    ) -> None:
+        mode = mode or self._current_workspace_splitter_mode()
+        main_splitter = getattr(self, "main_splitter", None)
+        left_splitter = getattr(self, "left_splitter", None)
+        if main_splitter is None or left_splitter is None:
+            return
+
+        fallback_width = max(960, int(self.width()) - 24)
+        total = self._splitter_total_size(main_splitter, fallback_width)
+        if total <= 0:
+            total = fallback_width
+
+        if mode == "codex":
+            left_width = min(max(int(total * 0.32), 320), 500)
+            if total - left_width < 620:
+                left_width = max(280, total - 620)
+            status_name = "코덱스"
+        elif mode == "balanced":
+            left_width = max(300, total // 2)
+            status_name = "균등"
+        else:
+            left_width = min(max(int(total * 0.42), 390), 610)
+            if total - left_width < 420:
+                left_width = max(300, total - 420)
+            status_name = "위치정렬"
+
+        right_width = max(260, total - left_width)
+        main_splitter.setSizes([left_width, right_width])
+
+        if mode == "codex":
+            first_width = min(max(int(left_width * 0.42), 145), 215)
+        else:
+            first_width = min(max(int(left_width * 0.38), 155), 245)
+        second_width = max(180, left_width - first_width)
+        left_splitter.setSizes([first_width, second_width])
+
+        codex_splitter = getattr(self, "codex_splitter", None)
+        if codex_splitter is not None:
+            codex_total = self._splitter_total_size(
+                codex_splitter,
+                max(620, right_width),
+            )
+            nav_width = min(max(int(codex_total * 0.20), 176), 240)
+            codex_splitter.setSizes([nav_width, max(360, codex_total - nav_width)])
+
+        capture_mode = (
+            mode
+            if mode in ("remocon", "codex")
+            else self._current_workspace_splitter_mode()
+        )
+        self._capture_workspace_splitter_profile(capture_mode)
+        if show_status:
+            try:
+                self.connection_status_label.setText(f"패널 폭 적용: {status_name}")
+            except Exception:
+                pass
+
+    def _select_workspace_splitter_preset(self, mode: str) -> None:
+        tabs = getattr(self, "remocon_workspace_tabs", None)
+        target_index = 1 if mode == "codex" else 0
+        if tabs is not None and mode in ("remocon", "codex"):
+            try:
+                tabs.setCurrentIndex(target_index)
+            except Exception:
+                pass
+        self._apply_workspace_splitter_preset(mode, show_status=True)
+
+    def _save_workspace_splitter_layout_now(self) -> None:
+        self._capture_workspace_splitter_profile()
+        self._save_window_state()
+        try:
+            self.connection_status_label.setText("현재 패널 폭을 저장했습니다.")
+        except Exception:
+            pass
+
+    def _on_remocon_workspace_tab_changed(self, index: int) -> None:
+        previous_mode = getattr(self, "_active_workspace_splitter_mode", None)
+        next_mode = self._workspace_mode_from_tab_index(index)
+        if previous_mode and previous_mode != next_mode:
+            self._capture_workspace_splitter_profile(previous_mode)
+        self._active_workspace_splitter_mode = next_mode
+
+        if not self._restore_workspace_splitter_profile(next_mode):
+            self._apply_workspace_splitter_preset(next_mode, show_status=False)
+
+    def _build_workspace_splitter_toolbar(self) -> QWidget:
+        bar = QWidget()
+        bar.setObjectName("WorkspaceSplitterToolbar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        label = QLabel("패널 폭")
+        label.setStyleSheet("font-weight: bold; color: #D8DEE9;")
+        layout.addWidget(label)
+
+        fit_btn = QToolButton()
+        fit_btn.setText("현재 탭 맞춤")
+        fit_btn.clicked.connect(
+            lambda: self._apply_workspace_splitter_preset(
+                self._current_workspace_splitter_mode(),
+                show_status=True,
+            )
+        )
+
+        remocon_btn = QToolButton()
+        remocon_btn.setText("위치정렬 폭")
+        remocon_btn.clicked.connect(
+            lambda: self._select_workspace_splitter_preset("remocon")
+        )
+
+        codex_btn = QToolButton()
+        codex_btn.setText("코덱스 폭")
+        codex_btn.clicked.connect(
+            lambda: self._select_workspace_splitter_preset("codex")
+        )
+
+        balanced_btn = QToolButton()
+        balanced_btn.setText("균등")
+        balanced_btn.clicked.connect(
+            lambda: self._apply_workspace_splitter_preset(
+                "balanced",
+                show_status=True,
+            )
+        )
+
+        save_btn = QToolButton()
+        save_btn.setText("현재 저장")
+        save_btn.clicked.connect(self._save_workspace_splitter_layout_now)
+
+        for btn in (fit_btn, remocon_btn, codex_btn, balanced_btn, save_btn):
+            btn.setMinimumHeight(28)
+            layout.addWidget(btn)
+
+        layout.addStretch(1)
+        return bar
+
+    def _open_environment_settings_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("환경설정")
+        dialog.resize(560, 160)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        panel_group = QGroupBox("패널 폭")
+        panel_layout = QVBoxLayout(panel_group)
+        panel_layout.setContentsMargins(12, 14, 12, 12)
+        panel_layout.setSpacing(10)
+
+        desc = QLabel("1, 2, 3번째 패널 폭을 현재 작업에 맞게 조정합니다.")
+        desc.setWordWrap(True)
+        panel_layout.addWidget(desc)
+        panel_layout.addWidget(self._build_workspace_splitter_toolbar())
+        layout.addWidget(panel_group)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dialog.accept)
+        button_row.addWidget(close_btn)
+        layout.addLayout(button_row)
+
+        dialog.exec()
 
     def _build_codex_tab(self) -> QWidget:
-        from PyQt6.QtWidgets import QStackedWidget, QSizePolicy
-
         root = QWidget()
         root.setObjectName("CodexRoot")
         root.setStyleSheet(
@@ -8035,9 +8522,16 @@ $one.NavigateTo($newNotebookId)
             QWidget#CodexSidePanel {
                 background-color: #0C0E11;
             }
+            QWidget#CodexTopBar {
+                background-color: #0C0E11;
+            }
+            QScrollArea#CodexTopNavScroll {
+                border: none;
+                background-color: #0C0E11;
+            }
             QLabel#CodexBrand {
                 color: #E2E2E6;
-                font-size: 18pt;
+                font-size: 14pt;
                 font-weight: 800;
                 padding: 0px;
             }
@@ -8050,22 +8544,29 @@ $one.NavigateTo($newNotebookId)
                 background-color: #1E2023;
                 color: #C1F56D;
                 border-radius: 6px;
-                padding: 5px 8px;
-                font-size: 9pt;
+                padding: 3px 5px;
+                font-size: 8pt;
                 font-weight: bold;
             }
-            QToolButton#CodexMenuButton {
+            QToolButton#CodexTopNavButton {
                 background-color: #1E2023;
-                color: #C3C9B3;
-                border: none;
-                border-radius: 6px;
-                padding: 7px 10px;
-                text-align: left;
+                color: #E2E2E6;
+                border: 1px solid #2F3338;
+                border-bottom: 2px solid transparent;
+                border-radius: 4px;
+                padding: 3px 3px;
+                font-size: 8pt;
                 font-weight: bold;
             }
-            QToolButton#CodexMenuButton:hover {
+            QToolButton#CodexTopNavButton:hover {
                 background-color: #282A2D;
                 color: #E2E2E6;
+            }
+            QToolButton#CodexTopNavButton:checked {
+                background-color: #A6D854;
+                color: #223600;
+                border-color: #A6D854;
+                border-bottom: 2px solid #C1F56D;
             }
             QToolButton#CodexSideNavButton {
                 background-color: transparent;
@@ -8102,7 +8603,7 @@ $one.NavigateTo($newNotebookId)
             }
             QLabel#CodexPageTitle {
                 color: #E2E2E6;
-                font-size: 20pt;
+                font-size: 17pt;
                 font-weight: 800;
             }
             QLabel#CodexPageSubtitle {
@@ -8115,7 +8616,7 @@ $one.NavigateTo($newNotebookId)
             }
             QLabel#CodexHeroTitle {
                 color: #E2E2E6;
-                font-size: 16pt;
+                font-size: 14pt;
                 font-weight: 800;
             }
             QLabel#CodexHeroSubtitle,
@@ -8174,7 +8675,7 @@ $one.NavigateTo($newNotebookId)
                 color: #E2E2E6;
                 border: none;
                 border-radius: 6px;
-                padding: 6px 10px;
+                padding: 4px 6px;
                 font-weight: bold;
             }
             QToolButton:hover {
@@ -8195,7 +8696,7 @@ $one.NavigateTo($newNotebookId)
                 color: #E2E2E6;
                 border: none;
                 border-radius: 6px;
-                padding: 6px;
+                padding: 4px;
                 selection-background-color: #1EA296;
                 selection-color: #0C0E11;
             }
@@ -8213,39 +8714,38 @@ $one.NavigateTo($newNotebookId)
             QSplitter::handle {
                 background-color: #111316;
             }
+            QSplitter::handle:hover {
+                background-color: #1E2023;
+            }
             """
         )
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        side_panel = QWidget()
-        side_panel.setObjectName("CodexSidePanel")
-        side_panel.setFixedWidth(208)
+        top_bar = QWidget()
+        top_bar.setObjectName("CodexTopBar")
+        top_layout = QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(2, 2, 2, 2)
+        top_layout.setSpacing(1)
 
-        side_layout = QVBoxLayout(side_panel)
-        side_layout.setContentsMargins(16, 18, 12, 18)
-        side_layout.setSpacing(8)
+        top_nav_scroll = QScrollArea()
+        top_nav_scroll.setObjectName("CodexTopNavScroll")
+        top_nav_scroll.setWidgetResizable(True)
+        top_nav_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        top_nav_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        top_nav_scroll.setFixedHeight(30)
 
-        side_title = QLabel("CODEX")
-        side_title.setObjectName("CodexBrand")
-        side_layout.addWidget(side_title)
+        top_nav_content = QWidget()
+        top_nav_layout = QHBoxLayout(top_nav_content)
+        top_nav_layout.setContentsMargins(0, 0, 0, 0)
+        top_nav_layout.setSpacing(1)
+        top_nav_scroll.setWidget(top_nav_content)
+        top_layout.addWidget(top_nav_scroll, stretch=1)
 
-        side_caption = QLabel("OneNote 작업 지휘")
-        side_caption.setObjectName("CodexSidebarCaption")
-        side_layout.addWidget(side_caption)
-
-        self.codex_sidebar_status_pill = QLabel("시스템 활성")
-        self.codex_sidebar_status_pill.setObjectName("CodexStatusPill")
-        self.codex_sidebar_status_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        side_layout.addWidget(self.codex_sidebar_status_pill)
-
-        self.codex_menu_button = QToolButton()
-        self.codex_menu_button.setObjectName("CodexMenuButton")
-        self.codex_menu_button.setText("전체 메뉴")
-        self.codex_menu_button.setMinimumHeight(32)
-        self.codex_menu_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        side_layout.addWidget(self.codex_menu_button)
+        root_layout.addWidget(top_bar)
 
         self.codex_stacked_widget = QStackedWidget()
         self.codex_stacked_widget.setObjectName("CodexStackedWidget")
@@ -8259,14 +8759,15 @@ $one.NavigateTo($newNotebookId)
 
         def add_nav_item(text: str, index: int) -> QToolButton:
             btn = QToolButton()
-            btn.setObjectName("CodexSideNavButton")
+            btn.setObjectName("CodexTopNavButton")
             btn.setText(text)
             btn.setCheckable(True)
-            btn.setMinimumHeight(46)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setMinimumHeight(26)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             btn.clicked.connect(lambda checked, i=index, b=btn: switch_page(i, b))
-            side_layout.addWidget(btn)
+            top_nav_layout.addWidget(btn, stretch=1)
             self._codex_nav_buttons.append(btn)
             return btn
 
@@ -8275,11 +8776,14 @@ $one.NavigateTo($newNotebookId)
             page.setObjectName("CodexPageScroll")
             page.setWidgetResizable(True)
             page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            page.setViewportMargins(0, 0, 0, 0)
             content = QWidget()
             content.setObjectName("CodexPageContent")
+            content.setMinimumWidth(0)
+            content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             layout = QVBoxLayout(content)
-            layout.setContentsMargins(28, 24, 28, 28)
-            layout.setSpacing(14)
+            layout.setContentsMargins(8, 8, 8, 10)
+            layout.setSpacing(8)
 
             eyebrow_label = QLabel(eyebrow)
             eyebrow_label.setObjectName("CodexPageEyebrow")
@@ -8301,14 +8805,14 @@ $one.NavigateTo($newNotebookId)
             tile = QWidget()
             tile.setObjectName("CodexMetricTile")
             tile_layout = QVBoxLayout(tile)
-            tile_layout.setContentsMargins(12, 8, 12, 8)
+            tile_layout.setContentsMargins(7, 5, 7, 5)
             tile_layout.setSpacing(2)
 
             label_widget = QLabel(label)
             label_widget.setObjectName("CodexMetricLabel")
             value_widget = QLabel(value)
             value_widget.setObjectName("CodexMetricValue")
-            value_widget.setMinimumHeight(24)
+            value_widget.setMinimumHeight(20)
 
             tile_layout.addWidget(label_widget)
             tile_layout.addWidget(value_widget)
@@ -8323,15 +8827,15 @@ $one.NavigateTo($newNotebookId)
         hero = QWidget()
         hero.setObjectName("CodexHeroBand")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(18, 16, 18, 16)
-        hero_layout.setSpacing(12)
+        hero_layout.setContentsMargins(10, 8, 10, 8)
+        hero_layout.setSpacing(6)
 
         hero_top = QHBoxLayout()
         hero_title_area = QVBoxLayout()
         hero_title_area.setSpacing(4)
-        hero_title = QLabel("Codex Command Center")
+        hero_title = QLabel("현재 작업")
         hero_title.setObjectName("CodexHeroTitle")
-        hero_subtitle = QLabel("OneNote 작업 위치와 지시서를 바로 실행 가능한 상태로 정리합니다.")
+        hero_subtitle = QLabel("작업 위치와 요청을 바로 복사합니다.")
         hero_subtitle.setObjectName("CodexHeroSubtitle")
         hero_subtitle.setWordWrap(True)
         hero_title_area.addWidget(hero_title)
@@ -8341,12 +8845,14 @@ $one.NavigateTo($newNotebookId)
         self.codex_hero_request_value = QLabel("요청 대기 중")
         self.codex_hero_request_value.setObjectName("CodexStatusPill")
         self.codex_hero_request_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.codex_hero_request_value.setMinimumWidth(130)
+        self.codex_hero_request_value.setMinimumWidth(72)
+        self.codex_hero_request_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         hero_top.addWidget(self.codex_hero_request_value)
         hero_layout.addLayout(hero_top)
 
         target_row = QHBoxLayout()
-        target_label = QLabel("대상 프로필")
+        target_row.setSpacing(4)
+        target_label = QLabel("대상")
         target_label.setObjectName("CodexHeroMetaLabel")
         target_row.addWidget(target_label)
         self.codex_hero_target_value = QLabel("작업 위치 미지정")
@@ -8356,7 +8862,7 @@ $one.NavigateTo($newNotebookId)
         hero_layout.addLayout(target_row)
 
         metrics = QHBoxLayout()
-        metrics.setSpacing(8)
+        metrics.setSpacing(4)
         target_tile, self.codex_metric_target_value = make_metric("작업 위치", "0개")
         draft_tile, self.codex_metric_draft_value = make_metric("요청 초안", "대기")
         skill_tile, self.codex_metric_skill_value = make_metric("스킬 수", "0개")
@@ -8376,17 +8882,21 @@ $one.NavigateTo($newNotebookId)
         dashboard_layout.addWidget(self.codex_work_order_widget)
         dashboard_layout.addStretch(1)
 
+        # --- Request & Target Page ---
         page_request, request_layout = make_scroll_page(
-            "WORK REQUEST",
-            "작업 지시서 작성",
-            "요청 본문과 OneNote 대상 프로필을 한 번에 맞춘 뒤 복사하거나 저장합니다.",
+            "COMPOSITION",
+            "작업 요청 및 위치",
+            "위에서 작업 위치를 정하고, 아래에서 지시 내용을 작성하세요.",
         )
 
-        self.codex_request_group_widget = self._build_codex_request_group()
-        request_layout.addWidget(self.codex_request_group_widget)
         self.codex_target_group_widget = self._build_codex_target_group()
+        self.codex_request_group_widget = self._build_codex_request_group()
+
         request_layout.addWidget(self.codex_target_group_widget)
+        request_layout.addWidget(self.codex_request_group_widget)
         request_layout.addStretch(1)
+        self._apply_codex_target_to_request()
+        self._update_codex_request_preview()
 
         page_skills, skills_layout = make_scroll_page(
             "SKILLS",
@@ -8396,69 +8906,60 @@ $one.NavigateTo($newNotebookId)
 
         self.codex_skill_editor_widget = self._build_codex_skill_editor_group()
         skills_layout.addWidget(self.codex_skill_editor_widget)
-        self.codex_work_order_history_widget = self._build_codex_work_order_history_group()
-        skills_layout.addWidget(self.codex_work_order_history_widget)
         skills_layout.addStretch(1)
 
-        page_adv, adv_layout = make_scroll_page(
-            "ADVANCED",
-            "고급 설정",
-            "템플릿, 스킬 가이드, 내부 동작 도움말을 확인합니다.",
+        page_instructions, instructions_layout = make_scroll_page(
+            "CODEX ONLY",
+            "코덱스 전용 지침",
+            "OneNote 조작 최적화와 시스템 템플릿처럼 내부 실행 전제로만 쓰는 내용을 관리합니다.",
         )
 
-        self.codex_skill_guide_widget = self._build_codex_skill_group()
-        adv_layout.addWidget(self.codex_skill_guide_widget)
+        self.codex_internal_instructions_widget = self._build_codex_internal_instructions_group()
         self.codex_template_group_widget = self._build_codex_template_group()
-        adv_layout.addWidget(self.codex_template_group_widget)
-        
-        guide = QTextEdit()
-        self.codex_guide_widget = guide
-        guide.setReadOnly(True)
-        guide.setPlainText(
-            """코덱스 도움말
+        instructions_layout.addWidget(self.codex_internal_instructions_widget)
+        instructions_layout.addWidget(self.codex_template_group_widget)
+        instructions_layout.addStretch(1)
 
-이 탭은 코덱스가 OneNote를 더 쉽게 조작하도록 준비하는 공간입니다.
-사용자는 보통 작업 위치, 요청 내용, 스킬 초안만 관리하면 됩니다.
-
-사용자가 알면 되는 것
-- 작업 위치: AI가 어느 전자필기장/섹션에서 작업할지 정합니다.
-- 요청 생성기: AI에게 넘길 작업 지시문을 만듭니다.
-- 스킬 보관함: 자주 쓰는 글쓰기 형식이나 업무 방식을 주문번호(예: SK-001)로 저장합니다.
-- 커맨드 홈: 스킬 호출, 주문서 생성 등을 클릭 한 번에 복사하여 AI에게 바로 붙여넣습니다.
-
-내부에서 자동으로 처리되는 것 (신경 쓰지 않아도 됨)
-- OneNote 내부 위치 식별값 처리, COM 템플릿 변환, 스킬 주문서 인덱싱 등은 알아서 관리됩니다.
-- "SK-001 조회해서 그 형식대로 해" 라고만 AI에게 지시하세요.
-"""
+        page_adv, adv_layout = make_scroll_page(
+            "HISTORY",
+            "기록",
+            "작업 주문서 기록과 사용자 스킬 진단을 관리합니다.",
         )
-        guide.setMinimumHeight(240)
-        adv_layout.addWidget(guide)
+
+        self.codex_work_order_history_widget = self._build_codex_work_order_history_group()
+        self.codex_skill_guide_widget = self._build_codex_skill_group()
+
+        adv_layout.addWidget(self.codex_work_order_history_widget)
+        adv_layout.addWidget(self.codex_skill_guide_widget)
         adv_layout.addStretch(1)
 
         self.codex_stacked_widget.addWidget(page_dashboard) # 0
         self.codex_stacked_widget.addWidget(page_request)   # 1
         self.codex_stacked_widget.addWidget(page_skills)    # 2
-        self.codex_stacked_widget.addWidget(page_adv)       # 3
+        self.codex_stacked_widget.addWidget(page_instructions) # 3
+        self.codex_stacked_widget.addWidget(page_adv)       # 4
 
-        btn_dashboard = add_nav_item("명령 홈", 0)
-        btn_request = add_nav_item("작업 요청", 1)
+        btn_dashboard = add_nav_item("명령홈", 0)
+        btn_dashboard.setToolTip("명령 홈")
+        btn_request = add_nav_item("작업요청", 1)
+        btn_request.setToolTip("작업 요청")
         btn_skills = add_nav_item("스킬", 2)
-        btn_adv = add_nav_item("고급", 3)
+        btn_instructions = add_nav_item("지침", 3)
+        btn_instructions.setToolTip("코덱스 지침")
+        btn_adv = add_nav_item("기록", 4)
+        btn_adv.setToolTip("작업 기록")
 
-        side_layout.addStretch(1)
-        
-        root_layout.addWidget(side_panel)
+        self.codex_splitter = None
         root_layout.addWidget(self.codex_stacked_widget, stretch=1)
-        
+
         self._update_codex_work_order_preview()
         self._update_codex_status_summary()
-        self._build_codex_hamburger_menu(self.codex_menu_button)
         switch_page(0, btn_dashboard)
 
         return root
 
     def init_ui(self, initial_status):
-        self.setWindowTitle("OneNote 전자필기장 스크롤 리모컨")
+        self.setWindowTitle("OneNote 전자필기장 위치정렬")
 
         # --- 메뉴바 생성 ---
         menubar = self.menuBar()
@@ -8489,6 +8990,11 @@ $one.NavigateTo($newNotebookId)
         clear_shared_settings_action = QAction("공용 설정 JSON 연결 해제", self)
         clear_shared_settings_action.triggered.connect(self._clear_shared_settings_json)
         file_menu.addAction(clear_shared_settings_action)
+
+        settings_menu = menubar.addMenu("&환경설정")
+        panel_width_action = QAction("패널 폭 조정...", self)
+        panel_width_action.triggered.connect(self._open_environment_settings_dialog)
+        settings_menu.addAction(panel_width_action)
 
         special_menu = menubar.addMenu("&특수 기능")
         self.open_all_notebooks_action = QAction(
@@ -8657,17 +9163,6 @@ $one.NavigateTo($newNotebookId)
                 font-size: 8pt;
                 padding: 8px 8px 2px 8px;
             }}
-            #CodexMenuButton {{
-                background-color: transparent;
-                color: {COLOR_PRIMARY_TEXT};
-                border-radius: 17px;
-                padding: 8px 10px;
-                text-align: left;
-                font-weight: bold;
-            }}
-            #CodexMenuButton:hover {{
-                background-color: {COLOR_SECONDARY_BUTTON_HOVER};
-            }}
             #CodexSideNavButton {{
                 background-color: transparent;
                 color: {COLOR_PRIMARY_TEXT};
@@ -8684,14 +9179,10 @@ $one.NavigateTo($newNotebookId)
         """
         )
 
-        central_widget = QTabWidget()
+        central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        remocon_tab = QWidget()
-        central_widget.addTab(remocon_tab, "리모컨")
-        central_widget.addTab(self._build_codex_tab(), "코덱스")
-
-        main_layout = QVBoxLayout(remocon_tab)
+        main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(10)
 
@@ -8760,7 +9251,7 @@ $one.NavigateTo($newNotebookId)
         self.buffer_tree.structureChanged.connect(self._request_buffer_structure_save)
         self.buffer_tree.renameRequested.connect(self._rename_buffer)
         self.buffer_tree.deleteRequested.connect(self._delete_buffer)
-        
+
         self.buffer_tree.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
@@ -8773,15 +9264,20 @@ $one.NavigateTo($newNotebookId)
         # 즐겨찾기 버퍼 하단 툴바: 삭제, 위로, 아래로
         buffer_toolbar_bottom_layout = QHBoxLayout()
         self.btn_delete_buffer = QToolButton()
-        self.btn_delete_buffer.setText("삭제(Del)")
+        self.btn_delete_buffer.setText("삭제")
+        self.btn_delete_buffer.setFixedWidth(52)
         self.btn_delete_buffer.clicked.connect(self._delete_buffer)
 
         self.btn_buffer_move_up = QToolButton()
-        self.btn_buffer_move_up.setText("▲ 위로")
+        self.btn_buffer_move_up.setText("▲")
+        self.btn_buffer_move_up.setToolTip("위로")
+        self.btn_buffer_move_up.setFixedWidth(32)
         self.btn_buffer_move_up.clicked.connect(self._move_buffer_up)
 
         self.btn_buffer_move_down = QToolButton()
-        self.btn_buffer_move_down.setText("▼ 아래로")
+        self.btn_buffer_move_down.setText("▼")
+        self.btn_buffer_move_down.setToolTip("아래로")
+        self.btn_buffer_move_down.setFixedWidth(32)
         self.btn_buffer_move_down.clicked.connect(self._move_buffer_down)
 
         buffer_toolbar_bottom_layout.addWidget(self.btn_delete_buffer)
@@ -8889,29 +9385,37 @@ $one.NavigateTo($newNotebookId)
 
         # 삭제 버튼 (tb2에서 이동)
         self.btn_delete = QToolButton()
-        self.btn_delete.setText("삭제 (Del)")
+        self.btn_delete.setText("삭제")
+        self.btn_delete.setFixedWidth(52)
         self.btn_delete.clicked.connect(self._delete_favorite_item)
         move_buttons_layout.addWidget(self.btn_delete)
 
         move_buttons_layout.addStretch(1)
 
         self.btn_move_up = QToolButton()
-        self.btn_move_up.setText("▲ 위로")
+        self.btn_move_up.setText("▲")
+        self.btn_move_up.setToolTip("위로")
+        self.btn_move_up.setFixedWidth(32)
         self.btn_move_up.clicked.connect(self._move_item_up)
         self.btn_move_down = QToolButton()
-        self.btn_move_down.setText("▼ 아래로")
+        self.btn_move_down.setText("▼")
+        self.btn_move_down.setToolTip("아래로")
+        self.btn_move_down.setFixedWidth(32)
         self.btn_move_down.clicked.connect(self._move_item_down)
         move_buttons_layout.addWidget(self.btn_move_up)
         move_buttons_layout.addWidget(self.btn_move_down)
         fav_layout.addLayout(move_buttons_layout)
 
         self.fav_tree.itemSelectionChanged.connect(self._update_move_button_state)
+        self.fav_tree.itemSelectionChanged.connect(
+            self._sync_codex_target_from_current_fav_item
+        )
         left_layout.addWidget(fav_group, stretch=1)
 
         self.left_splitter.addWidget(favorites_panel)
         self.main_splitter.addWidget(self.left_splitter)
 
-        # 3. 오른쪽 패널 (변경 없음)
+        # 3. 오른쪽 패널: 위치정렬/코덱스 탭만 교체되고 1, 2패널은 고정된다.
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -9006,8 +9510,8 @@ $one.NavigateTo($newNotebookId)
         self.search_button.setStyleSheet(
             """
             QPushButton {
-                background-color: #F39C12; 
-                color: #000000; 
+                background-color: #F39C12;
+                color: #000000;
                 font-weight: bold;
                 border: none;
                 padding: 6px 12px;
@@ -9015,7 +9519,7 @@ $one.NavigateTo($newNotebookId)
             }
             QPushButton:hover { background-color: #F5B041; }
             QPushButton:pressed { background-color: #D68910; }
-            QPushButton:disabled { 
+            QPushButton:disabled {
                 background-color: #555555;
                 color: #999999;
             }
@@ -9063,7 +9567,22 @@ $one.NavigateTo($newNotebookId)
 
         right_layout.addStretch(1)
 
-        self.main_splitter.addWidget(right_panel)
+        workspace_panel = QWidget()
+        workspace_layout = QVBoxLayout(workspace_panel)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
+
+        self._workspace_splitter_profiles = {}
+        self._active_workspace_splitter_mode = "remocon"
+        self.remocon_workspace_tabs = QTabWidget()
+        self.remocon_workspace_tabs.setObjectName("RemoconWorkspaceTabs")
+        self.remocon_workspace_tabs.addTab(right_panel, "위치정렬")
+        self.remocon_workspace_tabs.addTab(self._build_codex_tab(), "코덱스")
+        self.remocon_workspace_tabs.currentChanged.connect(
+            self._on_remocon_workspace_tab_changed
+        )
+        workspace_layout.addWidget(self.remocon_workspace_tabs, stretch=1)
+        self.main_splitter.addWidget(workspace_panel)
 
         self.connection_status_label = QLabel(initial_status)
         self.statusBar().addPermanentWidget(self.connection_status_label)
@@ -9073,6 +9592,7 @@ $one.NavigateTo($newNotebookId)
         # 저장된 스플리터 상태 불러오기
         splitter_states = self.settings.get("splitter_states")
         restored = False
+        codex_restored = False
         if isinstance(splitter_states, dict):
             try:
                 main_state_b64 = splitter_states.get("main")
@@ -9087,19 +9607,29 @@ $one.NavigateTo($newNotebookId)
                     if not left_state.isEmpty():
                         self.left_splitter.restoreState(left_state)
 
+                codex_state_b64 = splitter_states.get("codex")
+                if codex_state_b64 and getattr(self, "codex_splitter", None) is not None:
+                    codex_state = QByteArray.fromBase64(codex_state_b64.encode("ascii"))
+                    if not codex_state.isEmpty():
+                        codex_restored = self.codex_splitter.restoreState(codex_state)
+
                 restored = True
             except Exception as e:
                 print(f"[WARN] 스플리터 상태 복원 실패: {e}")
                 restored = False
+                codex_restored = False
 
         # 복원에 실패했거나 저장된 상태가 없으면 기본값으로 설정
         if not restored:
             self.left_splitter.setSizes([150, 250])
             self.main_splitter.setSizes([400, 560])
+        if getattr(self, "codex_splitter", None) is not None and not codex_restored:
+            self.codex_splitter.setSizes([208, 920])
         # --- [END] 스플리터 상태 복원 로직 ---
 
         # 초기 상태 업데이트
         self._update_move_button_state()
+        QTimer.singleShot(0, self._sync_codex_target_from_current_fav_item)
 
     # ----------------- 14.1 창 닫기 이벤트 핸들러 (Geometry/Favorites 저장) -----------------
     def _save_window_state(self):
@@ -9116,7 +9646,7 @@ $one.NavigateTo($newNotebookId)
             }
 
         try:
-            self.settings["splitter_states"] = {
+            splitter_states = {
                 "main": self.main_splitter.saveState()
                 .toBase64()
                 .data()
@@ -9126,6 +9656,11 @@ $one.NavigateTo($newNotebookId)
                 .data()
                 .decode("ascii"),
             }
+            if getattr(self, "codex_splitter", None) is not None:
+                splitter_states["codex"] = (
+                    self.codex_splitter.saveState().toBase64().data().decode("ascii")
+                )
+            self.settings["splitter_states"] = splitter_states
         except Exception as e:
             print(f"[WARN] 스플리터 상태 저장 실패: {e}")
 
@@ -10561,7 +11096,7 @@ $one.NavigateTo($newNotebookId)
         self._last_loaded_center_buffer_id = (
             self.settings.get("active_buffer_id") if buffer_name != "None" else None
         )
-        
+
         # 활성 상태바 업데이트
         if buffer_name != "None":
             self.connection_status_label.setText(f"준비됨 (활성 버퍼: {buffer_name})")
@@ -10660,7 +11195,7 @@ $one.NavigateTo($newNotebookId)
                         found_item = item
                         break
                     iterator += 1
-            
+
             # 못 찾았으면 첫 번째 버퍼 선택
             if not found_item:
                 found_item = self._first_buffer_item
@@ -10691,9 +11226,9 @@ $one.NavigateTo($newNotebookId)
         name = node.get("name", "이름 없음")
         item.setText(0, name)
         item.setData(0, ROLE_TYPE, node_type)
-        
-        # 데이터(즐겨찾기 목록)는 트리에 직접 저장하지 않고, 
-        # 구조 변경 시 settings에서 다시 읽거나 관리함. 
+
+        # 데이터(즐겨찾기 목록)는 트리에 직접 저장하지 않고,
+        # 구조 변경 시 settings에서 다시 읽거나 관리함.
         # 여기서는 ID와 데이터 참조를 위해 payload 저장
         payload = {
             "id": node.get("id", str(uuid.uuid4())),
@@ -10701,7 +11236,7 @@ $one.NavigateTo($newNotebookId)
             "virtual": node.get("virtual"),  # 종합(aggregate) 등
             "locked": bool(node.get("locked", False)),
         }
-        
+
         if node_type == "group":
             icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
             item.setIcon(0, icon)
@@ -10715,7 +11250,7 @@ $one.NavigateTo($newNotebookId)
             else:
                 icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
                 item.setIcon(0, icon)
-            
+
         item.setData(0, ROLE_DATA, payload)
         item_id = payload.get("id")
         if item_id:
@@ -10733,13 +11268,13 @@ $one.NavigateTo($newNotebookId)
                 self._buffer_search_index.append(
                     {"item": item, "key": search_key, "parents": tuple(parents)}
                 )
-        
+
         # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
         if payload.get("locked"):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsDragEnabled & ~Qt.ItemFlag.ItemIsDropEnabled)
         else:
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
-            
+
         return item
 
     def _expand_fav_groups_always(self, *, total_nodes: int = -1, reason: str = "") -> None:
@@ -11241,7 +11776,7 @@ $one.NavigateTo($newNotebookId)
             t_build0 = time.perf_counter()
             for node in node_data:
                 self._append_fav_node(self.fav_tree.invisibleRootItem(), node)
-            
+
             build_ms = (time.perf_counter() - t_build0) * 1000.0
             total_nodes = -1
             if self._debug_perf_logs or self._debug_hotpaths:
@@ -11356,7 +11891,7 @@ $one.NavigateTo($newNotebookId)
             if self.active_buffer_node is not None:
                 self.active_buffer_node["data"] = data
                 self._dbg_hot(f"[DBG][FAV][SAVE] Updated active_buffer_node data: count={len(data)}")
-            
+
             # PyQt의 item.data()로 얻은 dict는 "수정해도 item 내부에 반영되지" 않는 경우가 있다.
             # 따라서 활성 버퍼의 QTreeWidgetItem에도 동일 데이터를 강제 주입한다.
             if self.active_buffer_item is None and self.active_buffer_id:
@@ -11438,7 +11973,7 @@ $one.NavigateTo($newNotebookId)
         structure = []
         for i in range(root.childCount()):
             structure.append(self._serialize_buffer_item(root.child(i), rebuild_index=True))
-        
+
         try:
             structure_sig = hashlib.md5(
                 json.dumps(structure, sort_keys=True, ensure_ascii=False).encode("utf-8")
@@ -11491,13 +12026,13 @@ $one.NavigateTo($newNotebookId)
                     self._buffer_search_index.append(
                         {"item": item, "key": search_key, "parents": tuple(parents)}
                     )
-        
+
         node = {
             "type": node_type,
             "id": payload.get("id"),
             "name": item.text(0)
         }
-        
+
         if node_type == "group":
             if payload.get("locked"):
                 node["locked"] = True
@@ -11514,18 +12049,18 @@ $one.NavigateTo($newNotebookId)
             # 버퍼인 경우, 현재 메모리 상의 데이터를 유지하거나
             # 활성 상태라면 현재 중앙 트리에서 가져와야 함.
             # payload['data']는 로드 시점의 스냅샷일 수 있으므로 주의.
-            # 여기서는 payload['data']를 그대로 쓰고, 
+            # 여기서는 payload['data']를 그대로 쓰고,
             # 활성 버퍼가 변경될 때마다 payload['data']를 갱신해두는 방식을 사용.
             if payload.get("virtual"):
                 node["virtual"] = payload.get("virtual")
             if payload.get("locked"):
                 node["locked"] = True
-            
+
             node["data"] = payload.get("data", [])
             # [DBG] 종합 버퍼 저장 스캔
             if node.get("id") == AGG_BUFFER_ID:
                 self._dbg_hot(f"[DBG][SSOT][SERIALIZE] Aggregate data count={len(node['data'])}")
-            
+
         return node
 
     def _request_settings_save(self):
@@ -11557,7 +12092,7 @@ $one.NavigateTo($newNotebookId)
         last_dir = self.settings.get("last_backup_dir", os.getcwd())
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         default_filename = f"OneNote_Remocon_Backup_{timestamp}.json"
-        
+
         default_path = os.path.join(last_dir, default_filename)
 
         file_path, _ = QFileDialog.getSaveFileName(
@@ -11573,13 +12108,13 @@ $one.NavigateTo($newNotebookId)
                 self._save_window_state() # 창 위치 등 업데이트
                 self._flush_pending_buffer_structure_save()
                 self._save_favorites()    # 즐겨찾기 업데이트
-                
+
                 # 백업 디렉토리 기억
                 self.settings["last_backup_dir"] = os.path.dirname(file_path)
-                
+
                 # _write_json을 사용하여 안전하게 저장
                 _write_json(file_path, self.settings)
-                
+
                 # 설정 파일에도 last_backup_dir 반영하여 저장
                 self._save_settings_to_file(immediate=True)
 
@@ -11723,7 +12258,7 @@ $one.NavigateTo($newNotebookId)
     def _restore_full_settings(self):
         """설정 파일을 복원합니다."""
         last_dir = self.settings.get("last_backup_dir", os.getcwd())
-        
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "설정 복원",
@@ -11735,7 +12270,7 @@ $one.NavigateTo($newNotebookId)
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
                     restored_data = json.load(f)
-                
+
                 # 마이그레이션 적용 (구버전 백업일 경우 대비)
                 if _migrate_favorites_buffers_inplace(restored_data):
                     print("[INFO] 복원 데이터 마이그레이션 수행됨")
@@ -11746,7 +12281,7 @@ $one.NavigateTo($newNotebookId)
                     "설정을 복원하면 현재 설정이 덮어씌워집니다.\n계속하시겠습니까?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                 )
-                
+
                 if confirm != QMessageBox.StandardButton.Yes:
                     return
 
@@ -11756,21 +12291,21 @@ $one.NavigateTo($newNotebookId)
                 # 현재 설정 교체
                 self.settings = DEFAULT_SETTINGS.copy()
                 self.settings.update(restored_data)
-                
+
                 # 파일에 즉시 반영
                 self._save_settings_to_file(immediate=True)
-                
+
                 # UI 리로드
                 # 1. 버퍼/즐겨찾기 트리 갱신
                 self._load_buffers_and_favorites()
-                
+
                 # 2. 스플리터 위치 등은 재시작 시 적용되거나 지금 강제 적용 가능하나
                 # 여기서는 데이터 갱신에 집중
-                
+
                 QMessageBox.information(
                     self, "복원 완료", "설정이 복원되었습니다."
                 )
-                
+
             except Exception as e:
                 QMessageBox.critical(
                     self, "복원 실패", f"복원 중 오류가 발생했습니다:\n{e}"
@@ -11980,7 +12515,7 @@ $one.NavigateTo($newNotebookId)
                 and not flushed_current_buffer
             ):
                 self._save_favorites()
-            
+
             self.active_buffer_id = payload.get("id")
             self.active_buffer_node = payload  # Dict payload(스냅샷)
             self.active_buffer_item = item
@@ -11989,7 +12524,7 @@ $one.NavigateTo($newNotebookId)
                 self.active_buffer_id,
             )
             self.settings["active_buffer_id"] = self.active_buffer_id
-            
+
             try:
                 # ✅ 종합 버퍼: 전자필기장(노트북) 저장용
                 if payload.get("id") == AGG_BUFFER_ID:
@@ -12103,9 +12638,9 @@ $one.NavigateTo($newNotebookId)
         # 버퍼가 선택되어 있으면 그 부모(그룹 또는 루트)에 추가
         if parent and parent.data(0, ROLE_TYPE) == "buffer":
             parent = parent.parent()
-        
+
         parent = parent or self.buffer_tree.invisibleRootItem()
-        
+
         node = {"type": "group", "name": "새 그룹", "children": []}
         item = self._append_buffer_node(parent, node)
         self.buffer_tree.setCurrentItem(item)
@@ -12118,9 +12653,9 @@ $one.NavigateTo($newNotebookId)
         # 버퍼가 선택되어 있으면 그 부모에 추가
         if parent and parent.data(0, ROLE_TYPE) == "buffer":
             parent = parent.parent()
-        
+
         parent = parent or self.buffer_tree.invisibleRootItem()
-        
+
         node = {"type": "buffer", "name": "새 버퍼", "data": []}
         item = self._append_buffer_node(parent, node)
         self.buffer_tree.setCurrentItem(item)
@@ -12241,17 +12776,17 @@ $one.NavigateTo($newNotebookId)
             self.btn_buffer_move_up.setEnabled(False)
             self.btn_buffer_move_down.setEnabled(False)
             return
-        
+
         parent = item.parent() or self.buffer_tree.invisibleRootItem()
         index = parent.indexOfChild(item)
-        
+
         self.btn_buffer_move_up.setEnabled(index > 0)
         self.btn_buffer_move_down.setEnabled(index < parent.childCount() - 1)
 
     def _move_buffer_up(self):
         item = self.buffer_tree.currentItem()
         if not item: return
-        
+
         parent = item.parent() or self.buffer_tree.invisibleRootItem()
         index = parent.indexOfChild(item)
         if index > 0:
@@ -12264,7 +12799,7 @@ $one.NavigateTo($newNotebookId)
     def _move_buffer_down(self):
         item = self.buffer_tree.currentItem()
         if not item: return
-        
+
         parent = item.parent() or self.buffer_tree.invisibleRootItem()
         index = parent.indexOfChild(item)
         if index < parent.childCount() - 1:
@@ -12286,17 +12821,17 @@ $one.NavigateTo($newNotebookId)
         act_add_buf = QAction("버퍼 추가", self)
         act_add_buf.triggered.connect(self._add_buffer)
         menu.addAction(act_add_buf)
-        
+
         if item:
             menu.addSeparator()
             act_rename = QAction("이름 변경 (F2)", self)
             act_rename.triggered.connect(self._rename_buffer)
             menu.addAction(act_rename)
-            
-            act_del = QAction("삭제 (Del)", self)
+
+            act_del = QAction("삭제", self)
             act_del.triggered.connect(self._delete_buffer)
             menu.addAction(act_del)
-            
+
         menu.exec(self.buffer_tree.viewport().mapToGlobal(pos))
 
 
@@ -13009,12 +13544,27 @@ $one.NavigateTo($newNotebookId)
         menu.addAction(act_paste)
 
         if item:
+            try:
+                item_type = item.data(0, ROLE_TYPE)
+            except Exception:
+                item_type = None
+            if item_type in ("section", "notebook"):
+                menu.addSeparator()
+                act_send_to_codex = QAction("코덱스 작업 위치로 보내기", self)
+                act_send_to_codex.triggered.connect(
+                    lambda checked=False, fav_item=item: self._sync_codex_target_from_fav_item(
+                        fav_item,
+                        switch_to_codex=True,
+                    )
+                )
+                menu.addAction(act_send_to_codex)
+
             menu.addSeparator()
             act_rename = QAction("이름바꾸기", self)
             act_rename.triggered.connect(self._rename_favorite_item)
             menu.addAction(act_rename)
 
-            act_delete = QAction("삭제 (Del)", self)
+            act_delete = QAction("삭제", self)
             act_delete.triggered.connect(self._delete_favorite_item)
             menu.addAction(act_delete)
 
@@ -13029,6 +13579,7 @@ $one.NavigateTo($newNotebookId)
         # ✅ notebook 타입도 더블클릭 동작해야 함
         if node_type not in ("section", "notebook"):
             return
+        self._sync_codex_target_from_fav_item(item)
         self._activate_favorite_section(item, started_at=started_at)
 
     # _activate_favorite_notebook 제거됨 (기능 통합)
