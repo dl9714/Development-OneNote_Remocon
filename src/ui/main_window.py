@@ -8,7 +8,7 @@ import traceback
 import ctypes
 from ctypes import wintypes
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any, Set, Callable
+from typing import Optional, List, Dict, Any, Set, Callable, Tuple
 import base64
 import hashlib
 import copy
@@ -3317,6 +3317,27 @@ class OpenAllNotebooksWorker(QThread):
             self.done.emit(result)
 
 
+class CodexLocationLookupWorker(QThread):
+    done = pyqtSignal(dict)
+
+    def __init__(self, script: str, timeout: int = 60, parent=None):
+        super().__init__(parent)
+        self.script = script
+        self.timeout = timeout
+
+    def run(self):
+        started_at = time.perf_counter()
+        result = {"ok": False, "raw": "", "error": "", "elapsed_ms": 0}
+        try:
+            result["raw"] = _run_powershell(self.script, timeout=self.timeout)
+            result["ok"] = True
+        except Exception as e:
+            result["error"] = str(e)
+        finally:
+            result["elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+            self.done.emit(result)
+
+
 class OtherWindowSelectionDialog(QDialog):
     def __init__(self, my_pid: int, parent=None):
         super().__init__(parent)
@@ -3404,6 +3425,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._center_worker: Optional[CenterAfterActivateWorker] = None
         self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
         self._open_all_notebooks_worker: Optional[OpenAllNotebooksWorker] = None
+        self._codex_location_lookup_worker: Optional[CodexLocationLookupWorker] = None
         self._retained_qthreads: List[QThread] = []
         self._center_request_seq = 0
         self._last_list_connect_key = None
@@ -3840,7 +3862,7 @@ $result = [ordered]@{
     targets = $targets
 }
 
-$result | ConvertTo-Json -Depth 8
+$result | ConvertTo-Json -Depth 8 -Compress
 """
 
     def _codex_location_lookup_targets_from_json_text(
@@ -4202,6 +4224,14 @@ $result | ConvertTo-Json -Depth 8
                     pass
 
     def _refresh_codex_location_lookup(self) -> None:
+        worker = getattr(self, "_codex_location_lookup_worker", None)
+        try:
+            if worker is not None and worker.isRunning():
+                self.connection_status_label.setText("OneNote 위치 조회가 이미 진행 중입니다.")
+                return
+        except Exception:
+            pass
+
         toggle = getattr(self, "codex_location_lookup_toggle", None)
         refresh_btn = getattr(self, "codex_location_lookup_refresh_btn", None)
         lookup_widgets = (
@@ -4214,27 +4244,83 @@ $result | ConvertTo-Json -Depth 8
         if path_input is not None:
             current_path = path_input.text().strip()
 
-        for widget in (toggle, refresh_btn, *lookup_widgets):
-            if widget is not None:
-                widget.setEnabled(False)
+        if refresh_btn is not None:
+            refresh_btn.setEnabled(False)
+            refresh_btn.setText("조회 중")
+        if toggle is not None:
+            toggle.setEnabled(False)
         try:
-            raw = _run_powershell(self._codex_onenote_location_lookup_script(), timeout=60)
-            targets = self._codex_location_lookup_targets_from_json_text(raw)
+            self.connection_status_label.setText(
+                "OneNote 위치 조회 중... 저장된 위치 목록은 계속 사용할 수 있습니다."
+            )
+        except Exception:
+            pass
+
+        worker = CodexLocationLookupWorker(
+            self._codex_onenote_location_lookup_script(),
+            timeout=60,
+            parent=self,
+        )
+        self._codex_location_lookup_worker = worker
+        self._retain_qthread_until_finished(worker, "_codex_location_lookup_worker")
+        worker.done.connect(
+            lambda result, selected_path=current_path, lookup_widgets=lookup_widgets, refresh_btn=refresh_btn, toggle=toggle, worker=worker: self._on_codex_location_lookup_done(
+                result,
+                selected_path,
+                lookup_widgets,
+                refresh_btn,
+                toggle,
+                worker,
+            )
+        )
+        worker.start()
+
+    def _on_codex_location_lookup_done(
+        self,
+        result: Dict[str, Any],
+        selected_path: str,
+        lookup_widgets: Tuple[Optional[QWidget], ...],
+        refresh_btn: Optional[QToolButton],
+        toggle: Optional[QToolButton],
+        worker: CodexLocationLookupWorker,
+    ) -> None:
+        active_worker = getattr(self, "_codex_location_lookup_worker", None)
+        if active_worker is not None and active_worker is not worker:
+            return
+
+        if refresh_btn is not None:
+            refresh_btn.setEnabled(True)
+            refresh_btn.setText("조회")
+        if toggle is not None:
+            toggle.setEnabled(True)
+        for widget in lookup_widgets:
+            if widget is not None:
+                widget.setEnabled(True)
+
+        if not result.get("ok"):
+            QMessageBox.warning(
+                self,
+                "OneNote 위치 조회 실패",
+                str(result.get("error") or "알 수 없는 오류"),
+            )
+            return
+
+        try:
+            targets = self._codex_location_lookup_targets_from_json_text(
+                str(result.get("raw") or "")
+            )
             self._codex_location_lookup_targets = targets
             self._save_codex_location_lookup_cache(targets)
-            self._populate_codex_location_lookup_combo(current_path)
+            self._populate_codex_location_lookup_combo(selected_path)
+            elapsed = max(0.0, float(result.get("elapsed_ms") or 0) / 1000.0)
             try:
                 self.connection_status_label.setText(
-                    f"OneNote 위치 조회 완료: {len(targets)}개 저장"
+                    f"OneNote 위치 조회 완료: {len(targets)}개 저장 ({elapsed:.1f}초)"
                 )
             except Exception:
                 pass
         except Exception as e:
-            QMessageBox.warning(self, "OneNote 위치 조회 실패", str(e))
-        finally:
-            for widget in (toggle, refresh_btn, *lookup_widgets):
-                if widget is not None:
-                    widget.setEnabled(True)
+            QMessageBox.warning(self, "OneNote 위치 조회 결과 처리 실패", str(e))
 
     def _apply_codex_location_profile(self, profile: Dict[str, str]) -> None:
         if not isinstance(profile, dict):
@@ -10134,6 +10220,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             "_center_worker",
             "_favorite_activation_worker",
             "_open_all_notebooks_worker",
+            "_codex_location_lookup_worker",
         ]:
             t = getattr(self, attr, None)
             try:
