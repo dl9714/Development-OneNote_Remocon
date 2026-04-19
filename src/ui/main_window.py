@@ -73,6 +73,14 @@ from PyQt6.QtGui import QIcon, QAction, QBrush, QColor
 class WheelSafeComboBox(QComboBox):
     """Ignore wheel changes while collapsed so parent scroll areas keep scrolling."""
 
+    def showPopup(self):
+        try:
+            width = max(self.width(), self.view().sizeHintForColumn(0) + 36)
+            self.view().setMinimumWidth(width)
+        except Exception:
+            pass
+        super().showPopup()
+
     def wheelEvent(self, event):
         try:
             popup_open = self.view().isVisible()
@@ -3880,33 +3888,193 @@ $result | ConvertTo-Json -Depth 8
         }.get(kind, "위치")
         return f"{kind_label} | {profile.get('path', '')}"
 
-    def _populate_codex_location_lookup_combo(
-        self, selected_path: str = ""
+    def _codex_location_first_profile(
+        self, *, kind: str = "", notebook: str = "", section_group: Optional[str] = None
+    ) -> Optional[Dict[str, str]]:
+        for profile in getattr(self, "_codex_location_lookup_targets", []):
+            if not isinstance(profile, dict):
+                continue
+            if kind and profile.get("kind") != kind:
+                continue
+            if notebook and profile.get("notebook") != notebook:
+                continue
+            if section_group is not None and profile.get("section_group", "") != section_group:
+                continue
+            return profile
+        return None
+
+    def _codex_location_selected_notebook(self) -> str:
+        combo = getattr(self, "codex_location_notebook_combo", None)
+        if combo is None:
+            return ""
+        return str(combo.currentData() or "").strip()
+
+    def _codex_location_selected_group(self) -> str:
+        combo = getattr(self, "codex_location_group_combo", None)
+        if combo is None:
+            return ""
+        data = combo.currentData()
+        if isinstance(data, dict):
+            return str(data.get("section_group", "") or "").strip()
+        return ""
+
+    def _configure_codex_lookup_combo(self, combo: QComboBox) -> None:
+        combo.setMinimumWidth(0)
+        combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        try:
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(8)
+            combo.setMaxVisibleItems(16)
+        except Exception:
+            pass
+
+    def _populate_codex_location_group_combo(
+        self, selected_group: str = "", selected_section: str = ""
     ) -> None:
-        combo = getattr(self, "codex_location_lookup_combo", None)
+        combo = getattr(self, "codex_location_group_combo", None)
         if combo is None:
             return
 
-        targets = getattr(self, "_codex_location_lookup_targets", [])
+        notebook = self._codex_location_selected_notebook()
+        seen: Set[str] = set()
+        groups: List[Dict[str, str]] = []
+        for profile in getattr(self, "_codex_location_lookup_targets", []):
+            if not isinstance(profile, dict):
+                continue
+            if notebook and profile.get("notebook") != notebook:
+                continue
+            group_name = str(profile.get("section_group", "") or "").strip()
+            if not group_name or group_name in seen:
+                continue
+            if profile.get("kind") == "section_group":
+                group_profile = dict(profile)
+            else:
+                group_profile = {
+                    "kind": "section_group",
+                    "name": group_name,
+                    "path": " > ".join(
+                        part for part in [profile.get("notebook", ""), group_name] if part
+                    ),
+                    "notebook": profile.get("notebook", ""),
+                    "section_group": group_name,
+                    "section": "",
+                    "section_group_id": profile.get("section_group_id", ""),
+                    "section_id": "",
+                }
+            groups.append(group_profile)
+            seen.add(group_name)
+
         combo.blockSignals(True)
         combo.clear()
-        try:
-            combo.setPlaceholderText("OneNote에서 조회한 그룹/섹션 선택")
-        except Exception:
-            pass
-        selected_idx = -1
-        for idx, profile in enumerate(targets):
-            combo.addItem(self._codex_location_lookup_label(profile), profile)
-            if selected_path and profile.get("path") == selected_path:
+        combo.addItem("섹션 그룹 없음", {
+            "kind": "section_group",
+            "name": "섹션 그룹 없음",
+            "path": notebook,
+            "notebook": notebook,
+            "section_group": "",
+            "section": "",
+            "section_group_id": "",
+            "section_id": "",
+        })
+        selected_idx = 0
+        for idx, profile in enumerate(groups, start=1):
+            label = profile.get("section_group", "") or profile.get("path", "")
+            combo.addItem(label, profile)
+            if selected_group and profile.get("section_group") == selected_group:
                 selected_idx = idx
         combo.setCurrentIndex(selected_idx)
         combo.blockSignals(False)
-        if selected_idx >= 0:
-            self._on_codex_location_lookup_selected()
+        self._populate_codex_location_section_combo(selected_section)
+
+    def _populate_codex_location_section_combo(self, selected_section: str = "") -> None:
+        combo = getattr(self, "codex_location_section_combo", None)
+        if combo is None:
+            return
+
+        notebook = self._codex_location_selected_notebook()
+        group_name = self._codex_location_selected_group()
+        sections = [
+            profile
+            for profile in getattr(self, "_codex_location_lookup_targets", [])
+            if isinstance(profile, dict)
+            and profile.get("kind") == "section"
+            and (not notebook or profile.get("notebook") == notebook)
+            and profile.get("section_group", "") == group_name
+        ]
+
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("섹션 선택", None)
+        selected_idx = 0
+        for idx, profile in enumerate(sections, start=1):
+            label = profile.get("section", "") or profile.get("path", "")
+            combo.addItem(label, profile)
+            if selected_section and profile.get("section") == selected_section:
+                selected_idx = idx
+        combo.setCurrentIndex(selected_idx)
+        combo.blockSignals(False)
+
+    def _populate_codex_location_lookup_combo(
+        self, selected_path: str = ""
+    ) -> None:
+        targets = getattr(self, "_codex_location_lookup_targets", [])
+        notebook_combo = getattr(self, "codex_location_notebook_combo", None)
+        if notebook_combo is None:
+            return
+
+        selected_profile = None
+        matched_selected_path = False
+        if selected_path:
+            selected_profile = next(
+                (
+                    profile
+                    for profile in targets
+                    if isinstance(profile, dict) and profile.get("path") == selected_path
+                ),
+                None,
+            )
+            matched_selected_path = selected_profile is not None
+        if selected_profile is None:
+            selected_profile = self._codex_location_first_profile(kind="section")
+        if selected_profile is None:
+            selected_profile = self._codex_location_first_profile()
+
+        notebooks: List[str] = []
+        seen: Set[str] = set()
+        for profile in targets:
+            if not isinstance(profile, dict):
+                continue
+            notebook = str(profile.get("notebook", "") or "").strip()
+            if notebook and notebook not in seen:
+                notebooks.append(notebook)
+                seen.add(notebook)
+
+        selected_notebook = (selected_profile or {}).get("notebook", "")
+        notebook_combo.blockSignals(True)
+        notebook_combo.clear()
+        for notebook in notebooks:
+            notebook_combo.addItem(notebook, notebook)
+        selected_idx = max(0, notebook_combo.findData(selected_notebook))
+        notebook_combo.setCurrentIndex(selected_idx if notebook_combo.count() else -1)
+        notebook_combo.blockSignals(False)
+
+        self._populate_codex_location_group_combo(
+            (selected_profile or {}).get("section_group", ""),
+            (selected_profile or {}).get("section", ""),
+        )
+
+        if selected_profile is not None and matched_selected_path:
+            self._apply_codex_location_profile(selected_profile)
 
     def _set_codex_location_lookup_enabled(self, enabled: bool) -> None:
         toggle = getattr(self, "codex_location_lookup_toggle", None)
-        combo = getattr(self, "codex_location_lookup_combo", None)
+        lookup_widgets = (
+            getattr(self, "codex_location_notebook_combo", None),
+            getattr(self, "codex_location_group_combo", None),
+            getattr(self, "codex_location_section_combo", None),
+        )
         refresh_btn = getattr(self, "codex_location_lookup_refresh_btn", None)
 
         if toggle is not None:
@@ -3916,23 +4084,28 @@ $result | ConvertTo-Json -Depth 8
                 toggle.blockSignals(False)
             toggle.setText("OneNote 조회 ON" if enabled else "OneNote 조회 OFF")
 
-        for widget in (combo, refresh_btn):
+        for widget in (*lookup_widgets, refresh_btn):
             if widget is not None:
                 widget.setVisible(enabled)
 
-        if enabled and combo is not None and combo.count() == 0:
+        notebook_combo = getattr(self, "codex_location_notebook_combo", None)
+        if enabled and notebook_combo is not None and notebook_combo.count() == 0:
             self._refresh_codex_location_lookup()
 
     def _refresh_codex_location_lookup(self) -> None:
         toggle = getattr(self, "codex_location_lookup_toggle", None)
         refresh_btn = getattr(self, "codex_location_lookup_refresh_btn", None)
-        combo = getattr(self, "codex_location_lookup_combo", None)
+        lookup_widgets = (
+            getattr(self, "codex_location_notebook_combo", None),
+            getattr(self, "codex_location_group_combo", None),
+            getattr(self, "codex_location_section_combo", None),
+        )
         current_path = ""
         path_input = getattr(self, "codex_target_path_input", None)
         if path_input is not None:
             current_path = path_input.text().strip()
 
-        for widget in (toggle, refresh_btn, combo):
+        for widget in (toggle, refresh_btn, *lookup_widgets):
             if widget is not None:
                 widget.setEnabled(False)
         try:
@@ -3949,15 +4122,11 @@ $result | ConvertTo-Json -Depth 8
         except Exception as e:
             QMessageBox.warning(self, "OneNote 위치 조회 실패", str(e))
         finally:
-            for widget in (toggle, refresh_btn, combo):
+            for widget in (toggle, refresh_btn, *lookup_widgets):
                 if widget is not None:
                     widget.setEnabled(True)
 
-    def _on_codex_location_lookup_selected(self) -> None:
-        combo = getattr(self, "codex_location_lookup_combo", None)
-        if combo is None:
-            return
-        profile = combo.currentData()
+    def _apply_codex_location_profile(self, profile: Dict[str, str]) -> None:
         if not isinstance(profile, dict):
             return
         self._populate_codex_target_fields(profile)
@@ -3969,6 +4138,28 @@ $result | ConvertTo-Json -Depth 8
             )
         except Exception:
             pass
+
+    def _on_codex_location_notebook_selected(self) -> None:
+        self._populate_codex_location_group_combo()
+        profile = self._codex_location_first_profile(
+            kind="notebook",
+            notebook=self._codex_location_selected_notebook(),
+        )
+        if profile is not None:
+            self._apply_codex_location_profile(profile)
+
+    def _on_codex_location_group_selected(self) -> None:
+        self._populate_codex_location_section_combo()
+        combo = getattr(self, "codex_location_group_combo", None)
+        profile = combo.currentData() if combo is not None else None
+        if isinstance(profile, dict):
+            self._apply_codex_location_profile(profile)
+
+    def _on_codex_location_section_selected(self) -> None:
+        combo = getattr(self, "codex_location_section_combo", None)
+        profile = combo.currentData() if combo is not None else None
+        if isinstance(profile, dict):
+            self._apply_codex_location_profile(profile)
 
     def _codex_target_profile_json_text(self) -> str:
         return json.dumps(
@@ -6785,36 +6976,64 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         lookup_row.setSpacing(6)
         self.codex_location_lookup_toggle = QToolButton()
         self.codex_location_lookup_toggle.setText("OneNote 조회 OFF")
+        self.codex_location_lookup_toggle.setMinimumWidth(0)
+        self.codex_location_lookup_toggle.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Fixed,
+        )
         self.codex_location_lookup_toggle.setCheckable(True)
         self.codex_location_lookup_toggle.toggled.connect(
             self._set_codex_location_lookup_enabled
         )
-        lookup_row.addWidget(self.codex_location_lookup_toggle)
+        lookup_row.addWidget(self.codex_location_lookup_toggle, stretch=1)
 
-        self.codex_location_lookup_combo = WheelSafeComboBox()
-        self.codex_location_lookup_combo.setMinimumWidth(0)
-        self.codex_location_lookup_combo.setSizePolicy(
+        self.codex_location_lookup_refresh_btn = QToolButton()
+        self.codex_location_lookup_refresh_btn.setText("조회")
+        self.codex_location_lookup_refresh_btn.setMinimumWidth(0)
+        self.codex_location_lookup_refresh_btn.setSizePolicy(
             QSizePolicy.Policy.Ignored,
             QSizePolicy.Policy.Fixed,
         )
-        try:
-            self.codex_location_lookup_combo.setPlaceholderText(
-                "OneNote에서 조회한 그룹/섹션 선택"
-            )
-        except Exception:
-            pass
-        self.codex_location_lookup_combo.currentIndexChanged.connect(
-            self._on_codex_location_lookup_selected
-        )
-        lookup_row.addWidget(self.codex_location_lookup_combo, stretch=1)
-
-        self.codex_location_lookup_refresh_btn = QToolButton()
-        self.codex_location_lookup_refresh_btn.setText("새로고침")
         self.codex_location_lookup_refresh_btn.clicked.connect(
             self._refresh_codex_location_lookup
         )
-        lookup_row.addWidget(self.codex_location_lookup_refresh_btn)
+        lookup_row.addWidget(self.codex_location_lookup_refresh_btn, stretch=1)
         layout.addLayout(lookup_row)
+
+        lookup_form = QGridLayout()
+        lookup_form.setHorizontalSpacing(6)
+        lookup_form.setVerticalSpacing(6)
+
+        def add_lookup_combo(row: int, label: str, attr: str, handler) -> WheelSafeComboBox:
+            lbl = QLabel(label)
+            lbl.setMinimumWidth(54)
+            combo = WheelSafeComboBox()
+            self._configure_codex_lookup_combo(combo)
+            combo.currentIndexChanged.connect(handler)
+            setattr(self, attr, combo)
+            lookup_form.addWidget(lbl, row, 0)
+            lookup_form.addWidget(combo, row, 1)
+            return combo
+
+        add_lookup_combo(
+            0,
+            "필기장",
+            "codex_location_notebook_combo",
+            self._on_codex_location_notebook_selected,
+        )
+        add_lookup_combo(
+            1,
+            "섹션그룹",
+            "codex_location_group_combo",
+            self._on_codex_location_group_selected,
+        )
+        add_lookup_combo(
+            2,
+            "섹션",
+            "codex_location_section_combo",
+            self._on_codex_location_section_selected,
+        )
+        layout.addLayout(lookup_form)
         self._set_codex_location_lookup_enabled(False)
 
         form_layout = QGridLayout()
@@ -7612,11 +7831,13 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         layout.addWidget(header)
 
         form = QGridLayout()
-        form.setVerticalSpacing(8)
+        form.setVerticalSpacing(6)
         form.setHorizontalSpacing(6)
+        form.setColumnMinimumWidth(0, 48)
         form.setColumnStretch(1, 1)
 
         self.codex_request_preset_combo = WheelSafeComboBox()
+        self._configure_codex_lookup_combo(self.codex_request_preset_combo)
         for key, preset in self._codex_request_presets().items():
             self.codex_request_preset_combo.addItem(preset.get("name", key), key)
         form.addWidget(QLabel("양식"), 0, 0)
@@ -7630,23 +7851,24 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         form.addLayout(preset_row, 0, 1)
 
         self.codex_request_action_combo = WheelSafeComboBox()
+        self._configure_codex_lookup_combo(self.codex_request_action_combo)
         self.codex_request_action_combo.addItems(
             ["페이지 추가", "새 섹션 생성", "섹션 그룹 생성", "기본 형식 작성"]
         )
         self.codex_request_action_combo.currentIndexChanged.connect(self._schedule_codex_codegen_previews)
-        form.addWidget(QLabel("수행 작업"), 1, 0)
+        form.addWidget(QLabel("작업"), 1, 0)
         form.addWidget(self.codex_request_action_combo, 1, 1)
 
         self.codex_request_target_input = QLineEdit()
         self.codex_request_target_input.setPlaceholderText("전자필기장 > 섹션그룹 > 섹션")
         self.codex_request_target_input.textChanged.connect(self._schedule_codex_codegen_previews)
-        form.addWidget(QLabel("작업 경로"), 2, 0)
+        form.addWidget(QLabel("경로"), 2, 0)
         form.addWidget(self.codex_request_target_input, 2, 1)
 
         self.codex_request_title_input = QLineEdit()
         self.codex_request_title_input.setPlaceholderText("항목의 이름을 입력하세요...")
         self.codex_request_title_input.textChanged.connect(self._schedule_codex_codegen_previews)
-        form.addWidget(QLabel("대상 제목"), 3, 0)
+        form.addWidget(QLabel("제목"), 3, 0)
         form.addWidget(self.codex_request_title_input, 3, 1)
 
         layout.addLayout(form)
