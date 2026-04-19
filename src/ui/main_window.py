@@ -10037,42 +10037,6 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         search_group_layout = QVBoxLayout(search_group)
         search_group_layout.setSpacing(8)
 
-        notebook_search_label = QLabel("전자필기장위치정렬")
-        search_group_layout.addWidget(notebook_search_label)
-
-        search_widget_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("검색할 섹션 이름 입력...")
-        self.search_input.returnPressed.connect(self._search_and_select_section)
-        self.search_input.setEnabled(False)
-        search_widget_layout.addWidget(self.search_input, stretch=1)
-
-        self.search_button = QPushButton("전자필기장위치정렬")
-        self.search_button.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #F39C12;
-                color: #000000;
-                font-weight: bold;
-                border: none;
-                padding: 6px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover { background-color: #F5B041; }
-            QPushButton:pressed { background-color: #D68910; }
-            QPushButton:disabled {
-                background-color: #555555;
-                color: #999999;
-            }
-        """
-        )
-        self.search_button.clicked.connect(self._search_and_select_section)
-        self.search_button.setEnabled(False)
-        search_widget_layout.addWidget(self.search_button)
-
-        search_group_layout.addLayout(search_widget_layout)
-        search_group_layout.addSpacing(14)
-
         project_search_label = QLabel("프로젝트 검색")
         project_search_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         search_group_layout.addWidget(project_search_label)
@@ -10275,8 +10239,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
     def update_status_and_ui(self, status_text: str, is_connected: bool):
         self.connection_status_label.setText(status_text)
         self.center_button.setEnabled(is_connected)
-        self.search_input.setEnabled(is_connected)
-        self.search_button.setEnabled(is_connected)
+        search_input = getattr(self, "search_input", None)
+        if search_input is not None:
+            search_input.setEnabled(is_connected)
+        search_button = getattr(self, "search_button", None)
+        if search_button is not None:
+            search_button.setEnabled(is_connected)
         open_all_busy = bool(
             self._open_all_notebooks_worker
             and self._open_all_notebooks_worker.isRunning()
