@@ -3888,6 +3888,97 @@ $result | ConvertTo-Json -Depth 8
         }.get(kind, "위치")
         return f"{kind_label} | {profile.get('path', '')}"
 
+    def _codex_location_cache_path(self) -> str:
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        return os.path.join(root, "docs", "codex", "onenote-location-cache.json")
+
+    def _codex_location_targets_from_saved_targets(self) -> List[Dict[str, str]]:
+        targets: List[Dict[str, str]] = []
+        seen: Set[str] = set()
+        for item in self._load_codex_targets():
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "") or "").strip()
+            notebook = str(item.get("notebook", "") or "").strip()
+            section_group = str(item.get("section_group", "") or "").strip()
+            section = str(item.get("section", "") or "").strip()
+            if not path:
+                continue
+            entries = [
+                {
+                    "kind": "notebook",
+                    "name": notebook,
+                    "path": notebook,
+                    "notebook": notebook,
+                    "section_group": "",
+                    "section": "",
+                    "section_group_id": "",
+                    "section_id": "",
+                },
+                {
+                    "kind": "section_group",
+                    "name": section_group,
+                    "path": " > ".join(part for part in [notebook, section_group] if part),
+                    "notebook": notebook,
+                    "section_group": section_group,
+                    "section": "",
+                    "section_group_id": str(item.get("section_group_id", "") or ""),
+                    "section_id": "",
+                },
+                {
+                    "kind": "section",
+                    "name": section or path,
+                    "path": path,
+                    "notebook": notebook,
+                    "section_group": section_group,
+                    "section": section,
+                    "section_group_id": str(item.get("section_group_id", "") or ""),
+                    "section_id": str(item.get("section_id", "") or ""),
+                },
+            ]
+            for profile in entries:
+                if not profile.get("path"):
+                    continue
+                key = "|".join(
+                    [
+                        profile.get("kind", ""),
+                        profile.get("path", ""),
+                        profile.get("section_id", ""),
+                    ]
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                targets.append(profile)
+        return targets
+
+    def _load_codex_location_lookup_cache(self) -> List[Dict[str, str]]:
+        path = self._codex_location_cache_path()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                targets = self._codex_location_lookup_targets_from_json_text(f.read())
+            if targets:
+                return targets
+        except Exception:
+            pass
+        return self._codex_location_targets_from_saved_targets()
+
+    def _save_codex_location_lookup_cache(self, targets: List[Dict[str, str]]) -> None:
+        payload = {
+            "version": 1,
+            "cached_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "targets": targets,
+        }
+        self._write_json_file_atomic(self._codex_location_cache_path(), payload)
+
+    def _load_codex_location_lookup_cache_into_ui(self, selected_path: str = "") -> bool:
+        targets = self._load_codex_location_lookup_cache()
+        if not targets:
+            return False
+        self._codex_location_lookup_targets = targets
+        self._populate_codex_location_lookup_combo(selected_path)
+        return True
+
     def _codex_location_first_profile(
         self, *, kind: str = "", notebook: str = "", section_group: Optional[str] = None
     ) -> Optional[Dict[str, str]]:
@@ -4090,7 +4181,25 @@ $result | ConvertTo-Json -Depth 8
 
         notebook_combo = getattr(self, "codex_location_notebook_combo", None)
         if enabled and notebook_combo is not None and notebook_combo.count() == 0:
-            self._refresh_codex_location_lookup()
+            current_path = ""
+            path_input = getattr(self, "codex_target_path_input", None)
+            if path_input is not None:
+                current_path = path_input.text().strip()
+            if self._load_codex_location_lookup_cache_into_ui(current_path):
+                try:
+                    count = len(getattr(self, "_codex_location_lookup_targets", []))
+                    self.connection_status_label.setText(
+                        f"저장된 OneNote 위치 {count}개를 불러왔습니다."
+                    )
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.connection_status_label.setText(
+                        "저장된 OneNote 위치가 없습니다. 조회를 눌러 한 번 갱신하세요."
+                    )
+                except Exception:
+                    pass
 
     def _refresh_codex_location_lookup(self) -> None:
         toggle = getattr(self, "codex_location_lookup_toggle", None)
@@ -4112,10 +4221,11 @@ $result | ConvertTo-Json -Depth 8
             raw = _run_powershell(self._codex_onenote_location_lookup_script(), timeout=60)
             targets = self._codex_location_lookup_targets_from_json_text(raw)
             self._codex_location_lookup_targets = targets
+            self._save_codex_location_lookup_cache(targets)
             self._populate_codex_location_lookup_combo(current_path)
             try:
                 self.connection_status_label.setText(
-                    f"OneNote 위치 조회 완료: {len(targets)}개"
+                    f"OneNote 위치 조회 완료: {len(targets)}개 저장"
                 )
             except Exception:
                 pass
