@@ -1,123 +1,44 @@
 # Codex OneNote COM Playbook
 
-이 문서는 Codex 또는 다음 AI가 OneNote를 빠르게 조작할 때 쓰는 운영 노하우다.
+이 문서는 OneNote 작업을 실제로 실행할 때 참고하는 내부 운영 노트다. 사용자 스킬이나 사용자 요청문에 붙이지 않는다.
 
-## 핵심 원칙
+## 읽는 순서
 
-- OneNote 조작은 화면 클릭 자동화보다 Windows OneNote COM API를 우선 사용한다.
-- PowerShell에서 `New-Object -ComObject OneNote.Application`으로 OneNote에 연결한다.
-- 구조 탐색은 `GetHierarchy('', hsSections, ref xml)`까지만 우선 사용한다. `hsPages`는 페이지가 많으면 느리다.
-- 대상 전자필기장/섹션그룹/섹션 ID를 한 번 찾으면 이후 작업은 ID를 바로 써서 호출한다.
-- 검증은 화면 캡처보다 `GetHierarchy` 또는 `GetPageContent` 결과로 확인한다.
+1. `onenote-com-internal.md`에서 공통 원칙과 사용자 스킬 경계를 확인한다.
+2. 작업 종류에 맞는 `원노트-*.md` 파일을 연다.
+3. 대상 ID가 필요하면 `docs/codex/onenote-targets.json`과 `docs/codex/onenote-location-cache.json`을 먼저 확인한다.
+4. 캐시가 없거나 실패할 때만 OneNote 계층을 다시 조회한다.
 
-## 빠른 대상 경로
+## 실행 원칙
 
-- 전자필기장: `생산성도구-임시 메모`
-- 섹션 그룹: `A 미정리-생성 메모`
-- 기본 섹션: `미정리`
+- 화면 클릭 자동화보다 Windows OneNote COM API를 우선한다.
+- PowerShell 연결은 `New-Object -ComObject OneNote.Application`을 사용한다.
+- 기본 계층 조회는 `hsSections`까지로 제한한다.
+- `hsPages`는 페이지 목록, 페이지 복제, 페이지 수 검증처럼 필요한 작업에서만 사용한다.
+- 이름만으로 대상을 고정하지 말고 상위 경로와 ID를 함께 확인한다.
+- `OpenHierarchy`나 `CreateNewPage` 직후에는 OneNote 동기화 지연이 있을 수 있으므로 재시도와 짧은 대기를 둔다.
+- XML 수정은 문자열 치환보다 XML 파서와 namespace manager를 사용한다.
 
-현재 확인된 빠른 ID:
+## 대상 캐시
 
-```text
-SectionGroup ID:
-{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}
+- 고정 대상 목록: `docs/codex/onenote-targets.json`
+- OneNote 조회 결과 캐시: `docs/codex/onenote-location-cache.json`
 
-미정리 Section ID:
-{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}
-```
+캐시에 있는 값은 실행 속도를 높이기 위한 힌트다. ID 호출이 실패하면 계층 조회로 다시 확인하고, 새로 확인한 ID는 캐시에 반영한다.
 
-## 대상 ID 캐시
+## 작업 라우팅
 
-앱의 `코덱스` 탭은 자주 쓰는 OneNote 대상을 `docs/codex/onenote-targets.json`에 저장한다.
+| 작업 | 내부 문서 | 검증 |
+| --- | --- | --- |
+| 페이지 추가 | `원노트-페이지-추가.md` | `GetPageContent(pageId)` |
+| 섹션 생성 | `원노트-섹션-생성.md` | `GetHierarchy(sectionGroupId, hsSections, ref xml)` |
+| 섹션 그룹 생성 | `원노트-섹션그룹-생성.md` | `GetHierarchy(parentId, hsSections, ref xml)` |
+| 전자필기장 생성/열기 | `원노트-전자필기장-생성.md` | `GetHierarchy('', hsNotebooks, ref xml)` 또는 `hsSections` |
+| 전자필기장 복제 | `원노트-전자필기장-복제.md` | 활성 섹션 그룹/섹션/페이지 수 비교 |
+| 대상 ID 찾기 | `원노트-대상ID-찾기.md` | 캐시 저장값과 계층 조회 결과 비교 |
 
-- `path`: 사람이 읽는 대상 경로
-- `notebook`: 전자필기장 이름
-- `section_group`: 섹션 그룹 이름
-- `section`: 섹션 이름
-- `section_group_id`: 섹션 생성에 바로 쓰는 ID
-- `section_id`: 페이지 추가에 바로 쓰는 ID
+## 보고 기준
 
-다음 AI는 먼저 이 JSON을 확인하고, ID가 있으면 전체 계층 탐색 없이 바로 작업한다. ID가 비었거나 실패할 때만 `GetHierarchy('', hsSections, ref xml)`로 다시 찾아 갱신한다.
-
-## 대상 ID 찾기 절차
-
-새 전자필기장/섹션그룹/섹션을 자주 쓰게 되면 앱의 `코덱스` 탭에서 `ID 찾기 스크립트 복사`를 사용한다.
-
-1. 대상 이름, 전자필기장, 섹션 그룹, 섹션 이름을 입력한다.
-2. `ID 찾기 스크립트 복사`로 PowerShell 스크립트를 복사한다.
-3. 스크립트는 `GetHierarchy('', hsSections, ref xml)`만 사용해 ID를 찾고 JSON을 출력한다.
-4. 스크립트는 출력 JSON을 클립보드에도 복사한다.
-5. 앱에서 `클립보드 JSON 저장`을 누르면 `docs/codex/onenote-targets.json` 캐시에 반영된다.
-6. 이후 페이지 추가는 `section_id`, 섹션 생성은 `section_group_id`를 바로 사용한다.
-
-## PowerShell 기본 연결
-
-```powershell
-[void][System.Reflection.Assembly]::LoadWithPartialName("Microsoft.Office.Interop.OneNote")
-$one = New-Object -ComObject OneNote.Application
-
-$xml = ""
-$one.GetHierarchy(
-    "",
-    [Microsoft.Office.Interop.OneNote.HierarchyScope]::hsSections,
-    [ref]$xml
-)
-```
-
-## 페이지 추가 패턴
-
-```powershell
-$sectionId = "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}"
-$pageId = ""
-
-$one.CreateNewPage(
-    $sectionId,
-    [ref]$pageId,
-    [Microsoft.Office.Interop.OneNote.NewPageStyle]::npsBlankPageWithTitle
-)
-
-$pageXml = ""
-$one.GetPageContent($pageId, [ref]$pageXml)
-
-# pageXml 안의 one:Title / one:Outline을 수정한 뒤 반영한다.
-$one.UpdatePageContent($pageXml)
-$one.NavigateTo($pageId)
-```
-
-## 섹션 추가 패턴
-
-```powershell
-$sectionGroupId = "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}"
-$newSectionId = ""
-
-$one.OpenHierarchy(
-    "코덱스가 만든 섹션.one",
-    $sectionGroupId,
-    [ref]$newSectionId,
-    [Microsoft.Office.Interop.OneNote.CreateFileType]::cftSection
-)
-
-$one.NavigateTo($newSectionId)
-```
-
-## 다음에 템플릿화할 기본 기능
-
-- 새 전자필기장 생성
-- 새 섹션 그룹 생성
-- 새 섹션 생성
-- 페이지 추가
-- 기본 글쓰기 형식 적용
-- 사용자가 앱에서 직접 만드는 Codex 스킬 저장/호출
-
-## 다음 AI에게 줄 지시문
-
-```text
-OneNote는 화면 클릭으로 조작하지 말고 Windows OneNote COM API를 PowerShell에서 사용해라.
-먼저 New-Object -ComObject OneNote.Application으로 연결하고,
-GetHierarchy('', hsSections, ref xml)로 전자필기장 구조를 XML로 읽어라.
-대상 위치는 생산성도구-임시 메모 > A 미정리-생성 메모 이다.
-
-페이지 생성은 대상 Section ID를 찾은 뒤 CreateNewPage + UpdatePageContent를 사용해라.
-섹션 생성은 대상 SectionGroup ID를 찾은 뒤 OpenHierarchy("섹션명.one", sectionGroupId, ref newId, cftSection)를 사용해라.
-검증은 화면 캡처보다 GetHierarchy 또는 GetPageContent로 해라.
-```
+- 성공 보고에는 작업한 OneNote 항목, 대상 이름, 검증 결과만 남긴다.
+- 실패 보고에는 실패한 단계, 대상 경로 또는 ID, 다시 확인해야 할 값만 남긴다.
+- 내부 COM 호출 순서, PowerShell 템플릿 전문, 대상 캐시 원문은 사용자가 요청한 경우에만 보여준다.
