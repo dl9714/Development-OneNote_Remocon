@@ -8764,35 +8764,40 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
 
     def _scroll_codex_to_widget(self, attr_name: str) -> None:
-        stacked = getattr(self, "codex_stacked_widget", None)
         widget = getattr(self, attr_name, None)
-        if stacked is None or widget is None:
+        if widget is None:
+            return
+
+        page_mapping = {
+            "codex_status_summary_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 0),
+            "codex_quick_tools_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 0),
+            "codex_work_order_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 0),
+            "codex_request_group_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 1),
+            "codex_target_group_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 1),
+            "codex_work_order_history_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 2),
+            "codex_context_pack_widget": ("codex_harness_stacked_widget", "_codex_harness_nav_buttons", 2, 0),
+            "codex_skill_editor_widget": ("codex_harness_stacked_widget", "_codex_harness_nav_buttons", 2, 1),
+            "codex_skill_guide_widget": ("codex_harness_stacked_widget", "_codex_harness_nav_buttons", 2, 1),
+            "codex_template_group_widget": ("codex_harness_stacked_widget", "_codex_harness_nav_buttons", 2, 2),
+            "codex_internal_instructions_widget": ("codex_harness_stacked_widget", "_codex_harness_nav_buttons", 2, 3),
+        }
+        stack_attr, buttons_attr, workspace_index, idx = page_mapping.get(
+            attr_name, ("", "", -1, -1)
+        )
+        stacked = getattr(self, stack_attr, None)
+        if stacked is None:
             return
 
         workspace_tabs = getattr(self, "remocon_workspace_tabs", None)
-        if workspace_tabs is not None:
+        if workspace_tabs is not None and workspace_index >= 0:
             try:
-                workspace_tabs.setCurrentIndex(1)
+                workspace_tabs.setCurrentIndex(workspace_index)
             except Exception:
                 pass
 
-        page_mapping = {
-            "codex_status_summary_widget": 0,
-            "codex_quick_tools_widget": 0,
-            "codex_context_pack_widget": 0,
-            "codex_work_order_widget": 0,
-            "codex_request_group_widget": 1,
-            "codex_target_group_widget": 1,
-            "codex_skill_editor_widget": 2,
-            "codex_internal_instructions_widget": 3,
-            "codex_template_group_widget": 3,
-            "codex_work_order_history_widget": 4,
-            "codex_skill_guide_widget": 4,
-        }
-        idx = page_mapping.get(attr_name, -1)
         if idx >= 0:
             stacked.setCurrentIndex(idx)
-            buttons = getattr(self, "_codex_nav_buttons", [])
+            buttons = getattr(self, buttons_attr, [])
             for i, b in enumerate(buttons):
                 b.setChecked(i == idx)
 
@@ -8806,7 +8811,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 pass
 
     def _workspace_mode_from_tab_index(self, index: int) -> str:
-        return "codex" if index == 1 else "remocon"
+        return "codex" if index in (1, 2) else "remocon"
 
     def _current_workspace_splitter_mode(self) -> str:
         tabs = getattr(self, "remocon_workspace_tabs", None)
@@ -9038,7 +9043,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         dialog.exec()
 
-    def _build_codex_tab(self) -> QWidget:
+    def _build_codex_tab(self, section: str) -> QWidget:
         root = QWidget()
         root.setObjectName("CodexRoot")
         root.setStyleSheet(
@@ -9276,13 +9281,24 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         root_layout.addWidget(top_bar)
 
-        self.codex_stacked_widget = QStackedWidget()
-        self.codex_stacked_widget.setObjectName("CodexStackedWidget")
-        self._codex_nav_buttons = []
+        stacked_widget = QStackedWidget()
+        stacked_widget.setObjectName("CodexStackedWidget")
+        stack_attr = (
+            "codex_harness_stacked_widget"
+            if section == "harness"
+            else "codex_remocon_stacked_widget"
+        )
+        buttons_attr = (
+            "_codex_harness_nav_buttons"
+            if section == "harness"
+            else "_codex_remocon_nav_buttons"
+        )
+        setattr(self, stack_attr, stacked_widget)
+        setattr(self, buttons_attr, [])
 
         def switch_page(idx: int, btn: QToolButton):
-            self.codex_stacked_widget.setCurrentIndex(idx)
-            for b in self._codex_nav_buttons:
+            stacked_widget.setCurrentIndex(idx)
+            for b in getattr(self, buttons_attr, []):
                 b.setChecked(False)
             btn.setChecked(True)
 
@@ -9297,7 +9313,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             btn.clicked.connect(lambda checked, i=index, b=btn: switch_page(i, b))
             top_nav_layout.addWidget(btn, stretch=1)
-            self._codex_nav_buttons.append(btn)
+            getattr(self, buttons_attr).append(btn)
             return btn
 
         def make_scroll_page(
@@ -9358,144 +9374,158 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             tile_layout.addWidget(value_widget)
             return tile, value_widget
 
-        page_dashboard, dashboard_layout = make_scroll_page(
-            "COMMAND HOME",
-            "명령 홈",
-            "코덱스에게 넘길 위치, 요청, 스킬, 주문서를 한 화면에서 정리합니다.",
-        )
+        pages = []
 
-        hero = QWidget()
-        hero.setObjectName("CodexHeroBand")
-        hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(10, 8, 10, 8)
-        hero_layout.setSpacing(6)
+        if section == "harness":
+            page_package, package_layout = make_scroll_page(
+                "SKILL PACKAGE",
+                "스킬 패키지",
+                "사용자 스킬과 코덱스 실행 자료를 하나의 요청 묶음으로 관리합니다.",
+            )
+            self.codex_context_pack_widget = self._build_codex_context_pack_group()
+            package_layout.addWidget(self.codex_context_pack_widget)
+            package_layout.addStretch(1)
+            pages.append((page_package, "스킬 패키지", "스킬 패키지"))
 
-        hero_top = QHBoxLayout()
-        hero_title_area = QVBoxLayout()
-        hero_title_area.setSpacing(4)
-        hero_title = QLabel("현재 작업")
-        hero_title.setObjectName("CodexHeroTitle")
-        hero_subtitle = QLabel("작업 위치와 요청을 바로 복사합니다.")
-        hero_subtitle.setObjectName("CodexHeroSubtitle")
-        hero_subtitle.setWordWrap(True)
-        hero_title_area.addWidget(hero_title)
-        hero_title_area.addWidget(hero_subtitle)
-        hero_top.addLayout(hero_title_area, stretch=1)
+            page_user_skills, user_skills_layout = make_scroll_page(
+                "USER SKILLS",
+                "사용자 스킬",
+                "글쓰기 형태와 에이전트 역할처럼 결과물의 형식과 역할을 관리합니다.",
+                show_header=False,
+            )
+            self.codex_skill_editor_widget = self._build_codex_skill_editor_group()
+            self.codex_skill_guide_widget = self._build_codex_skill_group()
+            user_skills_layout.addWidget(self.codex_skill_editor_widget, stretch=1)
+            user_skills_layout.addWidget(self.codex_skill_guide_widget)
+            user_skills_layout.addStretch(1)
+            pages.append((page_user_skills, "사용자 스킬", "사용자 스킬"))
 
-        self.codex_hero_request_value = QLabel("요청 대기 중")
-        self.codex_hero_request_value.setObjectName("CodexStatusPill")
-        self.codex_hero_request_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.codex_hero_request_value.setMinimumWidth(72)
-        self.codex_hero_request_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        hero_top.addWidget(self.codex_hero_request_value)
-        hero_layout.addLayout(hero_top)
+            page_codex_skills, codex_skills_layout = make_scroll_page(
+                "CODEX SKILLS",
+                "코덱스 스킬",
+                "페이지 추가, 전자필기장 추가 같은 OneNote 실행 템플릿을 관리합니다.",
+            )
+            self.codex_template_group_widget = self._build_codex_template_group()
+            codex_skills_layout.addWidget(self.codex_template_group_widget)
+            codex_skills_layout.addStretch(1)
+            pages.append((page_codex_skills, "코덱스 스킬", "코덱스 스킬"))
 
-        target_row = QHBoxLayout()
-        target_row.setSpacing(4)
-        target_label = QLabel("대상")
-        target_label.setObjectName("CodexHeroMetaLabel")
-        target_row.addWidget(target_label)
-        self.codex_hero_target_value = QLabel("작업 위치 미지정")
-        self.codex_hero_target_value.setObjectName("CodexHeroMetaValue")
-        self.codex_hero_target_value.setWordWrap(True)
-        target_row.addWidget(self.codex_hero_target_value, stretch=1)
-        hero_layout.addLayout(target_row)
+            page_instructions, instructions_layout = make_scroll_page(
+                "CODEX INSTRUCTIONS",
+                "코덱스 지침",
+                "OneNote COM API 우선, 대상 ID 우선, 안전 실행 순서, 자동 검증 기준을 관리합니다.",
+            )
+            self.codex_internal_instructions_widget = self._build_codex_internal_instructions_group()
+            instructions_layout.addWidget(self.codex_internal_instructions_widget)
+            instructions_layout.addStretch(1)
+            pages.append((page_instructions, "코덱스 지침", "코덱스 지침"))
+        else:
+            page_dashboard, dashboard_layout = make_scroll_page(
+                "COMMAND HOME",
+                "명령홈",
+                "Codex에 보낼 작업 위치, 요청, 주문서를 한 화면에서 정리합니다.",
+            )
 
-        metrics = QHBoxLayout()
-        metrics.setSpacing(4)
-        target_tile, self.codex_metric_target_value = make_metric("작업 위치", "0개")
-        draft_tile, self.codex_metric_draft_value = make_metric("요청 초안", "대기")
-        skill_tile, self.codex_metric_skill_value = make_metric("스킬 수", "0개")
-        order_tile, self.codex_metric_order_value = make_metric("작업 지시서", "0개")
-        for tile in (target_tile, draft_tile, skill_tile, order_tile):
-            metrics.addWidget(tile)
-        hero_layout.addLayout(metrics)
-        dashboard_layout.addWidget(hero)
+            hero = QWidget()
+            hero.setObjectName("CodexHeroBand")
+            hero_layout = QVBoxLayout(hero)
+            hero_layout.setContentsMargins(10, 8, 10, 8)
+            hero_layout.setSpacing(6)
 
-        self.codex_status_summary_widget = self._build_codex_status_group()
-        dashboard_layout.addWidget(self.codex_status_summary_widget)
-        self.codex_quick_tools_widget = self._build_codex_quick_tools_group()
-        dashboard_layout.addWidget(self.codex_quick_tools_widget)
-        self.codex_context_pack_widget = self._build_codex_context_pack_group()
-        dashboard_layout.addWidget(self.codex_context_pack_widget)
-        self.codex_work_order_widget = self._build_codex_work_order_group()
-        dashboard_layout.addWidget(self.codex_work_order_widget)
-        dashboard_layout.addStretch(1)
+            hero_top = QHBoxLayout()
+            hero_title_area = QVBoxLayout()
+            hero_title_area.setSpacing(4)
+            hero_title = QLabel("현재 작업")
+            hero_title.setObjectName("CodexHeroTitle")
+            hero_subtitle = QLabel("작업 위치와 요청을 바로 복사합니다.")
+            hero_subtitle.setObjectName("CodexHeroSubtitle")
+            hero_subtitle.setWordWrap(True)
+            hero_title_area.addWidget(hero_title)
+            hero_title_area.addWidget(hero_subtitle)
+            hero_top.addLayout(hero_title_area, stretch=1)
 
-        # --- Request & Target Page ---
-        page_request, request_layout = make_scroll_page(
-            "COMPOSITION",
-            "작업 요청 및 위치",
-            "위에서 작업 위치를 정하고, 아래에서 지시 내용을 작성하세요.",
-        )
+            self.codex_hero_request_value = QLabel("요청 대기 중")
+            self.codex_hero_request_value.setObjectName("CodexStatusPill")
+            self.codex_hero_request_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.codex_hero_request_value.setMinimumWidth(72)
+            self.codex_hero_request_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            hero_top.addWidget(self.codex_hero_request_value)
+            hero_layout.addLayout(hero_top)
 
-        self.codex_target_group_widget = self._build_codex_target_group()
-        self.codex_request_group_widget = self._build_codex_request_group()
+            target_row = QHBoxLayout()
+            target_row.setSpacing(4)
+            target_label = QLabel("대상")
+            target_label.setObjectName("CodexHeroMetaLabel")
+            target_row.addWidget(target_label)
+            self.codex_hero_target_value = QLabel("작업 위치 미선택")
+            self.codex_hero_target_value.setObjectName("CodexHeroMetaValue")
+            self.codex_hero_target_value.setWordWrap(True)
+            target_row.addWidget(self.codex_hero_target_value, stretch=1)
+            hero_layout.addLayout(target_row)
 
-        request_layout.addWidget(self.codex_target_group_widget)
-        request_layout.addWidget(self.codex_request_group_widget)
-        request_layout.addStretch(1)
-        self._apply_codex_target_to_request()
-        self._update_codex_request_preview()
+            metrics = QHBoxLayout()
+            metrics.setSpacing(4)
+            target_tile, self.codex_metric_target_value = make_metric("작업 위치", "0개")
+            draft_tile, self.codex_metric_draft_value = make_metric("요청 초안", "대기")
+            skill_tile, self.codex_metric_skill_value = make_metric("스킬 수", "0개")
+            order_tile, self.codex_metric_order_value = make_metric("작업 주문서", "0개")
+            for tile in (target_tile, draft_tile, skill_tile, order_tile):
+                metrics.addWidget(tile)
+            hero_layout.addLayout(metrics)
+            dashboard_layout.addWidget(hero)
 
-        page_skills, skills_layout = make_scroll_page(
-            "SKILLS",
-            "스킬 보관함",
-            "반복되는 업무 방식과 글쓰기 규칙을 주문번호로 관리합니다.",
-            show_header=False,
-        )
+            self.codex_status_summary_widget = self._build_codex_status_group()
+            dashboard_layout.addWidget(self.codex_status_summary_widget)
+            self.codex_quick_tools_widget = self._build_codex_quick_tools_group()
+            dashboard_layout.addWidget(self.codex_quick_tools_widget)
+            self.codex_work_order_widget = self._build_codex_work_order_group()
+            dashboard_layout.addWidget(self.codex_work_order_widget)
+            dashboard_layout.addStretch(1)
+            pages.append((page_dashboard, "명령홈", "명령홈"))
 
-        self.codex_skill_editor_widget = self._build_codex_skill_editor_group()
-        skills_layout.addWidget(self.codex_skill_editor_widget, stretch=1)
+            page_request, request_layout = make_scroll_page(
+                "COMPOSITION",
+                "작업요청",
+                "위에서 작업 위치를 정하고 아래에서 지시 내용을 작성하세요.",
+            )
 
-        page_instructions, instructions_layout = make_scroll_page(
-            "CODEX ONLY",
-            "코덱스 전용 지침",
-            "OneNote 조작 최적화와 시스템 양식처럼 내부 실행 전제로만 쓰는 내용을 관리합니다.",
-        )
+            self.codex_target_group_widget = self._build_codex_target_group()
+            self.codex_request_group_widget = self._build_codex_request_group()
 
-        self.codex_internal_instructions_widget = self._build_codex_internal_instructions_group()
-        self.codex_template_group_widget = self._build_codex_template_group()
-        instructions_layout.addWidget(self.codex_internal_instructions_widget)
-        instructions_layout.addWidget(self.codex_template_group_widget)
-        instructions_layout.addStretch(1)
+            request_layout.addWidget(self.codex_target_group_widget)
+            request_layout.addWidget(self.codex_request_group_widget)
+            request_layout.addStretch(1)
+            self._apply_codex_target_to_request()
+            self._update_codex_request_preview()
+            pages.append((page_request, "작업요청", "작업 요청"))
 
-        page_adv, adv_layout = make_scroll_page(
-            "HISTORY",
-            "기록",
-            "작업 주문서 기록과 사용자 스킬 관리 도구를 모았습니다.",
-            show_header=False,
-        )
+            page_history, history_layout = make_scroll_page(
+                "HISTORY",
+                "기록",
+                "저장된 작업 주문서 기록을 검색하고 다시 불러옵니다.",
+                show_header=False,
+            )
 
-        self.codex_work_order_history_widget = self._build_codex_work_order_history_group()
-        self.codex_skill_guide_widget = self._build_codex_skill_group()
+            self.codex_work_order_history_widget = self._build_codex_work_order_history_group()
+            history_layout.addWidget(self.codex_work_order_history_widget, stretch=1)
+            history_layout.addStretch(1)
+            pages.append((page_history, "기록", "작업 기록"))
 
-        adv_layout.addWidget(self.codex_work_order_history_widget, stretch=1)
-        adv_layout.addWidget(self.codex_skill_guide_widget)
-        adv_layout.addStretch(1)
-
-        self.codex_stacked_widget.addWidget(page_dashboard) # 0
-        self.codex_stacked_widget.addWidget(page_request)   # 1
-        self.codex_stacked_widget.addWidget(page_skills)    # 2
-        self.codex_stacked_widget.addWidget(page_instructions) # 3
-        self.codex_stacked_widget.addWidget(page_adv)       # 4
-
-        btn_dashboard = add_nav_item("명령홈", 0)
-        btn_dashboard.setToolTip("명령 홈")
-        btn_request = add_nav_item("작업요청", 1)
-        btn_request.setToolTip("작업 요청")
-        btn_skills = add_nav_item("스킬", 2)
-        btn_instructions = add_nav_item("지침", 3)
-        btn_instructions.setToolTip("코덱스 지침")
-        btn_adv = add_nav_item("기록", 4)
-        btn_adv.setToolTip("작업 기록")
+        nav_buttons = []
+        for index, (page, text, tooltip) in enumerate(pages):
+            stacked_widget.addWidget(page)
+            btn = add_nav_item(text, index)
+            btn.setToolTip(tooltip)
+            nav_buttons.append(btn)
 
         self.codex_splitter = None
-        root_layout.addWidget(self.codex_stacked_widget, stretch=1)
+        root_layout.addWidget(stacked_widget, stretch=1)
 
         self._update_codex_work_order_preview()
+        self._update_codex_context_pack_preview()
         self._update_codex_status_summary()
-        switch_page(0, btn_dashboard)
+        if nav_buttons:
+            switch_page(0, nav_buttons[0])
 
         return root
 
@@ -10141,7 +10171,8 @@ Codex가 OneNote 작업을 안전하게 실행하기 위한 내부 실행 기준
         self.remocon_workspace_tabs = QTabWidget()
         self.remocon_workspace_tabs.setObjectName("RemoconWorkspaceTabs")
         self.remocon_workspace_tabs.addTab(right_panel, "위치정렬")
-        self.remocon_workspace_tabs.addTab(self._build_codex_tab(), "코덱스")
+        self.remocon_workspace_tabs.addTab(self._build_codex_tab("remocon"), "원노트 리모컨")
+        self.remocon_workspace_tabs.addTab(self._build_codex_tab("harness"), "원노트 하네스")
         self.remocon_workspace_tabs.currentChanged.connect(
             self._on_remocon_workspace_tab_changed
         )
