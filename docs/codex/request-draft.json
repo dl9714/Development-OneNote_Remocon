@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "saved_at": "2026-04-18 09:06:19",
+  "preset": "quick_note",
+  "request": {
+    "action": "페이지 추가",
+    "target": "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리",
+    "title": "2026-04-18 빠른 메모",
+    "body": "핵심:\n- \n\n세부 내용:\n- \n\n다음 행동:\n- \n"
+  },
+  "target_profile": {
+    "name": "임시 메모 - 미정리",
+    "path": "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리",
+    "notebook": "생산성도구-임시 메모",
+    "section_group": "A 미정리-생성 메모",
+    "section": "미정리",
+    "section_group_id": "{2716C2CA-1EA5-4697-9AE7-97380372C026}{1}{B0}",
+    "section_id": "{175CFD85-2C5C-0C63-3116-2598A37ACB11}{1}{B0}"
+  }
+}
