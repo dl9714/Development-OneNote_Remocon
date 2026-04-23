@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 dist/
+dist-*/
 *.spec
 
 # Python cache
