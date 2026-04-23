@@ -4283,6 +4283,13 @@ class OpenAllNotebooksWorker(QThread):
                 result["window_info"] = None
 
             if IS_MACOS:
+                unclassified_open_mode = self.candidate_scope == "AGG_UNCLASSIFIED"
+                mac_open_action_label = (
+                    "미분류 전자필기장 열기"
+                    if unclassified_open_mode
+                    else "실제 OneNote 전체 열기"
+                )
+
                 def _mac_open_all_debug(*parts: Any) -> None:
                     line = " ".join(str(part) for part in parts)
                     print(line)
@@ -4294,7 +4301,7 @@ class OpenAllNotebooksWorker(QThread):
                     f"resolved-window-title={_preferred_connected_window_title_quick(win, self.sig)!r}",
                     f"pid={getattr(win, 'process_id', lambda: 0)() if hasattr(win, 'process_id') else 0}",
                 )
-                self.progress.emit("실제 OneNote 전체 열기 준비 중... 현재 열린 목록 확인")
+                self.progress.emit(f"{mac_open_action_label} 준비 중... 현재 열린 목록 확인")
                 initial_notebook_name = _preferred_connected_window_title_quick(
                     win,
                     self.sig,
@@ -4350,7 +4357,7 @@ class OpenAllNotebooksWorker(QThread):
                 else:
                     _mac_open_all_debug("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
 
-                self.progress.emit("실제 OneNote 전체 열기 준비 중... 최근 전자필기장 캐시 확인")
+                self.progress.emit(f"{mac_open_action_label} 준비 중... 최근 전자필기장 캐시 확인")
                 recent_box: Dict[str, Any] = {}
                 recent_done = threading.Event()
 
@@ -4392,7 +4399,7 @@ class OpenAllNotebooksWorker(QThread):
                 _mac_open_all_debug(
                     f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}"
                 )
-                self.progress.emit("실제 OneNote 전체 열기 준비 중... OneDrive 바로가기 확인")
+                self.progress.emit(f"{mac_open_action_label} 준비 중... OneDrive 바로가기 확인")
                 shortcut_box: Dict[str, Any] = {}
                 shortcut_done = threading.Event()
 
@@ -4435,7 +4442,7 @@ class OpenAllNotebooksWorker(QThread):
                     "[DBG][OPEN_ALL][MAC]",
                     f"shortcut-records={len(shortcut_records)}",
                 )
-                self.progress.emit("실제 OneNote 전체 열기 준비 중... 저장된 후보 병합")
+                self.progress.emit(f"{mac_open_action_label} 준비 중... 저장된 후보 병합")
                 settings_records = [
                     dict(record)
                     for record in self.notebook_candidates
@@ -4495,7 +4502,7 @@ class OpenAllNotebooksWorker(QThread):
                     if sidebar_error and not open_detected_names:
                         result["error"] = (
                             f"{sidebar_error} "
-                            "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
+                            f"앱이 멈추지 않도록 {mac_open_action_label} 확인을 건너뜁니다."
                         )
                         result["refresh_open_notebooks"] = False
                         self.done.emit(result)
@@ -4504,7 +4511,7 @@ class OpenAllNotebooksWorker(QThread):
                     result["error"] = (
                         "최근 전자필기장 목록을 읽지 못했습니다. "
                         "OneNote 최근 목록/캐시/바로가기 후보가 모두 비어 있어 "
-                        "전체 열기 요청을 건너뜁니다."
+                        f"{mac_open_action_label} 요청을 건너뜁니다."
                     )
                     result["refresh_open_notebooks"] = False
                     self.done.emit(result)
@@ -4534,13 +4541,13 @@ class OpenAllNotebooksWorker(QThread):
                 total_targets = len(pending_records)
                 if self.candidate_scope == "AGG_UNCLASSIFIED":
                     self.progress.emit(
-                        "미분류 카테고리 전체 열기 준비 완료... "
+                        "미분류 전자필기장 열기 준비 완료... "
                         f"후보 {len(records_by_key)}개, 열 대상 {total_targets}개, "
                         f"이미 열림 {len(overlap_keys)}개"
                     )
                 else:
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
+                        f"{mac_open_action_label} 준비 완료... 대상 {total_targets}개"
                     )
 
                 if not pending_records:
@@ -4576,7 +4583,7 @@ class OpenAllNotebooksWorker(QThread):
                 if bulk_records:
                     bulk_total = len(bulk_records)
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 일괄 실행 중... {bulk_total}개"
+                        f"{mac_open_action_label} 일괄 실행 중... {bulk_total}개"
                     )
                     for bulk_index, record in enumerate(bulk_records, start=1):
                         if self.isInterruptionRequested():
@@ -4607,7 +4614,7 @@ class OpenAllNotebooksWorker(QThread):
                         time.sleep(0.08)
 
                     self.progress.emit(
-                        "실제 OneNote 전체 열기 일괄 실행 완료..."
+                        f"{mac_open_action_label} 일괄 실행 완료..."
                         f" URL {result['opened_count']}개 요청"
                     )
                     time.sleep(1.5)
@@ -4626,7 +4633,7 @@ class OpenAllNotebooksWorker(QThread):
                 ui_total = len(ui_pending_records)
                 if ui_pending_records:
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 최근 목록 UI 실행 중... {ui_total}개"
+                        f"{mac_open_action_label} 최근 목록 UI 실행 중... {ui_total}개"
                     )
 
                 for index, record in enumerate(ui_pending_records, start=1):
@@ -4643,7 +4650,7 @@ class OpenAllNotebooksWorker(QThread):
                         return
 
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 진행 중... {index}/{ui_total} 시도 - {name}"
+                        f"{mac_open_action_label} 진행 중... {index}/{ui_total} 시도 - {name}"
                     )
                     try:
                         opened = mac_open_recent_notebook_record(
@@ -4694,7 +4701,7 @@ class OpenAllNotebooksWorker(QThread):
                     result["opened_names"].append(name)
                     result["opened_count"] += 1
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 진행 중... {index}/{ui_total} 요청 완료 - {name}"
+                        f"{mac_open_action_label} 진행 중... {index}/{ui_total} 요청 완료 - {name}"
                     )
 
                 if failed_records:
@@ -4718,7 +4725,7 @@ class OpenAllNotebooksWorker(QThread):
 
                         name = str(record.get("name") or "").strip()
                         self.progress.emit(
-                            "실제 OneNote 전체 열기 재시도 중... "
+                            f"{mac_open_action_label} 재시도 중... "
                             f"{retry_index}/{len(retry_records)} - {name}"
                         )
                         if _is_macos_notebook_visible(name):
@@ -4795,7 +4802,7 @@ class OpenAllNotebooksWorker(QThread):
                 if restore_record and str(restore_record.get("url") or "").strip():
                     if mac_open_recent_notebook_record(None, restore_record):
                         self.progress.emit(
-                            f"실제 OneNote 전체 열기 마무리 요청... 원래 전자필기장 복구 - {restore_name}"
+                            f"{mac_open_action_label} 마무리 요청... 원래 전자필기장 복구 - {restore_name}"
                         )
 
                 result["ok"] = True
@@ -15585,7 +15592,14 @@ __CODEX_SKILL_TAGS__
             self._open_all_notebooks_worker is not None
             and self._open_all_notebooks_worker.isRunning()
         ):
-            self.update_status_and_ui("이미 실제 OneNote 전체 열기 작업이 실행 중입니다.", True)
+            self.update_status_and_ui(
+                (
+                    "이미 미분류 전자필기장 열기 작업이 실행 중입니다."
+                    if IS_MACOS
+                    else "이미 실제 OneNote 전체 열기 작업이 실행 중입니다."
+                ),
+                True,
+            )
             return
 
         win = getattr(self, "onenote_window", None)
@@ -15651,7 +15665,7 @@ __CODEX_SKILL_TAGS__
         self._open_all_notebooks_worker = worker
         if IS_MACOS and candidate_scope == "AGG_UNCLASSIFIED":
             self.update_status_and_ui(
-                "미분류 카테고리 기준 OneNote 전체 열기 준비 중...",
+                "미분류 전자필기장 열기 준비 중...",
                 True,
             )
         else:
@@ -15689,7 +15703,11 @@ __CODEX_SKILL_TAGS__
 
             if result.get("ok"):
                 if opened_count > 0:
-                    status = f"실제 OneNote 전체 열기 완료: {opened_count}개"
+                    status = (
+                        f"미분류 전자필기장 열기 완료: {opened_count}개"
+                        if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                        else f"실제 OneNote 전체 열기 완료: {opened_count}개"
+                    )
                     if should_refresh_open_notebooks:
                         status += (
                             ", 종합 새로고침 예약"
@@ -15716,8 +15734,12 @@ __CODEX_SKILL_TAGS__
                 elif verified_open_count > 0:
                     self.update_status_and_ui(
                         (
-                            "실제 OneNote 전체 열기 확인 완료: "
-                            f"이미 열린 전자필기장 {verified_open_count}개"
+                            (
+                                "미분류 전자필기장 열기 확인 완료: "
+                                if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                                else "실제 OneNote 전체 열기 확인 완료: "
+                            )
+                            + f"이미 열린 전자필기장 {verified_open_count}개"
                         ),
                         is_connected,
                     )
@@ -15742,7 +15764,11 @@ __CODEX_SKILL_TAGS__
                 suffix = f" 남은 후보: {remain_preview}"
             else:
                 suffix = ""
-            detail = error or "실제 OneNote 전체 열기에 실패했습니다."
+            detail = error or (
+                "미분류 전자필기장 열기에 실패했습니다."
+                if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                else "실제 OneNote 전체 열기에 실패했습니다."
+            )
             self.update_status_and_ui(
                 f"{detail} (시도 {opened_count}개).{suffix}",
                 is_connected,
