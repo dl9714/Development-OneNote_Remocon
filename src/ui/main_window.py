@@ -160,9 +160,9 @@ DEFAULT_GROUP_NAME = "Default"
 AGG_BUFFER_ID = "buffer-aggregate-all-sections"
 AGG_BUFFER_NAME = "종합"
 AGG_UNCLASSIFIED_GROUP_ID = "group-aggregate-uncategorized"
-AGG_UNCLASSIFIED_GROUP_NAME = "미분류 카테고리"
+AGG_UNCLASSIFIED_GROUP_NAME = "분류 안 된 전자필기장"
 AGG_CLASSIFIED_GROUP_ID = "group-aggregate-categorized"
-AGG_CLASSIFIED_GROUP_NAME = "카테고리 분류된 전자필기장"
+AGG_CLASSIFIED_GROUP_NAME = "분류된 전자필기장"
 
 # OneNote: 전체 전자필기장 자동등록 그룹
 AUTO_ONENOTE_GROUP_ID = "group-onenote-auto"
@@ -306,7 +306,7 @@ def _register_all_notebooks_button_label() -> str:
 
 
 def _open_unchecked_notebooks_button_label() -> str:
-    return "체크 안 된 전자필기장 열기"
+    return "체크 없는 전자필기장 열기"
 
 
 def _open_unchecked_notebooks_tip() -> str:
@@ -13932,7 +13932,7 @@ __CODEX_SKILL_TAGS__
         self.btn_register_all_notebooks = QToolButton()
         self.btn_register_all_notebooks.setText(_register_all_notebooks_button_label())
         self.btn_register_all_notebooks.setToolTip(
-            "현재 열린 OneNote 전자필기장 목록을 다시 읽고 미분류/분류 상태를 한 번에 갱신합니다."
+            "현재 열린 OneNote 전자필기장 목록을 다시 읽고 연두색 열림 체크와 분류 상태를 한 번에 갱신합니다."
         )
         self.btn_register_all_notebooks.clicked.connect(self._register_all_notebooks_from_current_onenote)
         self.btn_register_all_notebooks.setEnabled(False)  # 종합 버퍼에서만 활성화
@@ -14233,7 +14233,7 @@ __CODEX_SKILL_TAGS__
 
             self.refresh_open_notebooks_button = QPushButton("열린 전자필기장 새로고침")
             self.refresh_open_notebooks_button.setToolTip(
-                "현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼에 반영합니다."
+                "현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 연두색 체크에 반영합니다."
             )
             self.refresh_open_notebooks_button.clicked.connect(
                 lambda: self._register_all_notebooks_from_current_onenote(force=True)
@@ -16040,6 +16040,22 @@ __CODEX_SKILL_TAGS__
     def _build_aggregate_categorized_display_nodes(
         self, source_nodes: Any
     ) -> List[Dict[str, Any]]:
+        def _notebook_is_open(node: Dict[str, Any]) -> bool:
+            target = node.get("target") or {}
+            return bool(node.get("is_open") or node.get("open") or target.get("is_open"))
+
+        def _sort_open_first_key(node: Dict[str, Any]) -> tuple:
+            return (
+                0 if _notebook_is_open(node) else 1,
+                _name_sort_key((node or {}).get("name", "")),
+            )
+
+        def _group_label(base_name: str, children: List[Dict[str, Any]]) -> str:
+            if not children:
+                return f"{base_name} (열림 0/0)"
+            open_count = sum(1 for child in children if _notebook_is_open(child))
+            return f"{base_name} (열림 {open_count}/{len(children)})"
+
         notebooks = self._collect_notebook_nodes_from_nodes(source_nodes)
         if not notebooks:
             notebooks = self._collect_notebook_nodes_from_nodes(
@@ -16057,8 +16073,8 @@ __CODEX_SKILL_TAGS__
                 unclassified.append(notebook)
 
         try:
-            unclassified.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
-            classified.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+            unclassified.sort(key=_sort_open_first_key)
+            classified.sort(key=_sort_open_first_key)
         except Exception:
             pass
 
@@ -16066,13 +16082,13 @@ __CODEX_SKILL_TAGS__
             {
                 "type": "group",
                 "id": AGG_UNCLASSIFIED_GROUP_ID,
-                "name": AGG_UNCLASSIFIED_GROUP_NAME,
+                "name": _group_label(AGG_UNCLASSIFIED_GROUP_NAME, unclassified),
                 "children": unclassified,
             },
             {
                 "type": "group",
                 "id": AGG_CLASSIFIED_GROUP_ID,
-                "name": AGG_CLASSIFIED_GROUP_NAME,
+                "name": _group_label(AGG_CLASSIFIED_GROUP_NAME, classified),
                 "children": classified,
             },
         ]
