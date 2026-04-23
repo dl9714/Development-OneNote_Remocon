@@ -4021,6 +4021,9 @@ class OpenAllNotebooksWorker(QThread):
                     self.sig,
                 )
                 open_names: Set[str] = set()
+                initial_notebook_key = _normalize_notebook_name_key(initial_notebook_name)
+                if initial_notebook_key:
+                    open_names.add(initial_notebook_key)
                 open_sidebar_names: List[str] = []
                 sidebar_error = ""
                 accessibility_trusted = macos_accessibility_is_trusted()
@@ -4082,6 +4085,48 @@ class OpenAllNotebooksWorker(QThread):
                     if str((record or {}).get("name") or "").strip()
                 ]
                 print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
+                shortcut_records = [
+                    dict(record)
+                    for record in _collect_onenote_notebook_shortcuts()
+                    if str((record or {}).get("name") or "").strip()
+                ]
+                print(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"shortcut-records={len(shortcut_records)}",
+                )
+                settings_records = [
+                    dict(record)
+                    for record in self.notebook_candidates
+                    if str((record or {}).get("name") or "").strip()
+                ]
+                print(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"settings-records={len(settings_records)}",
+                )
+
+                merged_records_by_key: Dict[str, Dict[str, Any]] = {}
+                for source_records in (
+                    recent_records,
+                    shortcut_records,
+                    settings_records,
+                ):
+                    for record in source_records:
+                        name = str((record or {}).get("name") or "").strip()
+                        key = _normalize_notebook_name_key(name)
+                        if not key:
+                            continue
+                        existing = merged_records_by_key.get(key)
+                        if existing is None:
+                            merged_records_by_key[key] = dict(record)
+                            continue
+                        if (
+                            not str(existing.get("url") or "").strip()
+                            and str(record.get("url") or "").strip()
+                        ):
+                            existing["url"] = str(record.get("url") or "").strip()
+
+                recent_records = list(merged_records_by_key.values())
+                print(f"[DBG][OPEN_ALL][MAC] merged-records={len(recent_records)}")
                 if not recent_records:
                     if len(open_sidebar_names) > 1:
                         result["ok"] = True
@@ -4092,47 +4137,25 @@ class OpenAllNotebooksWorker(QThread):
                         self.done.emit(result)
                         return
 
-                    fallback_records = [
-                        dict(record)
-                        for record in _collect_onenote_notebook_shortcuts()
-                        if str((record or {}).get("name") or "").strip()
-                        and str((record or {}).get("url") or "").strip()
-                    ]
-                    print(
-                        "[DBG][OPEN_ALL][MAC]",
-                        f"shortcut-records={len(fallback_records)}",
-                    )
-                    if not fallback_records:
-                        fallback_records = [
-                            dict(record)
-                            for record in self.notebook_candidates
-                            if str((record or {}).get("name") or "").strip()
-                        ]
-                        print(
-                            "[DBG][OPEN_ALL][MAC]",
-                            f"settings-records={len(fallback_records)}",
+                    if not accessibility_trusted:
+                        result["error"] = (
+                            "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
+                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
+                            "다시 추가/허용해야 합니다."
                         )
-                    if not fallback_records:
-                        if not accessibility_trusted:
-                            result["error"] = (
-                                "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
-                                "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
-                                "다시 추가/허용해야 합니다."
-                            )
-                            result["refresh_open_notebooks"] = False
-                            self.done.emit(result)
-                            return
+                        result["refresh_open_notebooks"] = False
+                        self.done.emit(result)
+                        return
 
-                        if sidebar_error and not open_sidebar_names:
-                            result["error"] = (
-                                f"{sidebar_error} "
-                                "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
-                            )
-                            result["refresh_open_notebooks"] = False
-                            self.done.emit(result)
-                            return
-                    recent_records = fallback_records
-                if not recent_records:
+                    if sidebar_error and not open_sidebar_names:
+                        result["error"] = (
+                            f"{sidebar_error} "
+                            "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
+                        )
+                        result["refresh_open_notebooks"] = False
+                        self.done.emit(result)
+                        return
+
                     result["error"] = (
                         "최근 전자필기장 목록을 읽지 못했습니다. "
                         "OneNote 최근 목록/캐시/바로가기 후보가 모두 비어 있어 "

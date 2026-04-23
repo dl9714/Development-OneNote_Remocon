@@ -133,6 +133,36 @@ def _run_osascript(script: str, timeout: int = 20) -> str:
     return (completed.stdout or "").strip()
 
 
+def _read_macos_clipboard_text() -> str:
+    if not IS_MACOS:
+        return ""
+    try:
+        completed = subprocess.run(
+            ["/usr/bin/pbpaste"],
+            capture_output=True,
+            timeout=3,
+        )
+        return completed.stdout.decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _write_macos_clipboard_text(text: str) -> bool:
+    if not IS_MACOS:
+        return False
+    try:
+        subprocess.run(
+            ["/usr/bin/pbcopy"],
+            input=(text or "").encode("utf-8"),
+            capture_output=True,
+            timeout=3,
+            check=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _synthetic_window_handle(pid: int, title: str, bundle_id: str) -> int:
     raw = f"{pid}\0{title}\0{bundle_id}"
     return int(hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12], 16)
@@ -2379,22 +2409,80 @@ def _restore_notebook_sidebar(window: MacWindow, opened_by_us: bool) -> None:
         pass
 
 
-def _recent_notebook_dialog_locator(pid: int) -> str:
+def _recent_notebook_dialog_locator(window: MacWindow) -> str:
+    pid = int(window.process_id())
+    window_number = int(window.info.get("window_number") or 0)
     return f'''
 tell application "System Events"
-    set targetProcess to first application process whose unix id is {int(pid)}
+    set targetProcess to first application process whose unix id is {pid}
     set targetWindow to missing value
-    repeat with w in windows of targetProcess
-        try
-            set winName to my cleanText(name of w as text)
-        on error
-            set winName to ""
-        end try
-        if winName contains "최근 전자 필기장" or winName contains "새 전자 필기장" then
-            set targetWindow to w
-            exit repeat
-        end if
-    end repeat
+    set targetWindowNumber to {window_number}
+    if targetWindowNumber > 0 then
+        repeat with w in windows of targetProcess
+            try
+                set candidateNumber to value of attribute "AXWindowNumber" of w
+                if (candidateNumber as integer) is targetWindowNumber then
+                    set targetWindow to w
+                    exit repeat
+                end if
+            end try
+        end repeat
+    end if
+    if targetWindow is missing value then
+        repeat with w in windows of targetProcess
+            try
+                set winName to name of w as text
+            on error
+                set winName to ""
+            end try
+            if winName contains "최근 전자 필기장" or winName contains "새 전자 필기장" then
+                set targetWindow to w
+                exit repeat
+            end if
+        end repeat
+    end if
+    if targetWindow is missing value then
+        repeat with w in windows of targetProcess
+            try
+                if exists (first UI element of w whose role is "AXTextField") then
+                    try
+                        if exists (first button of w whose name is "열기") then
+                            set targetWindow to w
+                            exit repeat
+                        end if
+                    end try
+                    try
+                        if exists (first button of w whose name is "Open") then
+                            set targetWindow to w
+                            exit repeat
+                        end if
+                    end try
+                    try
+                        if exists (first radio button of w whose name is "최근") then
+                            set targetWindow to w
+                            exit repeat
+                        end if
+                    end try
+                    try
+                        if exists (first radio button of w whose name is "Recent") then
+                            set targetWindow to w
+                            exit repeat
+                        end if
+                    end try
+                end if
+            end try
+        end repeat
+    end if
+    if targetWindow is missing value then
+        repeat with w in windows of targetProcess
+            try
+                if role of w is "AXWindow" or role of w is "AXStandardWindow" then
+                    set targetWindow to w
+                    exit repeat
+                end if
+            end try
+        end repeat
+    end if
     if targetWindow is missing value then error "최근 전자필기장 창을 찾지 못했습니다."
 '''
 
@@ -2407,7 +2495,7 @@ def _open_recent_notebooks_dialog(window: MacWindow) -> bool:
 def _is_recent_notebooks_dialog_open(window: MacWindow) -> bool:
     try:
         _run_osascript(
-            _recent_notebook_dialog_locator(window.process_id()) + '\nreturn "OK"\n',
+            _recent_notebook_dialog_locator(window) + '\nreturn "OK"\nend tell\n',
             timeout=5,
         )
         return True
@@ -2435,7 +2523,7 @@ def _open_recent_notebooks_dialog_with_state(window: MacWindow) -> Tuple[bool, b
             time.sleep(0.12)
             try:
                 _run_osascript(
-                    _recent_notebook_dialog_locator(window.process_id()) + '\nreturn "OK"\n',
+                    _recent_notebook_dialog_locator(window) + '\nreturn "OK"\nend tell\n',
                     timeout=5,
                 )
                 return True, opened_sidebar
@@ -2449,7 +2537,7 @@ def _open_recent_notebooks_dialog_with_state(window: MacWindow) -> Tuple[bool, b
 
 
 def dismiss_recent_notebooks_dialog(window: MacWindow) -> bool:
-    script = _recent_notebook_dialog_locator(window.process_id()) + r'''
+    script = _recent_notebook_dialog_locator(window) + r'''
     try
         set frontmost of targetProcess to true
     end try
@@ -2518,7 +2606,7 @@ end replaceText
 
 
 def _clear_recent_notebooks_dialog_search(window: MacWindow) -> bool:
-    script = _recent_notebook_dialog_locator(window.process_id()) + r'''
+    script = _recent_notebook_dialog_locator(window) + r'''
     set didClear to false
     repeat with e in UI elements of targetWindow
         try
@@ -2604,8 +2692,80 @@ end replaceText
     return ok
 
 
+def _set_recent_notebooks_dialog_search(window: MacWindow, search_text: str) -> bool:
+    wanted_text = _clean_field(search_text)
+    if not wanted_text:
+        return _clear_recent_notebooks_dialog_search(window)
+    previous_clipboard = _read_macos_clipboard_text()
+    clipboard_written = _write_macos_clipboard_text(wanted_text)
+    script = _recent_notebook_dialog_locator(window) + f'''
+    set wantedText to {_quote_applescript_text(wanted_text)}
+    try
+        set frontmost of targetProcess to true
+    end try
+    try
+        perform action "AXRaise" of targetWindow
+    end try
+    repeat with e in UI elements of targetWindow
+        try
+            if role of e is "AXTextField" then
+                try
+                    set value of attribute "AXFocused" of e to true
+                end try
+                try
+                    set value of attribute "AXValue" of e to wantedText
+                    delay 0.25
+                    return "OK"
+                end try
+                try
+                    set fieldPos to position of e
+                    set fieldSize to size of e
+                    set clickX to (item 1 of fieldPos) + ((item 1 of fieldSize) / 2)
+                    set clickY to (item 2 of fieldPos) + ((item 2 of fieldSize) / 2)
+                    click at {{clickX, clickY}}
+                    delay 0.1
+                end try
+                try
+                    perform action "AXPress" of e
+                end try
+                delay 0.1
+                try
+                    keystroke "a" using command down
+                    delay 0.05
+                end try
+                try
+                    key code 51
+                    delay 0.05
+                end try
+                try
+                    if {str(bool(clipboard_written)).lower()} then
+                        keystroke "v" using command down
+                    else
+                        keystroke wantedText
+                    end if
+                end try
+                delay 0.35
+                return "OK"
+            end if
+        end try
+    end repeat
+    return ""
+end tell
+'''
+    try:
+        ok = _run_osascript(script, timeout=10).strip() == "OK"
+    except Exception:
+        ok = False
+    finally:
+        if clipboard_written:
+            _write_macos_clipboard_text(previous_clipboard)
+    if ok:
+        time.sleep(0.25)
+    return ok
+
+
 def _recent_notebook_dialog_names(window: MacWindow) -> List[str]:
-    script = _recent_notebook_dialog_locator(window.process_id()) + r'''
+    script = _recent_notebook_dialog_locator(window) + r'''
     set resultItems to {}
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
@@ -2670,7 +2830,7 @@ end replaceText
 
 
 def _recent_notebook_dialog_row_count(window: MacWindow) -> int:
-    script = _recent_notebook_dialog_locator(window.process_id()) + r'''
+    script = _recent_notebook_dialog_locator(window) + r'''
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
     set targetTable to first UI element of targetScrollArea whose role is "AXTable"
@@ -2719,7 +2879,7 @@ def _wait_for_recent_notebook_rows(window: MacWindow, timeout_sec: float = 4.0) 
 
 
 def _recent_notebook_dialog_rows(window: MacWindow) -> List[Dict[str, Any]]:
-    script = _recent_notebook_dialog_locator(window.process_id()) + r'''
+    script = _recent_notebook_dialog_locator(window) + r'''
     set resultItems to {}
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
@@ -2814,8 +2974,44 @@ end replaceText
     return rows
 
 
+def _dismiss_onenote_open_warning_dialog(window: MacWindow) -> bool:
+    script = f'''
+tell application "System Events"
+    set targetProcess to first application process whose unix id is {int(window.process_id())}
+    repeat with w in windows of targetProcess
+        try
+            set dialogText to ""
+            repeat with t in static texts of w
+                try
+                    set dialogText to dialogText & " " & (value of t as text)
+                end try
+            end repeat
+            if dialogText contains "열지 못했습니다" or dialogText contains "권한이 없는" or dialogText contains "couldn't open" or dialogText contains "permission" then
+                try
+                    perform action "AXPress" of (first button of w whose name is "확인")
+                    return "OK"
+                end try
+                try
+                    perform action "AXPress" of (first button of w whose name is "OK")
+                    return "OK"
+                end try
+            end if
+        end try
+    end repeat
+    return ""
+end tell
+'''
+    try:
+        ok = _run_osascript(script, timeout=5).strip() == "OK"
+    except Exception:
+        return False
+    if ok:
+        time.sleep(0.2)
+    return ok
+
+
 def _press_recent_notebook_open(window: MacWindow, notebook_name: str) -> bool:
-    script = _recent_notebook_dialog_locator(window.process_id()) + f'''
+    script = _recent_notebook_dialog_locator(window) + f'''
     set wantedText to {_quote_applescript_text(notebook_name)}
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
@@ -3282,7 +3478,19 @@ def open_recent_notebook_by_name(
     try:
         _clear_recent_notebooks_dialog_search(window)
         _wait_for_recent_notebook_rows(window, timeout_sec=6.0)
-        opened = _press_recent_notebook_open(window, wanted_name)
+        opened = False
+        dismissed_warning = False
+
+        # Recent-notebook search is noticeably faster and more reliable on macOS
+        # than walking long tables via repeated arrow-key moves.
+        if _set_recent_notebooks_dialog_search(window, wanted_name):
+            _wait_for_recent_notebook_rows(window, timeout_sec=2.5)
+            opened = _press_recent_notebook_open(window, wanted_name)
+
+        if not opened:
+            _clear_recent_notebooks_dialog_search(window)
+            _wait_for_recent_notebook_rows(window, timeout_sec=2.5)
+            opened = _press_recent_notebook_open(window, wanted_name)
         if opened and not wait_for_visible:
             try:
                 _restore_notebook_sidebar(window, opened_sidebar)
@@ -3294,6 +3502,9 @@ def open_recent_notebook_by_name(
             if _is_target_notebook_visible(window, wanted_name):
                 opened = True
                 break
+            if _dismiss_onenote_open_warning_dialog(window):
+                dismissed_warning = True
+                break
             time.sleep(0.25)
         if opened:
             try:
@@ -3301,6 +3512,12 @@ def open_recent_notebook_by_name(
             except Exception:
                 pass
             return True
+        if dismissed_warning:
+            try:
+                _restore_notebook_sidebar(window, opened_sidebar)
+            except Exception:
+                pass
+            return False
         dismiss_recent_notebooks_dialog(window)
         _restore_notebook_sidebar(window, opened_sidebar)
         return False
