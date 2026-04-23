@@ -13190,6 +13190,10 @@ __CODEX_SKILL_TAGS__
         COLOR_LIST_SELECTED = "#0078D7"
         COLOR_STATUS_BAR = "#252525"
         app_font_stack = _platform_ui_font_stack()
+        base_font_pt = "12pt" if IS_MACOS else "11pt"
+        status_font_pt = "11pt" if IS_MACOS else "10pt"
+        side_label_font_pt = "9pt" if IS_MACOS else "8pt"
+        search_hint_font_pt = "10pt" if IS_MACOS else "9pt"
 
         self.setStyleSheet(
             f"""
@@ -13197,7 +13201,7 @@ __CODEX_SKILL_TAGS__
                 background-color: {COLOR_BACKGROUND};
                 color: {COLOR_PRIMARY_TEXT};
                 font-family: {app_font_stack};
-                font-size: 11pt;
+                font-size: {base_font_pt};
             }}
             QGroupBox {{
                 background-color: {COLOR_GROUPBOX_BG};
@@ -13278,7 +13282,7 @@ __CODEX_SKILL_TAGS__
                 background-color: {COLOR_STATUS_BAR};
                 color: {COLOR_PRIMARY_TEXT};
                 padding: 5px 12px;
-                font-size: 10pt;
+                font-size: {status_font_pt};
                 border-top: 1px solid #444444;
             }}
             QLineEdit {{
@@ -13327,7 +13331,7 @@ __CODEX_SKILL_TAGS__
             }}
             #CodexSideSectionLabel {{
                 color: {COLOR_SECONDARY_TEXT};
-                font-size: 8pt;
+                font-size: {side_label_font_pt};
                 padding: 8px 8px 2px 8px;
             }}
             #CodexSideNavButton {{
@@ -13736,7 +13740,9 @@ __CODEX_SKILL_TAGS__
         project_search_hint = QLabel(_project_search_hint_text())
         project_search_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         project_search_hint.setWordWrap(True)
-        project_search_hint.setStyleSheet("color: #B8B8B8; font-size: 9pt;")
+        project_search_hint.setStyleSheet(
+            f"color: #B8B8B8; font-size: {search_hint_font_pt};"
+        )
         search_group_layout.addWidget(project_search_hint)
         right_layout.addWidget(search_group)
 
