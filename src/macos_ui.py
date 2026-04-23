@@ -304,6 +304,16 @@ def _cf_release(value: c_void_p) -> None:
         pass
 
 
+def _cf_retain(value: c_void_p) -> Optional[c_void_p]:
+    if not (_CF and value):
+        return None
+    try:
+        retained = _CF.CFRetain(value)
+        return c_void_p(retained) if retained else None
+    except Exception:
+        return None
+
+
 def _ax_copy_attribute(element: c_void_p, attr_name: str) -> Optional[c_void_p]:
     if not (IS_MACOS and _APP_SERVICES and _CF and element and attr_name):
         return None
@@ -2750,6 +2760,300 @@ def open_recent_notebook_record(
     )
 
 
+def _ax_onenote_notebook_dialog_roots(window: Optional[MacWindow]) -> List[c_void_p]:
+    roots = _ax_window_roots_for_onenote(window)
+    if not roots:
+        return []
+
+    dialog_roots: List[c_void_p] = []
+    other_roots: List[c_void_p] = []
+    for root in roots:
+        title = _ax_text_attribute(root, "AXTitle")
+        if _is_recent_notebook_dialog_title(title):
+            dialog_roots.append(root)
+        else:
+            other_roots.append(root)
+    _release_ax_refs(other_roots)
+    return dialog_roots
+
+
+def _ax_find_dialog_element(
+    window: Optional[MacWindow],
+    *,
+    roles: Sequence[str],
+    labels: Sequence[str],
+    max_depth: int = 12,
+    timeout_sec: float = 4.0,
+) -> Optional[c_void_p]:
+    wanted_roles = {str(role or "").strip() for role in roles if str(role or "").strip()}
+    wanted_labels = [
+        _normalize_text(str(label or ""))
+        for label in labels
+        if _normalize_text(str(label or ""))
+    ]
+    if not (wanted_roles and wanted_labels):
+        return None
+
+    roots = _ax_onenote_notebook_dialog_roots(window)
+    if not roots:
+        return None
+    deadline = time.monotonic() + max(0.5, float(timeout_sec or 0.0))
+    node_count = 0
+
+    def _matches(element: c_void_p) -> bool:
+        combined_parts = []
+        for attr_name in ("AXTitle", "AXValue", "AXDescription", "AXHelp"):
+            text = _ax_text_attribute(element, attr_name)
+            if text:
+                combined_parts.append(text)
+        combined = _normalize_text(" ".join(combined_parts))
+        return any(label and label in combined for label in wanted_labels)
+
+    def _visit(element: c_void_p, depth: int) -> Optional[c_void_p]:
+        nonlocal node_count
+        if (
+            not element
+            or depth > max_depth
+            or node_count >= 1800
+            or time.monotonic() > deadline
+        ):
+            return None
+        node_count += 1
+        role = _ax_text_attribute(element, "AXRole")
+        if role in wanted_roles and _matches(element):
+            retained = _cf_retain(element)
+            if retained:
+                return retained
+
+        children = _ax_array_attribute(element, "AXChildren")
+        try:
+            for child in children:
+                result = _visit(child, depth + 1)
+                if result:
+                    return result
+        finally:
+            _release_ax_refs(children)
+        return None
+
+    try:
+        for root in roots:
+            result = _visit(root, 0)
+            if result:
+                return result
+    finally:
+        _release_ax_refs(roots)
+    return None
+
+
+def _ax_press_dialog_radio(
+    window: Optional[MacWindow],
+    labels: Sequence[str],
+    *,
+    timeout_sec: float = 4.0,
+) -> bool:
+    element = _ax_find_dialog_element(
+        window,
+        roles=("AXRadioButton",),
+        labels=labels,
+        max_depth=10,
+        timeout_sec=timeout_sec,
+    )
+    if not element:
+        return False
+    try:
+        return _ax_perform_action(element, "AXPress") or _ax_click_element_center(element)
+    finally:
+        _cf_release(element)
+
+
+def _ax_click_open_tab_documents_folder(window: Optional[MacWindow]) -> bool:
+    roots = _ax_onenote_notebook_dialog_roots(window)
+    if not roots:
+        return False
+    wanted_names = {_normalize_text("문서"), _normalize_text("Documents")}
+    deadline = time.monotonic() + 3.0
+    node_count = 0
+
+    def _visit(element: c_void_p, depth: int) -> Optional[c_void_p]:
+        nonlocal node_count
+        if not element or depth > 14 or node_count >= 1400 or time.monotonic() > deadline:
+            return None
+        node_count += 1
+        role = _ax_text_attribute(element, "AXRole")
+        if role == "AXStaticText":
+            value = _clean_field(_ax_text_attribute(element, "AXValue"))
+            desc = _clean_field(_ax_text_attribute(element, "AXDescription"))
+            if (
+                _normalize_text(value) in wanted_names
+                and "d.docs.live.net" in desc.casefold()
+            ):
+                retained = _cf_retain(element)
+                if retained:
+                    return retained
+        children = _ax_array_attribute(element, "AXChildren")
+        try:
+            for child in children:
+                result = _visit(child, depth + 1)
+                if result:
+                    return result
+        finally:
+            _release_ax_refs(children)
+        return None
+
+    try:
+        for root in roots:
+            target = _visit(root, 0)
+            if target:
+                try:
+                    return _ax_click_element_center(target, click_count=2)
+                finally:
+                    _cf_release(target)
+    finally:
+        _release_ax_refs(roots)
+    return False
+
+
+def _open_tab_web_url_from_description(name: str, description: str) -> str:
+    clean_name = _clean_field(name)
+    clean_desc = _clean_field(description)
+    if not clean_name or "d.docs.live.net" not in clean_desc.casefold():
+        return ""
+    parts = [_clean_field(part) for part in clean_desc.split("»")]
+    if len(parts) < 2:
+        return ""
+    account_id = ""
+    for part in parts:
+        token = part.strip().strip(",")
+        if token and all(ch in "0123456789abcdefABCDEF" for ch in token) and len(token) >= 8:
+            account_id = token.lower()
+            break
+    if not account_id:
+        return ""
+    folder_parts = [part for part in parts[2:] if part]
+    if not folder_parts:
+        folder_parts = ["문서"]
+    path = "/".join(quote(part, safe="-_.~") for part in [*folder_parts, clean_name])
+    return f"https://d.docs.live.net/{account_id}/{path}"
+
+
+def _open_tab_notebook_entries_from_ax(window: Optional[MacWindow]) -> List[Dict[str, str]]:
+    roots = _ax_onenote_notebook_dialog_roots(window)
+    if not roots:
+        return []
+    entries: List[Dict[str, str]] = []
+    seen = set()
+    deadline = time.monotonic() + 5.0
+    node_count = 0
+
+    def _append_static_text(element: c_void_p) -> None:
+        value = _clean_field(_ax_text_attribute(element, "AXValue"))
+        desc = _clean_field(_ax_text_attribute(element, "AXDescription"))
+        key = _normalize_text(value)
+        if not key or key in seen:
+            return
+        if key in {_normalize_text("문서"), _normalize_text("Documents"), _normalize_text("최근 폴더")}:
+            return
+        web_url = _open_tab_web_url_from_description(value, desc)
+        if not web_url:
+            return
+        seen.add(key)
+        entries.append(
+            {
+                "name": value,
+                "url": web_url,
+                "path": desc,
+            }
+        )
+
+    def _visit(element: c_void_p, depth: int) -> None:
+        nonlocal node_count
+        if not element or depth > 16 or node_count >= 2600 or time.monotonic() > deadline:
+            return
+        node_count += 1
+        role = _ax_text_attribute(element, "AXRole")
+        if role == "AXStaticText":
+            _append_static_text(element)
+
+        children = _ax_array_attribute(element, "AXChildren")
+        try:
+            for child in children:
+                _visit(child, depth + 1)
+        finally:
+            _release_ax_refs(children)
+
+    try:
+        for root in roots:
+            _visit(root, 0)
+            if entries:
+                break
+    finally:
+        _release_ax_refs(roots)
+    return entries
+
+
+def _ensure_open_tab_notebooks_dialog(
+    window: MacWindow,
+    *,
+    fast: bool = False,
+) -> Tuple[bool, bool]:
+    opened_sidebar = False
+    dialog_roots = _ax_onenote_notebook_dialog_roots(window)
+    dialog_already_open = bool(dialog_roots)
+    _release_ax_refs(dialog_roots)
+    if not dialog_already_open:
+        ready, opened_sidebar = _open_recent_notebooks_dialog_with_state(
+            window,
+            fast=fast,
+        )
+        if not ready:
+            return False, opened_sidebar
+
+    if not _ax_press_dialog_radio(
+        window,
+        ("열기", "Open"),
+        timeout_sec=3.0 if fast else 5.0,
+    ):
+        return False, opened_sidebar
+
+    deadline = time.monotonic() + (6.0 if fast else 10.0)
+    clicked_documents = False
+    while time.monotonic() < deadline:
+        entries = _open_tab_notebook_entries_from_ax(window)
+        if len(entries) >= 5:
+            return True, opened_sidebar
+        if not clicked_documents:
+            clicked_documents = _ax_click_open_tab_documents_folder(window)
+        time.sleep(0.25)
+    return bool(_open_tab_notebook_entries_from_ax(window)), opened_sidebar
+
+
+def open_tab_notebook_records(
+    window: Optional[MacWindow],
+    *,
+    fast: bool = False,
+) -> List[Dict[str, Any]]:
+    if window is None:
+        return []
+    ready, opened_sidebar = _ensure_open_tab_notebooks_dialog(window, fast=fast)
+    if not ready:
+        return []
+    try:
+        return [
+            {
+                "name": entry["name"],
+                "url": entry["url"],
+                "path": entry.get("path", ""),
+                "last_accessed_at": 0,
+                "source": "MAC_OPEN_TAB",
+            }
+            for entry in _open_tab_notebook_entries_from_ax(window)
+            if str(entry.get("name") or "").strip() and str(entry.get("url") or "").strip()
+        ]
+    finally:
+        dismiss_recent_notebooks_dialog(window)
+        _restore_notebook_sidebar(window, opened_sidebar)
+
+
 def _is_notebook_sidebar_snapshot(snapshot: Dict[str, Any]) -> bool:
     rows = snapshot.get("rows") or []
     if not rows:
@@ -3251,14 +3555,11 @@ def _open_recent_notebooks_dialog(window: MacWindow) -> bool:
 
 
 def _is_recent_notebooks_dialog_open(window: MacWindow) -> bool:
+    roots = _ax_onenote_notebook_dialog_roots(window)
     try:
-        _run_osascript(
-            _recent_notebook_dialog_locator(window) + '\nreturn "OK"\nend tell\n',
-            timeout=5,
-        )
-        return True
-    except Exception:
-        return False
+        return bool(roots)
+    finally:
+        _release_ax_refs(roots)
 
 
 def _open_recent_notebooks_dialog_with_state(

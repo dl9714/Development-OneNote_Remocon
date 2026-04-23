@@ -80,6 +80,7 @@ from src.macos_ui import (
     current_open_notebook_names_quick as mac_current_open_notebook_names_quick,
     macos_accessibility_is_trusted,
     macos_last_ax_notebook_debug,
+    open_tab_notebook_records as mac_open_tab_notebook_records,
     open_recent_notebook_record as mac_open_recent_notebook_record,
     current_outline_context as mac_current_outline_context,
     enumerate_macos_windows,
@@ -325,6 +326,7 @@ _MAC_UI_OPEN_SOURCE_HINTS = {
     "MAC_RECENT_CACHE",
     "MAC_RECENT_DIALOG",
     "MAC_SHORTCUT",
+    "MAC_OPEN_TAB",
     "RECENT",
     "RECENT_CACHE",
     "RECENT_DIALOG",
@@ -4544,6 +4546,59 @@ class OpenAllNotebooksWorker(QThread):
                     f"settings-records={len(settings_records)}",
                     f"settings-sample={[str((record or {}).get('name') or '').strip() for record in settings_records[:8]]!r}",
                 )
+                open_tab_records: List[Dict[str, Any]] = []
+                if (
+                    candidate_limited_mode
+                    and settings_records
+                    and accessibility_trusted
+                ):
+                    self.progress.emit(
+                        f"{mac_open_action_label} 준비 중... OneNote 열기 탭 전체 목록"
+                    )
+                    open_tab_box: Dict[str, Any] = {}
+                    open_tab_done = threading.Event()
+
+                    def _read_open_tab_records() -> None:
+                        try:
+                            open_tab_box["records"] = [
+                                dict(record)
+                                for record in mac_open_tab_notebook_records(win, fast=True)
+                                if str((record or {}).get("name") or "").strip()
+                            ]
+                        except Exception as exc:
+                            open_tab_box["error"] = exc
+                        finally:
+                            open_tab_done.set()
+
+                    threading.Thread(
+                        target=_read_open_tab_records,
+                        name="onenote-open-tab-fast-scan",
+                        daemon=True,
+                    ).start()
+                    if open_tab_done.wait(18.0):
+                        if "error" in open_tab_box:
+                            _mac_open_all_debug(
+                                "[WARN][OPEN_ALL_NOTEBOOKS][MAC][OPEN_TAB]",
+                                str(open_tab_box["error"]),
+                            )
+                        else:
+                            open_tab_records = [
+                                dict(record)
+                                for record in (open_tab_box.get("records") or [])
+                                if str((record or {}).get("name") or "").strip()
+                            ]
+                            for record in open_tab_records:
+                                if not str(record.get("source") or "").strip():
+                                    record["source"] = "MAC_OPEN_TAB"
+                    else:
+                        _mac_open_all_debug(
+                            "[WARN][OPEN_ALL_NOTEBOOKS][MAC][OPEN_TAB] timed out after 18s"
+                        )
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"open-tab-records={len(open_tab_records)}",
+                        f"open-tab-sample={[str((record or {}).get('name') or '').strip() for record in open_tab_records[:8]]!r}",
+                    )
                 if (
                     candidate_limited_mode
                     and settings_records
@@ -4651,7 +4706,7 @@ class OpenAllNotebooksWorker(QThread):
                 if candidate_limited_mode and settings_records:
                     for record in settings_records:
                         _merge_open_candidate(record, allow_new=True)
-                    for source_records in (recent_records, shortcut_records):
+                    for source_records in (recent_records, shortcut_records, open_tab_records):
                         for record in source_records:
                             _merge_open_candidate(record, allow_new=False)
                 else:
