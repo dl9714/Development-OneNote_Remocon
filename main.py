@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
+from src.app_version import APP_VERSION, APP_BUILD_VERSION
 from src.ui.main_window import OneNoteScrollRemoconApp, ROLE_TYPE
 from src.constants import APP_ICON_PATH
 from src.utils import resource_path
@@ -55,6 +56,8 @@ def main():
     """애플리케이션을 실행합니다."""
     app = QApplication(sys.argv)
     _boot("QApplication() created")
+    app.setApplicationVersion(APP_VERSION)
+    print(f"[BOOT0] version={APP_VERSION} build={APP_BUILD_VERSION}")
 
     # 0) 작업표시줄/Alt+Tab 아이콘 안정화 (Windows)
     if sys.platform.startswith("win"):

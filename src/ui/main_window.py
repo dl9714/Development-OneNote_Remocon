@@ -17,6 +17,7 @@ import subprocess
 import re
 import difflib
 import html
+import threading
 from types import SimpleNamespace
 from urllib.parse import urlparse, parse_qs
 
@@ -68,6 +69,34 @@ from PyQt6.QtCore import (
     QByteArray,
 )
 from PyQt6.QtGui import QIcon, QAction, QBrush, QColor
+from src.app_version import APP_BUILD_VERSION, APP_VERSION
+from src.macos_ui import (
+    MacAutomationError,
+    MacDesktop,
+    MacWindow,
+    current_open_notebook_names as mac_current_open_notebook_names,
+    macos_accessibility_is_trusted,
+    macos_last_ax_notebook_debug,
+    open_recent_notebook_record as mac_open_recent_notebook_record,
+    current_outline_context as mac_current_outline_context,
+    enumerate_macos_windows,
+    enumerate_macos_windows_quick,
+    is_onenote_window_info as is_macos_onenote_window_info,
+    macos_lookup_targets_json,
+    pick_selected_row as mac_pick_selected_row,
+    recent_notebook_records as mac_recent_notebook_records,
+    select_page_row_by_text as mac_select_page_row_by_text,
+    select_row_by_text as mac_select_row_by_text,
+    center_selected_row as mac_center_selected_row,
+)
+from src.platform_support import (
+    IS_MACOS,
+    IS_WINDOWS,
+    ONENOTE_MAC_BUNDLE_ID,
+    default_icon_path,
+    open_path_in_system,
+    open_url_in_system,
+)
 
 
 class WheelSafeComboBox(QComboBox):
@@ -99,10 +128,17 @@ from src.ui.widgets import FavoritesTree, BufferTree, TreeNameEditDelegate
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
 SETTINGS_PATH_POINTER_FILE = "OneNote_Remocon_Setting.path"
 SETTINGS_PATH_ENV = "ONENOTE_REMOCON_SETTINGS_PATH"
-APP_ICON_PATH = "assets/app_icon.ico"
+APP_ICON_PATH = default_icon_path()
 
 ONENOTE_CLASS_NAME = "ApplicationFrameWindow"
 SCROLL_STEP_SENSITIVITY = 40
+MACOS_GENERIC_ONENOTE_TITLES = {
+    "microsoft onenote",
+    "onenote",
+    ONENOTE_MAC_BUNDLE_ID.casefold(),
+}
+CODEX_PLATFORM_WINDOWS = "windows"
+CODEX_PLATFORM_MACOS = "macos"
 
 ROLE_TYPE = Qt.ItemDataRole.UserRole + 1
 ROLE_DATA = Qt.ItemDataRole.UserRole + 2
@@ -188,6 +224,178 @@ def _name_sort_key(text: Any) -> str:
         except Exception:
             return ""
 
+
+def _platform_ui_font_stack(include_generic: bool = False) -> str:
+    if IS_MACOS:
+        fonts = [
+            "'Apple SD Gothic Neo'",
+            "'AppleGothic'",
+            "'SF Pro Text'",
+            "'Helvetica Neue'",
+        ]
+    elif IS_WINDOWS:
+        fonts = ["'Malgun Gothic'", "'Segoe UI'"]
+    else:
+        fonts = ["'Noto Sans CJK KR'", "'Noto Sans'", "'DejaVu Sans'"]
+    if include_generic:
+        fonts.append("sans-serif")
+    return ", ".join(fonts)
+
+
+def _center_target_ui_name() -> str:
+    return "섹션" if IS_MACOS else "전자필기장"
+
+
+def _main_window_title() -> str:
+    return "OneNote 빠른 이동" if IS_MACOS else "OneNote 전자필기장 위치정렬"
+
+
+def _remocon_workspace_tab_title() -> str:
+    return "빠른 이동" if IS_MACOS else "위치정렬"
+
+
+def _current_add_button_label() -> str:
+    return "현재 보기 추가" if IS_MACOS else "현재 전자필기장 추가"
+
+
+def _favorite_activate_button_label() -> str:
+    return "선택 보기 복구" if IS_MACOS else "선택 항목 실행"
+
+
+def _connection_group_title() -> str:
+    return "OneNote 연결 대상" if IS_MACOS else "OneNote 창 목록"
+
+
+def _current_actions_group_title() -> str:
+    return "현재 선택 항목 제어" if IS_MACOS else "현재 열린 항목 제어"
+
+
+def _buffer_group_title() -> str:
+    return "전자필기장 분류" if IS_MACOS else "프로젝트/등록 영역"
+
+
+def _buffer_group_add_label() -> str:
+    return "묶음" if IS_MACOS else "그룹"
+
+
+def _buffer_item_add_label() -> str:
+    return "분류함" if IS_MACOS else "버퍼"
+
+
+def _rename_button_label() -> str:
+    return "이름 변경" if IS_MACOS else "이름변경"
+
+
+def _favorites_group_title() -> str:
+    return "보기 바로가기" if IS_MACOS else "모듈영역"
+
+
+def _register_all_notebooks_button_label() -> str:
+    return "열린 전자필기장 새로고침" if IS_MACOS else "종합 새로고침"
+
+
+def _onenote_list_hint_text() -> str:
+    if IS_MACOS:
+        return "더블클릭 또는 Enter로 연결 후 섹션/페이지 보기 복구"
+    return "더블클릭 또는 Enter로 연결 및 중앙 정렬"
+
+
+def _search_group_title() -> str:
+    return "찾기 / 빠른 이동" if IS_MACOS else "검색 / 위치정렬"
+
+
+def _project_search_label_text() -> str:
+    return "전자필기장/섹션 검색" if IS_MACOS else "프로젝트 검색"
+
+
+def _project_search_placeholder_text() -> str:
+    if IS_MACOS:
+        return "전자필기장 분류 + 섹션 바로가기 검색 (띄어쓰기 무시)..."
+    return "프로젝트/등록영역 + 모듈영역 검색 (띄어쓰기 무시)..."
+
+
+def _project_search_hint_text() -> str:
+    if IS_MACOS:
+        return "입력한 글자가 포함된 항목은 전자필기장 분류와 섹션 바로가기에 하이라이트로 표시됩니다."
+    return "입력한 글자가 포함된 항목은 프로젝트/등록영역과 모듈영역에 하이라이트로 표시됩니다."
+
+
+def _project_search_status_text(
+    raw_query: str,
+    buffer_count: int,
+    module_count: int,
+) -> str:
+    if IS_MACOS:
+        return (
+            f"항목 검색: '{raw_query}' - 전자필기장 분류 {buffer_count}개, "
+            f"섹션 바로가기 {module_count}개 강조"
+        )
+    return f"프로젝트 검색: '{raw_query}' - 프로젝트 {buffer_count}개, 모듈 {module_count}개 강조"
+
+
+def _primary_restore_button_text() -> str:
+    if IS_MACOS:
+        return "현재 선택 위치 보기 복구"
+    return f"현재 선택된 {_center_target_ui_name()} 중앙으로 정렬"
+
+
+def _mac_context_summary_text(context: Optional[Dict[str, Any]], fallback: str = "") -> str:
+    context = context or {}
+    notebook = str(context.get("notebook") or "").strip()
+    section = str(context.get("section") or "").strip()
+    page = str(context.get("page") or "").strip()
+    parts = [value for value in (notebook, section, page) if value]
+    if not parts and fallback:
+        parts = [str(fallback).strip()]
+    return " > ".join(part for part in parts if part)
+
+
+def _codex_platform_skill_aliases(platform_key: str) -> Dict[str, str]:
+    if platform_key == CODEX_PLATFORM_MACOS:
+        return {
+            "링크 생성": "앱 링크 생성",
+            "부모 ID 조회": "상위 위치 조회",
+        }
+    return {}
+
+
+def _canonical_codex_platform_skill(platform_key: str, value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return _codex_platform_skill_aliases(platform_key).get(normalized, normalized)
+
+
+def _codex_active_platform_key() -> str:
+    return CODEX_PLATFORM_MACOS if IS_MACOS else CODEX_PLATFORM_WINDOWS
+
+
+def _codex_platform_variants() -> List[Tuple[str, str]]:
+    return [
+        (CODEX_PLATFORM_WINDOWS, "Windows"),
+        (CODEX_PLATFORM_MACOS, "macOS"),
+    ]
+
+
+def _codex_platform_display_name(platform_key: str) -> str:
+    for key, label in _codex_platform_variants():
+        if key == platform_key:
+            return label
+    return str(platform_key or "").strip() or "플랫폼"
+
+
+def _codex_platform_engine_summary(platform_key: str) -> str:
+    if platform_key == CODEX_PLATFORM_MACOS:
+        return "OneNote for Mac 접근성/UI 자동화"
+    return "Windows OneNote COM API"
+
+
+def _codex_platform_structure_summary(platform_key: str) -> str:
+    if platform_key == CODEX_PLATFORM_MACOS:
+        return "왼쪽 패널의 전자필기장/섹션/페이지 구조와 현재 보이는 UI 상태를 기준으로 작업"
+    return "COM ID와 GetHierarchy/GetPageContent 결과를 기준으로 작업"
+
+
 # ----------------- 0.0 설정 파일 경로 헬퍼 -----------------
 def _get_app_base_path() -> str:
     if getattr(sys, "frozen", False):
@@ -196,12 +404,21 @@ def _get_app_base_path() -> str:
 
 
 def _get_default_settings_file_path() -> str:
+    if IS_MACOS:
+        return os.path.join(_settings_path_config_dir(), SETTINGS_FILE)
     return os.path.join(_get_app_base_path(), SETTINGS_FILE)
 
 
 def _settings_path_config_dir() -> str:
-    base = os.environ.get("APPDATA") or os.path.expanduser("~")
-    return os.path.join(base, "OneNote_Remocon")
+    if IS_WINDOWS:
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "OneNote_Remocon")
+    if IS_MACOS:
+        return os.path.join(
+            os.path.expanduser("~/Library/Application Support"),
+            "OneNote_Remocon",
+        )
+    return os.path.join(os.path.expanduser("~/.config"), "OneNote_Remocon")
 
 
 def _settings_path_config_file() -> str:
@@ -409,6 +626,9 @@ def _dump_json_text(obj: Dict[str, Any]) -> str:
 
 def _write_json_text(path: str, text: str) -> bool:
     """내용이 바뀐 경우에만 .bak 백업 후 원자적으로 저장합니다."""
+    parent_dir = os.path.dirname(path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
     file_sig = _get_file_signature(path)
     cache_entry = _JSON_TEXT_CACHE.get(path) or {}
     cached_text = cache_entry.get("text")
@@ -444,6 +664,40 @@ def _write_json_text(path: str, text: str) -> bool:
 def _write_json(path: str, obj: Dict[str, Any]) -> bool:
     """UTF-8(한글 유지)로 설정 파일을 저장합니다."""
     return _write_json_text(path, _dump_json_text(obj))
+
+
+def _sanitize_connection_signature_for_platform(sig: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(sig, dict):
+        return None
+
+    bundle_id = str(sig.get("bundle_id") or "").strip()
+    class_name = str(sig.get("class_name") or "").strip()
+    exe_name = str(sig.get("exe_name") or "").strip().lower()
+    exe_path = str(sig.get("exe_path") or "").strip()
+
+    if IS_MACOS:
+        if ONENOTE_MAC_BUNDLE_ID in (bundle_id, class_name, exe_name):
+            return sig
+        if exe_path or exe_name.endswith(".exe") or "\\" in exe_path:
+            return None
+        return None
+
+    if IS_WINDOWS:
+        if bundle_id == ONENOTE_MAC_BUNDLE_ID or class_name == ONENOTE_MAC_BUNDLE_ID:
+            return None
+        return sig
+
+    return sig
+
+
+def _sanitize_settings_for_platform_inplace(settings: Dict[str, Any]) -> bool:
+    migrated = False
+    current_sig = settings.get("connection_signature")
+    sanitized_sig = _sanitize_connection_signature_for_platform(current_sig)
+    if sanitized_sig != current_sig:
+        settings["connection_signature"] = sanitized_sig
+        migrated = True
+    return migrated
 
 
 def _migrate_favorites_buffers_inplace(data: Dict[str, Any]) -> bool:
@@ -555,6 +809,7 @@ def load_settings() -> Dict[str, Any]:
     cache_entry = _SETTINGS_OBJECT_CACHE.get(settings_path)
     if file_sig is not None and cache_entry and cache_entry.get("sig") == file_sig:
         cached = copy.deepcopy(cache_entry.get("data") or DEFAULT_SETTINGS)
+        _sanitize_settings_for_platform_inplace(cached)
         _ensure_default_and_aggregate_inplace(cached)
         return cached
 
@@ -568,6 +823,7 @@ def load_settings() -> Dict[str, Any]:
                 _migrate_favorites_buffers_inplace(data)
                 settings = DEFAULT_SETTINGS.copy()
                 settings.update(data)
+                _sanitize_settings_for_platform_inplace(settings)
                 _ensure_default_and_aggregate_inplace(settings)
                 try:
                     _write_json(settings_path, settings)
@@ -597,6 +853,7 @@ def load_settings() -> Dict[str, Any]:
 
         settings = DEFAULT_SETTINGS.copy()
         settings.update(data)
+        migrated = _sanitize_settings_for_platform_inplace(settings) or migrated
         # ✅ 로드 직후에도 Default/종합 구조 강제
         _ensure_default_and_aggregate_inplace(settings)
         if not _settings_has_user_buffers(settings):
@@ -608,6 +865,7 @@ def load_settings() -> Dict[str, Any]:
                     _migrate_favorites_buffers_inplace(seed_data)
                     seed_settings = DEFAULT_SETTINGS.copy()
                     seed_settings.update(seed_data)
+                    migrated = _sanitize_settings_for_platform_inplace(seed_settings) or migrated
                     _ensure_default_and_aggregate_inplace(seed_settings)
                     if _settings_has_user_buffers(seed_settings):
                         settings = seed_settings
@@ -854,6 +1112,18 @@ def ensure_pywinauto():
     # NameError 수정: _ppa_ready -> _pwa_ready
     if _pwa_ready:
         return
+    if IS_MACOS:
+        Desktop = MacDesktop
+        WindowNotFoundError = MacAutomationError
+        ElementNotFoundError = MacAutomationError
+        TimeoutError = TimeoutError or RuntimeError
+        UIAWrapper = None
+        UIAElementInfo = None
+        mouse = None
+        keyboard = None
+        _pwa_ready = True
+        _pwa_import_error = ""
+        return
     try:
         from pywinauto import (
             Desktop as _Desktop,
@@ -884,10 +1154,12 @@ def ensure_pywinauto():
 
 
 # ----------------- 0.2 Win32 빠른 창 열거 -----------------
-_user32 = ctypes.windll.user32
+_user32 = ctypes.windll.user32 if IS_WINDOWS else None
 
 
 def _win_get_window_text(hwnd):
+    if _user32 is None:
+        return ""
     length = _user32.GetWindowTextLengthW(hwnd)
     buf = ctypes.create_unicode_buffer(length + 1 if length > 0 else 1)
     _user32.GetWindowTextW(hwnd, buf, len(buf))
@@ -895,12 +1167,17 @@ def _win_get_window_text(hwnd):
 
 
 def _win_get_class_name(hwnd):
+    if _user32 is None:
+        return ""
     buf = ctypes.create_unicode_buffer(256)
     _user32.GetClassNameW(hwnd, buf, 256)
     return buf.value
 
 
 def enum_windows_fast(filter_title_substr=None):
+    if IS_MACOS:
+        return enumerate_macos_windows(filter_title_substr=filter_title_substr)
+
     if isinstance(filter_title_substr, str):
         filters = [filter_title_substr.lower()]
     elif filter_title_substr:
@@ -948,7 +1225,7 @@ def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = _get_app_base_path()
 
     return os.path.join(base_path, relative_path)
 
@@ -956,6 +1233,8 @@ def resource_path(relative_path):
 # ----------------- 1. 프로세스 실행 파일 경로 얻기 -----------------
 def get_process_image_path(pid: int) -> Optional[str]:
     if not pid:
+        return None
+    if not IS_WINDOWS:
         return None
 
     now = time.monotonic()
@@ -1024,6 +1303,9 @@ def get_process_image_path(pid: int) -> Optional[str]:
 # ----------------- 1.1 엄격한 OneNote 창 검증 헬퍼 -----------------
 def is_strict_onenote_window(w: Dict[str, Any], my_pid: int) -> bool:
     """주어진 창 정보가 실제로 OneNote 앱 창인지 엄격하게 확인합니다."""
+    if IS_MACOS:
+        return is_macos_onenote_window_info(w, my_pid)
+
     if w.get("pid") == my_pid:
         return False
 
@@ -1323,6 +1605,12 @@ def select_section_by_text(
     ensure_pywinauto()
     if not _pwa_ready:
         return False
+    if IS_MACOS:
+        try:
+            return mac_select_row_by_text(onenote_window, text)
+        except Exception as e:
+            print(f"[ERROR] 섹션 선택 실패(macOS): {e}")
+            return False
     try:
         tree_control = tree_control or _find_tree_or_list(onenote_window)
         if not tree_control:
@@ -1376,6 +1664,16 @@ def select_notebook_item_by_text(
     ensure_pywinauto()
     if not _pwa_ready:
         return False
+    if IS_MACOS:
+        try:
+            if not mac_select_row_by_text(onenote_window, text):
+                return None
+            if center_after_select:
+                mac_center_selected_row(onenote_window, prefer_leftmost=True)
+            return mac_pick_selected_row(onenote_window, prefer_leftmost=True)
+        except Exception as e:
+            print(f"[ERROR] 전자필기장 선택 실패(macOS): {e}")
+            return None
     try:
         tree_control = tree_control or _find_tree_or_list(onenote_window)
         if not tree_control:
@@ -1450,6 +1748,8 @@ def _safe_window_text(ctrl) -> str:
 
 
 def _safe_control_type(ctrl) -> str:
+    if IS_MACOS and ctrl is not None:
+        return "TreeItem"
     try:
         return ctrl.element_info.control_type or ""
     except Exception:
@@ -2040,10 +2340,17 @@ def _iter_onedrive_notebook_shortcut_dirs() -> List[str]:
         os.environ.get("OneDrive"),
         os.path.join(os.path.expanduser("~"), "OneDrive"),
     ]
+    cloud_storage = os.path.join(os.path.expanduser("~"), "Library", "CloudStorage")
+    try:
+        for name in os.listdir(cloud_storage):
+            if "onedrive" in str(name or "").casefold():
+                candidates.append(os.path.join(cloud_storage, name))
+    except Exception:
+        pass
     for base in candidates:
         if not base or not os.path.isdir(base):
             continue
-        for rel in ("문서", "Documents"):
+        for rel in ("문서", "Documents", ""):
             path = os.path.join(base, rel)
             if os.path.isdir(path) and path not in roots:
                 roots.append(path)
@@ -2060,6 +2367,17 @@ def _read_internet_shortcut_url(path: str) -> str:
         except Exception:
             continue
     return ""
+
+
+def _read_webloc_url(path: str) -> str:
+    try:
+        import plistlib
+
+        with open(path, "rb") as f:
+            data = plistlib.load(f)
+        return str(data.get("URL") or "").strip()
+    except Exception:
+        return ""
 
 
 def _looks_like_onenote_shortcut_url(url: str) -> bool:
@@ -2144,12 +2462,16 @@ def _collect_onenote_notebook_shortcuts() -> List[Dict[str, str]]:
         except Exception:
             continue
         for name in names:
-            if not name.lower().endswith(".url"):
+            lower_name = name.lower()
+            if not (lower_name.endswith(".url") or lower_name.endswith(".webloc")):
                 continue
             path = os.path.join(root, name)
             if not os.path.isfile(path):
                 continue
-            url = _read_internet_shortcut_url(path)
+            if lower_name.endswith(".webloc"):
+                url = _read_webloc_url(path)
+            else:
+                url = _read_internet_shortcut_url(path)
             if not _looks_like_onenote_shortcut_url(url):
                 continue
             display_name = os.path.splitext(name)[0].strip()
@@ -2176,6 +2498,58 @@ def _get_open_notebook_names_via_com(
         for record in records
         if str(record.get("name") or "").strip()
     ]
+
+
+def _get_macos_primary_notebook_title() -> str:
+    if not IS_MACOS:
+        return ""
+
+    try:
+        wins = [
+            info
+            for info in enumerate_macos_windows(filter_title_substr=None)
+            if is_macos_onenote_window_info(info, os.getpid())
+        ]
+        wins.sort(key=lambda item: (not bool(item.get("frontmost")), item.get("title", "")))
+        for info in wins:
+            title = str(info.get("title") or "").strip()
+            if title:
+                return title
+    except Exception as e:
+        print(f"[WARN][MAC][PRIMARY_NOTEBOOK] {e}")
+    return ""
+
+
+def _is_macos_notebook_visible(expected_name: str) -> bool:
+    expected_key = _normalize_notebook_name_key(expected_name)
+    if not expected_key or not IS_MACOS:
+        return False
+
+    current_title = _get_macos_primary_notebook_title()
+    if _normalize_notebook_name_key(current_title) == expected_key:
+        return True
+
+    try:
+        open_keys = {
+            _normalize_notebook_name_key(name)
+            for name in _get_open_notebook_names_via_com(refresh=True)
+            if _normalize_notebook_name_key(name)
+        }
+    except Exception:
+        open_keys = set()
+    return expected_key in open_keys
+
+
+def _wait_for_macos_notebook_visible(expected_name: str, timeout_sec: float = 6.0) -> bool:
+    if not IS_MACOS:
+        return False
+
+    deadline = time.monotonic() + max(0.1, float(timeout_sec or 0.0))
+    while time.monotonic() < deadline:
+        if _is_macos_notebook_visible(expected_name):
+            return True
+        time.sleep(0.25)
+    return _is_macos_notebook_visible(expected_name)
 
 
 def _normalize_notebook_record(raw: Any) -> Optional[Dict[str, str]]:
@@ -2205,6 +2579,32 @@ def _get_open_notebook_records_via_com(
     cache_expires_at = float(_OPEN_NOTEBOOK_RECORDS_CACHE.get("expires_at") or 0.0)
     if not refresh and now < cache_expires_at:
         return [dict(record) for record in cache_records]
+
+    if IS_MACOS:
+        records: List[Dict[str, str]] = []
+        try:
+            wins = [
+                info
+                for info in enumerate_macos_windows(filter_title_substr=None)
+                if is_macos_onenote_window_info(info, os.getpid())
+            ]
+            wins.sort(key=lambda item: (not bool(item.get("frontmost")), item.get("title", "")))
+            for info in wins:
+                win = MacWindow(dict(info))
+                records = [
+                    {"id": "", "name": name, "path": name}
+                    for name in mac_current_open_notebook_names(win)
+                    if str(name).strip()
+                ]
+                if records:
+                    break
+        except Exception as e:
+            print(f"[WARN][MAC][NOTEBOOKS] {e}")
+            records = []
+
+        _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = [dict(record) for record in records]
+        _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = now + max(0.0, max_age_sec)
+        return [dict(record) for record in records]
 
     script = """
 $one = New-Object -ComObject OneNote.Application
@@ -2459,14 +2859,18 @@ def _open_notebook_shortcut_via_shell(
         exe_path = _get_onenote_exe_path()
         _clear_open_notebook_records_cache()
         try:
-            if exe_path:
+            if IS_MACOS:
+                open_url_in_system(protocol_url)
+            elif exe_path:
                 subprocess.Popen([exe_path, "/hyperlink", protocol_url])
             else:
                 os.startfile(protocol_url)
         except Exception as e:
             launch_errors.append(str(e))
             try:
-                if exe_path:
+                if IS_MACOS:
+                    open_url_in_system(protocol_url)
+                elif exe_path:
                     os.startfile(protocol_url)
                 else:
                     _run_powershell(
@@ -2681,6 +3085,12 @@ def scroll_selected_item_to_center(
     ensure_pywinauto()
     if not _pwa_ready:
         return False, None
+    if IS_MACOS:
+        try:
+            return mac_center_selected_row(onenote_window, prefer_leftmost=True)
+        except Exception as e:
+            print(f"[WARN] 중앙 정렬 중 오류(macOS): {e}")
+            return False, None
     try:
         tree_control = tree_control or _find_tree_or_list(onenote_window)
         if not tree_control:
@@ -2736,21 +3146,186 @@ def scroll_selected_item_to_center(
 
 
 # ----------------- 11. 연결 시그니처 저장/스코어 기반 재획득 -----------------
+def _preferred_connected_window_title(
+    win,
+    fallback_sig: Optional[Dict[str, Any]] = None,
+) -> str:
+    info: Dict[str, Any] = {}
+    try:
+        info = getattr(win, "info", {}) or {}
+    except Exception:
+        info = {}
+
+    def _clean(value: Any) -> str:
+        return str(value or "").strip()
+
+    def _non_generic(value: Any) -> str:
+        text = _clean(value)
+        if text and text.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
+            return text
+        return ""
+
+    raw_title = ""
+    try:
+        raw_title = _clean(win.window_text())
+    except Exception:
+        raw_title = ""
+
+    if IS_MACOS:
+        preferred_title = _non_generic(raw_title)
+        if preferred_title:
+            return preferred_title
+        try:
+            for name in mac_current_open_notebook_names(win):
+                preferred_title = _non_generic(name)
+                if preferred_title:
+                    return preferred_title
+        except Exception:
+            pass
+        info_title = _non_generic(info.get("title"))
+        if info_title:
+            return info_title
+
+    if raw_title:
+        return raw_title
+
+    if isinstance(fallback_sig, dict):
+        for key in ("title", "app_name", "bundle_id", "class_name"):
+            text = _clean(fallback_sig.get(key))
+            if text:
+                return text
+
+    for key in ("title", "app_name", "bundle_id", "class_name"):
+        text = _clean(info.get(key))
+        if text:
+            return text
+
+    return ""
+
+
+def _merge_connection_signature(
+    new_sig: Dict[str, Any],
+    previous_sig: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    merged = dict(new_sig or {})
+    if not IS_MACOS or not isinstance(previous_sig, dict):
+        return merged
+
+    new_title = str(merged.get("title") or "").strip()
+    prev_title = str(previous_sig.get("title") or "").strip()
+    if (
+        prev_title
+        and (
+            not new_title
+            or (
+                new_title.casefold() in MACOS_GENERIC_ONENOTE_TITLES
+                and prev_title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES
+            )
+        )
+    ):
+        merged["title"] = prev_title
+    if (
+        not int(merged.get("handle") or 0)
+        and int(previous_sig.get("handle") or 0)
+    ):
+        merged["handle"] = int(previous_sig.get("handle") or 0)
+    return merged
+
+
+def _preferred_connected_window_title_quick(
+    win,
+    fallback_sig: Optional[Dict[str, Any]] = None,
+) -> str:
+    info: Dict[str, Any] = {}
+    try:
+        info = getattr(win, "info", {}) or {}
+    except Exception:
+        info = {}
+
+    for source in (info, fallback_sig or {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("title", "app_name", "bundle_id", "class_name"):
+            text = str(source.get(key) or "").strip()
+            if text and text.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
+                return text
+
+    for source in (info, fallback_sig or {}):
+        if not isinstance(source, dict):
+            continue
+        for key in ("title", "app_name", "bundle_id", "class_name"):
+            text = str(source.get(key) or "").strip()
+            if text:
+                return text
+
+    return ""
+
+
+def build_window_signature_quick(
+    win,
+    fallback_sig: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    try:
+        info = getattr(win, "info", {}) or {}
+    except Exception:
+        info = {}
+
+    try:
+        pid = int(info.get("pid") or win.process_id() or 0) or None
+    except Exception:
+        pid = None
+
+    try:
+        bundle_id = str(info.get("bundle_id") or win.bundle_id() or "").strip()
+    except Exception:
+        bundle_id = str(info.get("bundle_id") or "").strip()
+
+    try:
+        cls_name = str(
+            info.get("class_name") or win.class_name() or info.get("app_name") or ""
+        ).strip()
+    except Exception:
+        cls_name = str(info.get("class_name") or info.get("app_name") or "").strip()
+
+    try:
+        handle = int(info.get("handle") or win.handle or 0) or None
+    except Exception:
+        handle = int(info.get("handle") or 0) or None
+
+    exe_name = os.path.basename(bundle_id or cls_name or "").lower()
+    title = _preferred_connected_window_title_quick(win, fallback_sig)
+    return _merge_connection_signature(
+        {
+            "handle": handle,
+            "pid": pid,
+            "class_name": cls_name,
+            "title": title,
+            "exe_path": "",
+            "exe_name": exe_name,
+            "bundle_id": bundle_id,
+        },
+        fallback_sig if isinstance(fallback_sig, dict) else None,
+    )
+
+
 def build_window_signature(win) -> dict:
     try:
         pid = win.process_id()
     except Exception:
         pid = None
-    exe_path = get_process_image_path(pid) if pid else None
-    exe_name = os.path.basename(exe_path).lower() if exe_path else None
+    if IS_MACOS:
+        bundle_id = getattr(win, "bundle_id", lambda: "")() or ""
+        exe_path = ""
+        exe_name = os.path.basename(bundle_id or win.class_name() or "").lower()
+    else:
+        bundle_id = ""
+        exe_path = get_process_image_path(pid) if pid else None
+        exe_name = os.path.basename(exe_path).lower() if exe_path else None
     try:
         handle = win.handle
     except Exception:
         handle = None
-    try:
-        title = win.window_text()
-    except Exception:
-        title = None
+    title = _preferred_connected_window_title(win)
     try:
         cls_name = win.class_name()
     except Exception:
@@ -2763,6 +3338,7 @@ def build_window_signature(win) -> dict:
         "title": title,
         "exe_path": exe_path,
         "exe_name": exe_name,
+        "bundle_id": bundle_id,
     }
 
 
@@ -2770,6 +3346,8 @@ def save_connection_info(window_element):
     try:
         info = build_window_signature(window_element)
         current_settings = load_settings()
+        current_sig = current_settings.get("connection_signature")
+        info = _merge_connection_signature(info, current_sig)
         if current_settings.get("connection_signature") == info:
             return
         current_settings["connection_signature"] = info
@@ -2783,15 +3361,21 @@ def _score_candidate_dict(c, sig) -> int:
         title = (c.get("title") or "").lower()
         cls = c.get("class_name") or ""
         pid = c.get("pid")
-        exe_path = get_process_image_path(pid) or ""
-        exe_name = os.path.basename(exe_path).lower() if exe_path else ""
+        if IS_MACOS:
+            exe_path = ""
+            exe_name = os.path.basename(str(c.get("bundle_id") or cls or "")).lower()
+        else:
+            exe_path = get_process_image_path(pid) or ""
+            exe_name = os.path.basename(exe_path).lower() if exe_path else ""
 
         score = 0
         if sig.get("handle") and c.get("handle") == sig["handle"]:
             score += 100
         if sig.get("exe_name") and exe_name == sig["exe_name"]:
             score += 50
-        if "onenote.exe" in exe_name:
+        if IS_MACOS and str(c.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID:
+            score += 50
+        elif "onenote.exe" in exe_name:
             score += 50
         if "onenote" in title or "원노트" in title:
             score += 25
@@ -2808,7 +3392,7 @@ def _score_candidate_dict(c, sig) -> int:
                     score += 4
                 if "원노트" in prev_title and "원노트" in title:
                     score += 4
-        if cls == ONENOTE_CLASS_NAME:
+        if cls == ONENOTE_CLASS_NAME or (IS_MACOS and str(c.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID):
             score += 5
         return score
     except Exception:
@@ -2819,8 +3403,22 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
     ensure_pywinauto()
     if not _pwa_ready:
         return None
+    candidates = (
+        enumerate_macos_windows_quick(filter_title_substr=None)
+        if IS_MACOS
+        else enum_windows_fast(filter_title_substr=None)
+    )
     h = sig.get("handle")
-    if h:
+    if IS_MACOS:
+        exact = None
+        if h:
+            for candidate in candidates:
+                if int(candidate.get("handle") or 0) == int(h):
+                    exact = candidate
+                    break
+        if exact:
+            return MacWindow(dict(exact))
+    elif h:
         try:
             w = Desktop(backend="uia").window(handle=h)
             if w.is_visible():
@@ -2828,7 +3426,6 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
         except Exception:
             pass
 
-    candidates = enum_windows_fast(filter_title_substr=None)
     best, best_score = None, -1
     for c in candidates:
         s = _score_candidate_dict(c, sig)
@@ -2837,12 +3434,35 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
 
     if best and best_score >= 30:
         try:
+            if IS_MACOS:
+                return MacWindow(dict(best))
             w = Desktop(backend="uia").window(handle=best["handle"])
             if w.is_visible():
                 return w
         except Exception:
             return None
     return None
+
+
+def resolve_window_target(sig: Dict[str, Any]) -> Optional[object]:
+    ensure_pywinauto()
+    if not sig:
+        return None
+    if IS_MACOS:
+        resolved = reacquire_window_by_signature(sig)
+        if resolved is not None:
+            return resolved
+        return MacWindow(dict(sig))
+
+    handle = sig.get("handle")
+    if handle:
+        try:
+            target = Desktop(backend="uia").window(handle=handle)
+            if target.is_visible():
+                return target
+        except Exception:
+            pass
+    return reacquire_window_by_signature(sig)
 
 
 # ----------------- 12. 저장된 정보로 재연결 -----------------
@@ -2855,7 +3475,7 @@ def load_connection_info_and_reconnect():
     try:
         win = reacquire_window_by_signature(sig)
         if win and win.is_visible():
-            window_title = win.window_text()
+            window_title = _preferred_connected_window_title(win, sig)
             try:
                 save_connection_info(win)
             except Exception:
@@ -2874,6 +3494,27 @@ class ReconnectWorker(QThread):
     def run(self):
         try:
             ensure_pywinauto()
+            if IS_MACOS:
+                settings = load_settings()
+                sig = settings.get("connection_signature") or {}
+                win = reacquire_window_by_signature(sig) if sig else None
+                if win:
+                    next_sig = build_window_signature_quick(win, sig)
+                    title = _preferred_connected_window_title_quick(win, next_sig)
+                    payload = {
+                        "ok": True,
+                        "status": f"(자동 재연결) '{title}'",
+                        "sig": next_sig,
+                        "target_info": dict(getattr(win, "info", {}) or next_sig),
+                    }
+                else:
+                    payload = {
+                        "ok": False,
+                        "status": "(재연결 실패) 이전 앱을 찾을 수 없습니다.",
+                    }
+                self.finished.emit(payload)
+                return
+
             win, status = load_connection_info_and_reconnect()
             if win:
                 payload = {
@@ -2899,7 +3540,11 @@ class OneNoteWindowScanner(QThread):
     def run(self):
         results = []
         try:
-            wins = enum_windows_fast(filter_title_substr=None)
+            wins = (
+                enumerate_macos_windows_quick(filter_title_substr=None)
+                if IS_MACOS
+                else enum_windows_fast(filter_title_substr=None)
+            )
             for w in wins:
                 try:
                     if is_strict_onenote_window(w, self.my_pid):
@@ -2956,6 +3601,11 @@ class CenterAfterActivateWorker(QThread):
             win = reacquire_window_by_signature(self.sig)
             if not win:
                 self.done.emit(False, "")
+                return
+
+            if IS_MACOS:
+                ok, item_name = mac_center_selected_row(win, prefer_leftmost=True)
+                self.done.emit(bool(ok), item_name or self.expected_text or "")
                 return
 
             tree = _find_tree_or_list(win)
@@ -3144,6 +3794,7 @@ class OpenAllNotebooksWorker(QThread):
             "opened_names": [],
             "remaining_names": [],
             "error": "",
+            "verified_open_count": 0,
         }
         try:
             ensure_pywinauto()
@@ -3161,14 +3812,303 @@ class OpenAllNotebooksWorker(QThread):
             try:
                 result["window_info"] = {
                     "handle": win.handle,
-                    "title": win.window_text(),
+                    "title": _preferred_connected_window_title_quick(win, self.sig),
                     "class_name": win.class_name(),
                     "pid": win.process_id(),
                 }
             except Exception:
                 result["window_info"] = None
 
+            if IS_MACOS:
+                print("[DBG][OPEN_ALL][MAC] branch-start")
+                initial_notebook_name = _preferred_connected_window_title_quick(
+                    win,
+                    self.sig,
+                )
+                open_names = set()
+                print("[DBG][OPEN_ALL][MAC] open-name precheck skipped for bulk launch")
+
+                recent_records = [
+                    dict(record)
+                    for record in mac_recent_notebook_records(None)
+                    if str((record or {}).get("name") or "").strip()
+                ]
+                print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
+                if not recent_records:
+                    if not macos_accessibility_is_trusted():
+                        result["error"] = (
+                            "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
+                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
+                            "다시 추가/허용해야 합니다."
+                        )
+                        result["refresh_open_notebooks"] = False
+                        self.done.emit(result)
+                        return
+
+                    open_sidebar_names: List[str] = []
+                    sidebar_box: Dict[str, Any] = {}
+                    sidebar_done = threading.Event()
+
+                    def _read_sidebar_names() -> None:
+                        try:
+                            sidebar_box["names"] = [
+                                name
+                                for name in mac_current_open_notebook_names(win)
+                                if str(name or "").strip()
+                            ]
+                        except Exception as exc:
+                            sidebar_box["error"] = exc
+                        finally:
+                            sidebar_done.set()
+
+                    sidebar_thread = threading.Thread(
+                        target=_read_sidebar_names,
+                        daemon=True,
+                    )
+                    sidebar_thread.start()
+                    if sidebar_done.wait(8.0):
+                        if "error" in sidebar_box:
+                            print(
+                                "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SIDEBAR]",
+                                sidebar_box["error"],
+                            )
+                        else:
+                            open_sidebar_names = list(sidebar_box.get("names") or [])
+                    else:
+                        result["error"] = (
+                            "OneNote 열린 전자필기장 목록 읽기가 8초를 넘어 중단되었습니다. "
+                            "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
+                        )
+                        result["refresh_open_notebooks"] = False
+                        self.done.emit(result)
+                        return
+
+                    if len(open_sidebar_names) > 1:
+                        result["ok"] = True
+                        result["verified_open_count"] = len(open_sidebar_names)
+                        result["opened_names"] = list(open_sidebar_names)
+                        result["remaining_names"] = []
+                        result["refresh_open_notebooks"] = True
+                        self.done.emit(result)
+                        return
+
+                    recent_records = [
+                        dict(record)
+                        for record in _collect_onenote_notebook_shortcuts()
+                        if str((record or {}).get("name") or "").strip()
+                        and str((record or {}).get("url") or "").strip()
+                    ]
+                    print(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"shortcut-records={len(recent_records)}",
+                    )
+                if not recent_records:
+                    result["error"] = (
+                        "최근 전자필기장 목록을 읽지 못했습니다. "
+                        "OneNote가 캐시 접근을 막는 상태라 앱이 멈추지 않도록 "
+                        "전체 열기 요청을 건너뜁니다."
+                    )
+                    result["refresh_open_notebooks"] = False
+                    self.done.emit(result)
+                    return
+                records_by_key: Dict[str, Dict[str, Any]] = {}
+                pending_records: List[Dict[str, Any]] = []
+                for record in recent_records:
+                    name = str(record.get("name") or "").strip()
+                    key = _normalize_notebook_name_key(name)
+                    if not key or key in records_by_key:
+                        continue
+                    records_by_key[key] = dict(record)
+                    if key not in open_names:
+                        pending_records.append(dict(record))
+                print(f"[DBG][OPEN_ALL][MAC] pending-records={len(pending_records)}")
+
+                total_targets = len(pending_records)
+                self.progress.emit(
+                    f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
+                )
+
+                if not pending_records:
+                    result["ok"] = True
+                    result["remaining_names"] = []
+                    self.done.emit(result)
+                    return
+
+                failed_names = []
+                failed_details = []
+                failed_records = []
+
+                bulk_records = [
+                    dict(record)
+                    for record in pending_records
+                    if str((record or {}).get("url") or "").strip()
+                ]
+                ui_pending_records = [
+                    dict(record)
+                    for record in pending_records
+                    if not str((record or {}).get("url") or "").strip()
+                ]
+                if bulk_records:
+                    bulk_total = len(bulk_records)
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 일괄 실행 중... {bulk_total}개"
+                    )
+                    for bulk_index, record in enumerate(bulk_records, start=1):
+                        if self.isInterruptionRequested():
+                            result["error"] = "사용자 중단"
+                            self.done.emit(result)
+                            return
+
+                        name = str(record.get("name") or "").strip()
+                        try:
+                            launched = mac_open_recent_notebook_record(None, record)
+                        except Exception as e:
+                            launched = False
+                            failed_details.append(f"{name}: {e}")
+                        print(
+                            "[DBG][OPEN_ALL][MAC]",
+                            f"bulk-launched={launched}",
+                            f"{bulk_index}/{bulk_total}",
+                            f"name={name}",
+                        )
+                        if launched:
+                            result["opened_names"].append(name)
+                            result["opened_count"] += 1
+                        else:
+                            ui_pending_records.append(dict(record))
+
+                        # Avoid overwhelming OneNote/macOS URL dispatch, while still
+                        # keeping this path bulk-oriented instead of per-item UI waits.
+                        time.sleep(0.08)
+
+                    self.progress.emit(
+                        "실제 OneNote 전체 열기 일괄 실행 완료..."
+                        f" URL {result['opened_count']}개 요청"
+                    )
+                    time.sleep(1.5)
+                    pending_records = []
+                    total_targets = 0
+
+                if ui_pending_records:
+                    for record in ui_pending_records:
+                        name = str(record.get("name") or "").strip()
+                        if not name:
+                            continue
+                        failed_names.append(name)
+                        failed_details.append(
+                            f"{name}: macOS 일괄 열기에 사용할 URL을 찾지 못했습니다."
+                        )
+
+                for index, record in enumerate(pending_records, start=1):
+                    name = str(record.get("name") or "").strip()
+                    print(f"[DBG][OPEN_ALL][MAC] try-open {index}/{total_targets}: {name}")
+                    if self.isInterruptionRequested():
+                        result["error"] = "사용자 중단"
+                        self.done.emit(result)
+                        return
+
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 시도 - {name}"
+                    )
+                    try:
+                        opened = mac_open_recent_notebook_record(
+                            win,
+                            record,
+                            wait_for_visible=False,
+                        )
+                    except Exception as e:
+                        opened = False
+                        failed_details.append(f"{name}: {e}")
+                    print(f"[DBG][OPEN_ALL][MAC] launched={opened} name={name}")
+
+                    if not opened:
+                        failed_names.append(name)
+                        failed_records.append(dict(record))
+                        if not any(detail.startswith(f"{name}:") for detail in failed_details):
+                            failed_details.append(f"{name}: 최근 전자필기장 창에서 열기 실패")
+                        continue
+
+                    result["opened_names"].append(name)
+                    result["opened_count"] += 1
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 요청 완료 - {name}"
+                    )
+
+                if failed_records:
+                    retry_names = []
+                    retry_details = []
+                    retry_records = []
+                    seen_retry_keys = set()
+                    for record in failed_records:
+                        name = str(record.get("name") or "").strip()
+                        key = _normalize_notebook_name_key(name)
+                        if not key or key in seen_retry_keys:
+                            continue
+                        seen_retry_keys.add(key)
+                        retry_records.append(record)
+
+                    for retry_index, record in enumerate(retry_records, start=1):
+                        if self.isInterruptionRequested():
+                            result["error"] = "사용자 중단"
+                            self.done.emit(result)
+                            return
+
+                        name = str(record.get("name") or "").strip()
+                        self.progress.emit(
+                            "실제 OneNote 전체 열기 재시도 중... "
+                            f"{retry_index}/{len(retry_records)} - {name}"
+                        )
+                        if _is_macos_notebook_visible(name):
+                            result["opened_names"].append(name)
+                            result["opened_count"] += 1
+                            continue
+
+                        try:
+                            opened = mac_open_recent_notebook_record(
+                                win,
+                                record,
+                                wait_for_visible=False,
+                            )
+                        except Exception as e:
+                            opened = False
+                            retry_details.append(f"{name}: {e}")
+
+                        if opened:
+                            result["opened_names"].append(name)
+                            result["opened_count"] += 1
+                        else:
+                            retry_names.append(name)
+                            if not any(detail.startswith(f"{name}:") for detail in retry_details):
+                                retry_details.append(f"{name}: 재시도 후에도 열기 실패")
+
+                    failed_names = retry_names
+                    failed_details = retry_details
+
+                if failed_names:
+                    result["error"] = (
+                        f"최근 전자필기장 기반 열기 실패 {len(failed_names)}개 - "
+                        + "; ".join(failed_details[:3])
+                    )
+                    result["remaining_names"] = failed_names
+                    self.done.emit(result)
+                    return
+
+                restore_name = str(initial_notebook_name or "").strip()
+                restore_key = _normalize_notebook_name_key(restore_name)
+                restore_record = records_by_key.get(restore_key) if restore_key else None
+                if restore_record and str(restore_record.get("url") or "").strip():
+                    if mac_open_recent_notebook_record(None, restore_record):
+                        self.progress.emit(
+                            f"실제 OneNote 전체 열기 마무리 요청... 원래 전자필기장 복구 - {restore_name}"
+                        )
+
+                result["ok"] = True
+                result["remaining_names"] = []
+                self.done.emit(result)
+                return
+
             shortcut_targets = _collect_onenote_notebook_shortcuts()
+
             if shortcut_targets:
                 try:
                     open_names = {
@@ -3317,6 +4257,76 @@ class OpenAllNotebooksWorker(QThread):
             self.done.emit(result)
 
 
+class OpenNotebookRecordsWorker(QThread):
+    done = pyqtSignal(dict)
+
+    def __init__(self, sig: Dict[str, Any], parent=None):
+        super().__init__(parent)
+        self.sig = copy.deepcopy(sig or {})
+
+    def run(self):
+        result = {
+            "records": [],
+            "error": "",
+            "sig": copy.deepcopy(self.sig),
+            "source": "MAC_SIDEBAR" if IS_MACOS else "COM",
+        }
+        try:
+            ensure_pywinauto()
+            if not _pwa_ready:
+                result["error"] = "자동화 모듈이 로드되지 않았습니다."
+                self.done.emit(result)
+                return
+            if IS_MACOS and self.sig:
+                win = MacWindow(dict(self.sig))
+                records = [
+                    {"id": "", "name": name, "path": name}
+                    for name in mac_current_open_notebook_names(win)
+                    if str(name or "").strip()
+                ]
+                ax_debug = macos_last_ax_notebook_debug()
+                if (
+                    records
+                    and len(records) <= 1
+                    and ax_debug
+                    and ax_debug.get("reason") != "ok"
+                ):
+                    records = []
+                    result["error"] = (
+                        "macOS AX 직접 목록 조회가 현재 창 1개까지만 도달했습니다 "
+                        f"(trusted={ax_debug.get('trusted')}, "
+                        f"roots={ax_debug.get('roots')}, "
+                        f"groups={ax_debug.get('groups')}, "
+                        f"best={ax_debug.get('best_count')}, "
+                        f"reason={ax_debug.get('reason')})."
+                    )
+                    self.done.emit(result)
+                    return
+                if not records:
+                    if not macos_accessibility_is_trusted():
+                        result["error"] = (
+                            "macOS 손쉬운 사용 권한이 없어 OneNote 화면 목록을 읽지 못했습니다. "
+                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon을 허용해야 합니다."
+                        )
+                    elif ax_debug:
+                        result["error"] = (
+                            "macOS AX 직접 조회가 빈 결과입니다 "
+                            f"(trusted={ax_debug.get('trusted')}, "
+                            f"roots={ax_debug.get('roots')}, "
+                            f"groups={ax_debug.get('groups')}, "
+                            f"best={ax_debug.get('best_count')}, "
+                            f"reason={ax_debug.get('reason')})."
+                        )
+                if not records:
+                    records = _get_open_notebook_records_via_com(refresh=True)
+            else:
+                records = _get_open_notebook_records_via_com(refresh=True)
+            result["records"] = [dict(record) for record in records]
+        except Exception as e:
+            result["error"] = str(e)
+        self.done.emit(result)
+
+
 class CodexLocationLookupWorker(QThread):
     done = pyqtSignal(dict)
 
@@ -3329,7 +4339,19 @@ class CodexLocationLookupWorker(QThread):
         started_at = time.perf_counter()
         result = {"ok": False, "raw": "", "error": "", "elapsed_ms": 0}
         try:
-            result["raw"] = _run_powershell(self.script, timeout=self.timeout)
+            if IS_MACOS:
+                wins = [
+                    info
+                    for info in enumerate_macos_windows(filter_title_substr=None)
+                    if is_macos_onenote_window_info(info, os.getpid())
+                ]
+                wins.sort(key=lambda item: (not bool(item.get("frontmost")), item.get("title", "")))
+                if not wins:
+                    raise RuntimeError("열린 OneNote 창을 찾지 못했습니다.")
+                win = MacWindow(dict(wins[0]))
+                result["raw"] = macos_lookup_targets_json(win)
+            else:
+                result["raw"] = _run_powershell(self.script, timeout=self.timeout)
             result["ok"] = True
         except Exception as e:
             result["error"] = str(e)
@@ -3425,6 +4447,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._center_worker: Optional[CenterAfterActivateWorker] = None
         self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
         self._open_all_notebooks_worker: Optional[OpenAllNotebooksWorker] = None
+        self._open_notebooks_refresh_worker: Optional[OpenNotebookRecordsWorker] = None
         self._codex_location_lookup_worker: Optional[CodexLocationLookupWorker] = None
         self._retained_qthreads: List[QThread] = []
         self._center_request_seq = 0
@@ -3493,6 +4516,12 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._onenote_list_refresh_timer.setSingleShot(True)
         self._onenote_list_refresh_timer.timeout.connect(
             self._refresh_onenote_list_from_click
+        )
+        self._mac_empty_scan_retry_attempts = 0
+        self._mac_empty_scan_retry_timer = QTimer(self)
+        self._mac_empty_scan_retry_timer.setSingleShot(True)
+        self._mac_empty_scan_retry_timer.timeout.connect(
+            self._retry_onenote_list_after_empty_macos_scan
         )
 
         # --- [START] 창 위치 복원 및 유효성 검사 로직 (수정됨) ---
@@ -3597,9 +4626,14 @@ class OneNoteScrollRemoconApp(QMainWindow):
             self._load_buffers_and_favorites()
             self._boot_mark(f"_load_buffers_and_favorites done (+{(time.perf_counter()-t0)*1000.0:.1f}ms)")
 
-            # OneNote/pywinauto 쪽은 여기서부터 시작해도 충분 (필요 시 내부에서 ensure_pywinauto()가 또 호출됨)
-            QTimer.singleShot(0, self.refresh_onenote_list)
-            QTimer.singleShot(0, self._start_auto_reconnect)
+            # 저장된 연결이 있으면 자동 재연결을 먼저 끝내고, 목록은 그 결과에 맞춰 갱신한다.
+            # macOS에서 초기 스캔/재연결을 동시에 돌리면 잠깐 앱명만 보이거나 상태가 흔들릴 수 있다.
+            has_saved_sig = bool(self.settings.get("connection_signature"))
+            if has_saved_sig:
+                reconnect_delay_ms = 400 if IS_MACOS else 0
+                QTimer.singleShot(reconnect_delay_ms, self._start_auto_reconnect)
+            else:
+                QTimer.singleShot(0, self.refresh_onenote_list)
             self._boot_mark("timers scheduled")
 
             # FIX: 앱 시작 시 저장된 버퍼 기준으로 2패널 강제 리빌드
@@ -3624,7 +4658,10 @@ class OneNoteScrollRemoconApp(QMainWindow):
         except Exception:
             pass
 
-        self.connection_status_label.setText("준비됨 (자동 재연결 중...)")
+        if self.settings.get("connection_signature"):
+            self.connection_status_label.setText("준비됨 (자동 재연결 중...)")
+        else:
+            self.connection_status_label.setText("준비됨")
 
     def _ps_single_quoted(self, value: str) -> str:
         return "'" + (value or "").replace("'", "''") + "'"
@@ -4632,6 +5669,22 @@ $json
             pass
 
     def _codex_onenote_location_request_text(self) -> str:
+        if IS_MACOS:
+            return """작업:
+OneNote for Mac에서 현재 열려 있는 전자필기장, 섹션 그룹, 섹션, 현재 보이는 페이지 위치를 조회해줘.
+
+정리 방식:
+- 왼쪽 패널 기준으로 전자필기장별 섹션 그룹과 섹션을 계층형으로 정리한다.
+- 현재 선택된 섹션/페이지가 있으면 따로 표시한다.
+- 사용자가 복사해서 작업 지시로 쓸 수 있게 경로를 `전자필기장 > 섹션 그룹 > 섹션` 형식으로 적는다.
+
+보고:
+- 조회한 전자필기장 수
+- 섹션 그룹 수
+- 섹션 수
+- 현재 선택된 위치
+- 바로 작업 위치로 지정할 만한 후보 목록
+"""
         return """작업:
 OneNote에서 현재 열려 있는 전자필기장, 섹션 그룹, 섹션을 조회해줘.
 
@@ -4726,6 +5779,25 @@ $json
         except Exception:
             target = {}
         path = target.get("path") or "현재 선택된 작업 위치"
+        if IS_MACOS:
+            return f"""작업:
+아래 OneNote for Mac 작업 위치의 페이지 목록과 현재 보이는 페이지를 읽어줘.
+
+작업 위치:
+{path}
+
+정리 방식:
+- 현재 섹션의 페이지 제목 목록을 먼저 적는다.
+- 현재 열려 있는 페이지가 있으면 따로 표시한다.
+- 사용자가 이어서 작업할 만한 페이지 후보를 알려준다.
+- 특정 페이지 내용을 읽어야 하면 어떤 제목을 골라야 하는지 묻는다.
+
+보고:
+- 페이지 수
+- 페이지 제목 목록
+- 현재 열린 페이지
+- 다음에 읽을 만한 페이지 후보
+"""
         return f"""작업:
 아래 OneNote 작업 위치의 페이지 목록을 읽어줘.
 
@@ -4847,8 +5919,10 @@ $json
         except Exception:
             pass
 
-    def _codex_onenote_templates(self) -> Dict[str, str]:
-        values = self._codex_codegen_values()
+    def _codex_onenote_templates_windows(
+        self, values: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
+        values = values or self._codex_codegen_values()
         title = self._ps_single_quoted(values["title"])
         body = self._ps_single_quoted(values["body"])
         target = self._ps_single_quoted(values["target"])
@@ -5526,12 +6600,314 @@ $one.NavigateToUrl($url, $true)
 """,
         }
 
+    def _codex_onenote_templates_macos(
+        self, values: Dict[str, str]
+    ) -> Dict[str, str]:
+        target = values.get("target", "") or "현재 선택된 작업 위치"
+        title = values.get("title", "") or "(제목 없음)"
+        body = values.get("body", "") or "(본문 없음)"
+
+        def _manual(title_text: str, body_lines: List[str]) -> str:
+            content = "\n".join(f"- {line}" for line in body_lines if line)
+            return f"# OneNote macOS: {title_text}\n# 대상: {target}\n{content}\n"
+
+        return {
+            "add_page": _manual(
+                "페이지 추가",
+                [
+                    "Microsoft OneNote for Mac을 연다.",
+                    f"왼쪽 패널에서 `{target}` 위치를 찾는다. OneNote 조회 ON이면 해당 경로를 우선 사용한다.",
+                    "페이지 목록의 `페이지 추가` 버튼을 눌러 새 페이지를 만든다.",
+                    f"새 페이지 제목을 `{title}`로 입력한다.",
+                    f"본문을 아래 내용으로 붙여넣는다.\n\n{body}",
+                    "생성 후 같은 제목 페이지가 보이는지 확인한다.",
+                ],
+            ),
+            "add_section": _manual(
+                "새 섹션 생성",
+                [
+                    f"현재 전자필기장 또는 그룹 `{target}`을 연다.",
+                    "섹션 추가 버튼을 눌러 새 섹션을 만든다.",
+                    f"섹션 이름을 `{title}`로 지정한다.",
+                    "생성 후 왼쪽 섹션 목록에 같은 이름이 나타나는지 확인한다.",
+                ],
+            ),
+            "add_section_group": _manual(
+                "새 섹션 그룹 생성",
+                [
+                    f"대상 전자필기장 `{target}`에서 섹션 그룹을 만들 위치를 연다.",
+                    "macOS에서는 리본/컨텍스트 메뉴 UI 자동화로 섹션 그룹을 생성한다.",
+                    f"새 그룹 이름을 `{title}`로 입력한다.",
+                    "생성 후 왼쪽 패널에서 그룹이 보이는지 확인한다.",
+                ],
+            ),
+            "add_notebook": _manual(
+                "새 전자필기장 생성",
+                [
+                    f"새 전자필기장 저장 경로 또는 이름: `{target}`",
+                    "OneNote for Mac의 `파일 > 새 전자 필기장` 흐름으로 생성한다.",
+                    "OneDrive 또는 로컬 저장 위치를 명확히 확인한다.",
+                    "생성 후 해당 전자필기장이 열린 상태인지 확인한다.",
+                ],
+            ),
+            "list_hierarchy": _manual(
+                "계층 구조 조회",
+                [
+                    "현재 열린 OneNote for Mac 창에서 전자필기장/섹션 목록을 읽는다.",
+                    "결과는 JSON이나 구조화된 목록으로 정리한다.",
+                    "macOS에서는 COM ID 대신 경로 문자열을 우선 식별자로 사용한다.",
+                ],
+            ),
+            "read_section_pages": _manual(
+                "섹션 페이지 목록 읽기",
+                [
+                    f"대상 섹션 경로: `{target}`",
+                    f"제목 필터가 있으면 `{title}` 포함 여부로 페이지를 추린다.",
+                    "페이지 제목 목록과 보이는 순서를 정리한다.",
+                ],
+            ),
+            "read_page_xml": _manual(
+                "페이지 내용 읽기",
+                [
+                    f"대상 페이지 또는 URL: `{target}`",
+                    "macOS에서는 XML 대신 현재 페이지의 텍스트/구조를 읽어 요약하거나 원문을 추출한다.",
+                    "제목과 본문이 비어 있지 않은지 확인한다.",
+                ],
+            ),
+            "append_page_body": _manual(
+                "페이지 본문 추가",
+                [
+                    f"대상 페이지: `{target}`",
+                    f"추가할 본문:\n\n{body}",
+                    "현재 페이지 끝으로 이동해 본문을 추가한다.",
+                    "추가 후 마지막 단락이 실제로 반영됐는지 확인한다.",
+                ],
+            ),
+            "rename_page": _manual(
+                "페이지 제목 변경",
+                [
+                    f"대상 페이지: `{target}`",
+                    f"새 제목: `{title}`",
+                    "페이지 제목 영역을 수정한 뒤 새 제목이 목록과 본문 상단에 모두 반영됐는지 확인한다.",
+                ],
+            ),
+            "open_notebook": _manual(
+                "전자필기장 열기",
+                [
+                    f"대상 경로 또는 URL: `{target}`",
+                    "macOS에서는 `onenote:`/웹 링크/파일 경로를 열어 OneNote를 활성화한다.",
+                    "열린 뒤 왼쪽 패널에 전자필기장이 표시되는지 확인한다.",
+                ],
+            ),
+            "navigate_to_id": _manual(
+                "대상으로 이동",
+                [
+                    f"대상 입력값: `{target}`",
+                    "macOS에서는 ID 대신 경로 또는 `onenote:` URL을 우선 사용한다.",
+                    "이동 후 해당 전자필기장/섹션/페이지가 화면에 보이는지 확인한다.",
+                ],
+            ),
+            "find_pages": _manual(
+                "페이지 검색",
+                [
+                    f"검색어: `{title}`",
+                    "OneNote for Mac 검색 UI를 열고 검색어를 입력한다.",
+                    "검색 결과 페이지 제목과 위치를 최대 50개까지 정리한다.",
+                ],
+            ),
+            "get_object_link": _manual(
+                "앱 링크 생성",
+                [
+                    f"대상 경로 또는 페이지: `{target}`",
+                    "macOS에서는 가능한 경우 OneNote 앱 링크/공유 링크를 복사한다.",
+                    "직접 ID 링크를 만들 수 없으면 현재 페이지 공유 링크를 대체값으로 사용한다.",
+                ],
+            ),
+            "get_web_link": _manual(
+                "웹 링크 생성",
+                [
+                    f"대상 경로 또는 페이지: `{target}`",
+                    "공유/복사 링크 UI로 웹 링크를 가져온다.",
+                    "링크 생성 후 클립보드와 결과 텍스트를 함께 확인한다.",
+                ],
+            ),
+            "get_parent_id": _manual(
+                "상위 위치 조회",
+                [
+                    f"대상 경로: `{target}`",
+                    "macOS에서는 부모 ID 대신 `전자필기장 > 섹션 그룹 > 섹션` 경로를 반환한다.",
+                    "현재 선택 위치의 한 단계 상위 경로를 구조화해서 기록한다.",
+                ],
+            ),
+            "sync_hierarchy": _manual(
+                "계층 동기화",
+                [
+                    f"대상 경로: `{target}`",
+                    "OneNote for Mac에서 동기화 상태 메뉴를 열어 현재 전자필기장/페이지를 동기화한다.",
+                    "동기화 후 같은 위치를 다시 읽어 접근 가능한지 확인한다.",
+                ],
+            ),
+            "export_pdf": _manual(
+                "PDF 내보내기",
+                [
+                    f"대상 페이지/섹션: `{target}`",
+                    f"원하는 저장 경로가 있으면 `{body}`를 우선 사용한다.",
+                    "macOS 인쇄/내보내기 흐름으로 PDF를 저장한다.",
+                    "저장 후 파일이 실제로 생성됐는지 확인한다.",
+                ],
+            ),
+            "export_mhtml": _manual(
+                "MHTML 내보내기",
+                [
+                    f"대상 페이지/섹션: `{target}`",
+                    "OneNote for Mac에 MHTML 직접 내보내기가 없으면 HTML/PDF 대체 경로를 우선 검토한다.",
+                    "대체 형식을 사용했다면 결과와 제한점을 함께 보고한다.",
+                ],
+            ),
+            "export_xps": _manual(
+                "XPS 내보내기",
+                [
+                    f"대상 페이지/섹션: `{target}`",
+                    "macOS에는 XPS가 기본 형식이 아니므로 PDF 대체를 우선 사용한다.",
+                    "정말 XPS가 필요하면 변환 단계를 명시하고 결과를 검증한다.",
+                ],
+            ),
+            "get_special_locations": _manual(
+                "특수 위치 조회",
+                [
+                    "OneNote for Mac의 기본 전자필기장 위치, 최근 위치, 백업에 해당하는 사용자 접근 경로를 정리한다.",
+                    "macOS에서는 COM 특수 위치 API 대신 실제 앱/OneDrive 경로를 설명형으로 반환한다.",
+                ],
+            ),
+            "close_notebook": _manual(
+                "전자필기장 닫기",
+                [
+                    f"대상 전자필기장: `{target}`",
+                    "OneNote for Mac UI에서 해당 전자필기장을 닫는다.",
+                    "닫기 후 왼쪽 패널에서 사라졌는지 확인한다.",
+                ],
+            ),
+            "navigate_to_url": _manual(
+                "URL로 이동",
+                [
+                    f"대상 URL: `{target}`",
+                    "macOS 기본 열기 동작으로 URL을 실행한다.",
+                    "OneNote 앱 또는 브라우저에서 의도한 위치가 열리는지 확인한다.",
+                ],
+            ),
+        }
+
+    def _codex_onenote_templates_for_platform(
+        self,
+        platform_key: str,
+        values: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, str]:
+        values = values or self._codex_codegen_values()
+        if platform_key == CODEX_PLATFORM_MACOS:
+            return self._codex_onenote_templates_macos(values)
+        return self._codex_onenote_templates_windows(values)
+
+    def _codex_template_choice_defs(self, platform_key: str) -> List[Tuple[str, str]]:
+        windows_choices = [
+            ("페이지 추가", "add_page"),
+            ("새 섹션 생성", "add_section"),
+            ("새 섹션 그룹 생성", "add_section_group"),
+            ("새 전자필기장 생성", "add_notebook"),
+            ("계층 구조 조회", "list_hierarchy"),
+            ("섹션 페이지 목록 읽기", "read_section_pages"),
+            ("페이지 XML 읽기", "read_page_xml"),
+            ("페이지 본문 추가", "append_page_body"),
+            ("페이지 제목 변경", "rename_page"),
+            ("전자필기장 열기", "open_notebook"),
+            ("ID로 이동", "navigate_to_id"),
+            ("페이지 검색", "find_pages"),
+            ("링크 생성", "get_object_link"),
+            ("웹 링크 생성", "get_web_link"),
+            ("부모 ID 조회", "get_parent_id"),
+            ("계층 동기화", "sync_hierarchy"),
+            ("PDF 내보내기", "export_pdf"),
+            ("MHTML 내보내기", "export_mhtml"),
+            ("XPS 내보내기", "export_xps"),
+            ("특수 위치 조회", "get_special_locations"),
+            ("전자필기장 닫기", "close_notebook"),
+            ("URL로 이동", "navigate_to_url"),
+        ]
+        if platform_key != CODEX_PLATFORM_MACOS:
+            return windows_choices
+        return [
+            ("페이지 추가", "add_page"),
+            ("새 섹션 생성", "add_section"),
+            ("새 섹션 그룹 생성", "add_section_group"),
+            ("새 전자필기장 생성", "add_notebook"),
+            ("계층 구조 조회", "list_hierarchy"),
+            ("섹션 페이지 목록 읽기", "read_section_pages"),
+            ("페이지 내용 읽기", "read_page_xml"),
+            ("페이지 본문 추가", "append_page_body"),
+            ("페이지 제목 변경", "rename_page"),
+            ("전자필기장 열기", "open_notebook"),
+            ("경로/URL로 이동", "navigate_to_id"),
+            ("페이지 검색", "find_pages"),
+            ("앱 링크 생성", "get_object_link"),
+            ("웹 링크 생성", "get_web_link"),
+            ("상위 위치 조회", "get_parent_id"),
+            ("계층 동기화", "sync_hierarchy"),
+            ("PDF 내보내기", "export_pdf"),
+            ("특수 위치 조회", "get_special_locations"),
+            ("전자필기장 닫기", "close_notebook"),
+            ("URL로 이동", "navigate_to_url"),
+        ]
+
+    def _selected_codex_template_platform(self) -> str:
+        combo = getattr(self, "codex_template_platform_combo", None)
+        if combo is not None:
+            key = str(combo.currentData() or "").strip()
+            if key:
+                return key
+        return _codex_active_platform_key()
+
+    def _codex_template_platform_help_text(self, platform_key: str) -> str:
+        if platform_key == CODEX_PLATFORM_MACOS:
+            return (
+                "macOS 스킬은 OneNote for Mac의 왼쪽 패널, 섹션/페이지 구조, "
+                "접근성/UI 자동화를 기준으로 작성됩니다. Windows 스킬은 참고/혼합용으로 유지됩니다."
+            )
+        return (
+            "Windows 스킬은 OneNote COM API와 ID 기반 검증을 전제로 합니다. "
+            "macOS 스킬은 같은 화면에서 별도로 관리됩니다."
+        )
+
+    def _populate_codex_template_combo(self, platform_key: str) -> None:
+        combo = getattr(self, "codex_template_combo", None)
+        if combo is None:
+            return
+        previous_key = str(combo.currentData() or "").strip()
+        choices = self._codex_template_choice_defs(platform_key)
+        combo.blockSignals(True)
+        combo.clear()
+        selected_index = 0
+        for index, (label, key) in enumerate(choices):
+            combo.addItem(label, key)
+            if key == previous_key:
+                selected_index = index
+        combo.setCurrentIndex(selected_index)
+        combo.blockSignals(False)
+        self._set_label_text_if_changed(
+            getattr(self, "codex_template_scope_label", None),
+            self._codex_template_platform_help_text(platform_key),
+        )
+
+    def _on_codex_template_platform_changed(self) -> None:
+        self._populate_codex_template_combo(self._selected_codex_template_platform())
+        self._update_codex_template_preview()
+
     def _selected_codex_template_text(self) -> str:
         combo = getattr(self, "codex_template_combo", None)
         if combo is None:
             return ""
         key = combo.currentData()
-        return self._codex_onenote_templates().get(key, "")
+        return self._codex_onenote_templates_for_platform(
+            self._selected_codex_template_platform()
+        ).get(key, "")
 
     def _update_codex_template_preview(self) -> None:
         preview = getattr(self, "codex_template_preview", None)
@@ -5600,12 +6976,23 @@ $one.NavigateToUrl($url, $true)
         root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
         return os.path.join(root, "docs", "codex", "instructions")
 
-    def _codex_internal_instructions_path(self) -> str:
+    def _codex_internal_instructions_legacy_path(self) -> str:
         return os.path.join(self._codex_instructions_dir(), "onenote-com-internal.md")
+
+    def _codex_internal_instructions_path(
+        self, platform_key: Optional[str] = None
+    ) -> str:
+        platform_key = platform_key or _codex_active_platform_key()
+        filename = (
+            "onenote-macos-internal.md"
+            if platform_key == CODEX_PLATFORM_MACOS
+            else "onenote-windows-internal.md"
+        )
+        return os.path.join(self._codex_instructions_dir(), filename)
 
     def _codex_internal_reference_text(self) -> str:
         return (
-            "OneNote 조작 방식, 대상 판정, PowerShell 패턴, 안전 실행 순서, 검증 기준은 "
+            "OneNote 조작 방식, 대상 판정, 플랫폼별 스크립트/접근성 패턴, 안전 실행 순서, 검증 기준은 "
             "`docs/codex/instructions/`와 `docs/codex/onenote-targets.json`에서 "
             "필요할 때 조회한다. 사용자 요청문이나 작업 주문서에는 내부 지침 전문을 붙이지 않는다."
         )
@@ -5658,7 +7045,7 @@ $one.NavigateToUrl($url, $true)
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         return self._write_text_file_atomic(path, text)
 
-    def _codex_builtin_internal_instructions_text(self) -> str:
+    def _codex_builtin_internal_instructions_text_windows(self) -> str:
         return """# 코덱스 전용 OneNote 조작 지침
 
 이 문서는 사용자 스킬이 아니다. OneNote 작업을 수행하는 Codex가 항상 전제로 삼는 내부 실행 지침이다.
@@ -5669,16 +7056,16 @@ $one.NavigateToUrl($url, $true)
 2. 사용자 스킬은 글쓰기 형식과 정리 방식만 적용하고, OneNote 조작 방식은 이 폴더의 내부 지침에서 고른다.
 3. 대상은 명시된 ID, 저장된 대상 ID, 위치 캐시, 제한된 계층 조회 순서로 확정한다.
 4. 변경 전에는 작업 종류, 대상 경로, 대상 ID, 검증 방법을 먼저 확정한다.
-5. 완료 후 화면 상태가 아니라 `GetHierarchy` 또는 `GetPageContent` 결과로 검증한다.
+5. 완료 후에는 플랫폼에 맞는 조회 결과로 검증한다. Windows는 COM 결과, macOS는 접근성/UI 조회 결과를 우선 사용한다.
 6. 최종 보고에는 변경 항목, 대상, 검증 결과, 남은 확인 사항만 짧게 남긴다.
 
 ## 사용자 스킬과의 경계
 
 - 사용자 스킬에서는 `## Instructions`만 작업에 맞게 적용한다.
-- 사용자 요청문, 작업 주문서, 스킬 호출문에는 이 문서 전문이나 PowerShell 템플릿을 붙이지 않는다.
+- 사용자 요청문, 작업 주문서, 스킬 호출문에는 이 문서 전문이나 플랫폼 내부 템플릿을 붙이지 않는다.
 - 글쓰기 형식, 정리 방식, 이름 규칙처럼 요청마다 달라지는 기준은 사용자 스킬에 둔다.
-- COM 호출 순서, 대상 ID 우선순위, XML 수정 방식, 검증 절차는 코덱스 전용 지침에 둔다.
-- 사용자가 내부 구현 설명을 요청하지 않았다면 COM 세부 호출을 길게 설명하지 않는다.
+- 플랫폼별 호출 순서, 대상 ID/경로 우선순위, 본문 수정 방식, 검증 절차는 코덱스 전용 지침에 둔다.
+- 사용자가 내부 구현 설명을 요청하지 않았다면 COM/접근성 세부 호출을 길게 설명하지 않는다.
 
 ## 대상 판정 원칙
 
@@ -5691,8 +7078,9 @@ $one.NavigateToUrl($url, $true)
 
 ## 안전 실행 원칙
 
-- OneNote 조작은 화면 클릭 자동화보다 Windows OneNote COM API를 우선 사용한다.
-- PowerShell에서는 `New-Object -ComObject OneNote.Application`으로 연결한다.
+- Windows에서는 화면 클릭 자동화보다 OneNote COM API를 우선 사용한다.
+- macOS에서는 OneNote 접근성 트리와 UI 자동화를 우선 사용한다.
+- Windows PowerShell에서는 `New-Object -ComObject OneNote.Application`으로 연결한다.
 - 구조 탐색은 기본적으로 `GetHierarchy('', hsSections, ref xml)`까지만 사용한다.
 - `hsPages` 전체 조회는 페이지가 많으면 느리므로 페이지 복제, 페이지 목록 조회, 최종 페이지 수 검증처럼 필요한 경우에만 쓴다.
 - XML은 문자열 치환보다 XML 파서로 수정한다.
@@ -5741,6 +7129,87 @@ $one.NavigateToUrl($url, $true)
 - 사용자가 화면 확인을 요청한 경우에만 마지막에 `NavigateTo(...)`를 호출했다고 언급한다.
 """
 
+    def _codex_builtin_internal_instructions_text_macos(self) -> str:
+        return """# 코덱스 전용 OneNote 조작 지침 (macOS)
+
+이 문서는 사용자 스킬이 아니다. OneNote for Mac 작업을 수행하는 Codex가 항상 전제로 삼는 내부 실행 지침이다.
+
+## 적용 순서
+
+1. 사용자 요청에서 목표, 대상 경로, 출력 형식, 금지 조건, 주의 조건을 먼저 분리한다.
+2. 사용자 스킬은 글쓰기 형식과 정리 방식만 적용하고, OneNote 조작 방식은 이 문서와 작업별 템플릿에서 고른다.
+3. 대상은 명시 경로, 저장된 위치 캐시, 현재 열린 전자필기장/섹션, 제한된 UI 조회 순서로 확정한다.
+4. 변경 전에는 현재 보이는 전자필기장/섹션/페이지가 맞는지 먼저 확인한다.
+5. 완료 후에는 접근성/UI 조회 결과와 화면상 위치를 기준으로 검증한다.
+6. 최종 보고에는 변경 항목, 대상 경로, 검증 결과, 남은 확인 사항만 짧게 남긴다.
+
+## 사용자 스킬과의 경계
+
+- 사용자 스킬에서는 `## Instructions`만 작업에 맞게 적용한다.
+- 사용자 요청문, 작업 주문서, 스킬 호출문에는 이 문서 전문이나 내부 템플릿 전문을 붙이지 않는다.
+- 글쓰기 형식, 정리 방식, 이름 규칙처럼 요청마다 달라지는 기준은 사용자 스킬에 둔다.
+- OneNote for Mac의 접근성/UI 자동화 순서, 대상 경로 판정, 본문 수정 방식, 검증 절차는 코덱스 전용 지침에 둔다.
+- 사용자가 내부 구현 설명을 요청하지 않았다면 접근성 트리나 AppleScript 세부 호출을 길게 설명하지 않는다.
+
+## 대상 판정 원칙
+
+- 사용자가 경로 또는 전자필기장/섹션/페이지 이름을 직접 준 경우 상위 경로까지 함께 확인한다.
+- `docs/codex/onenote-targets.json`의 고정 대상이 있으면 위치 캐시보다 먼저 확인한다.
+- `docs/codex/onenote-location-cache.json`은 빠른 경로 후보로만 사용하고, 실패하면 실제 OneNote 화면에서 다시 확인한다.
+- macOS에서는 COM ID를 가정하지 않는다. 경로 문자열, 현재 열린 전자필기장 이름, 현재 선택된 섹션/페이지를 우선 식별자로 사용한다.
+- 이름만으로 대상을 확정하지 않는다. 같은 이름이 여러 개면 상위 전자필기장/섹션 그룹까지 맞는지 확인한다.
+
+## 안전 실행 원칙
+
+- OneNote for Mac에서는 접근성 트리와 UI 자동화를 우선 사용한다.
+- 가능한 경우 메뉴/단축키/표준 버튼을 먼저 사용하고, 좌표 클릭은 최후 수단으로만 사용한다.
+- 쓰기 작업 전에는 현재 선택 위치를 다시 읽어 대상이 맞는지 확인한다.
+- 페이지 생성, 섹션 생성, 제목 변경, 본문 추가 후에는 왼쪽 패널과 현재 본문에서 결과를 다시 확인한다.
+- 삭제, 덮어쓰기, 대량 이동, 대량 복제는 영향 범위를 다시 확인한 뒤 실행한다.
+- OneNote 동기화가 느리면 같은 쓰기 작업을 연속 반복하지 말고, 짧게 기다린 뒤 다시 읽어 검증한다.
+
+## 작업별 내부 문서
+
+- 페이지 추가/본문 추가/제목 변경: `onenote-com-templates.md`의 macOS 템플릿
+- 섹션 생성/섹션 그룹 생성: `onenote-com-templates.md`의 macOS 템플릿
+- 위치 판정/계층 읽기: `원노트-대상ID-찾기.md`와 저장된 위치 캐시
+- Windows 참고 문서: `onenote-com-playbook.md`, `onenote-windows-internal.md`
+
+## 빠른 라우팅
+
+- 페이지 추가는 현재 섹션을 열고 새 페이지를 만든 뒤 제목과 본문을 입력한다.
+- 섹션 생성은 대상 전자필기장 또는 섹션 그룹을 연 상태에서 새 섹션 UI를 사용한다.
+- 섹션 그룹 생성은 대상 전자필기장의 왼쪽 패널에서 그룹 생성 UI를 사용한다.
+- 전자필기장 열기는 `onenote:` 링크, 웹 링크, 파일 경로 중 가능한 값을 우선 사용한다.
+- 링크 생성은 앱 링크/공유 링크를 우선 사용하고, 직접 ID 링크를 요구하지 않는다.
+
+## 검증 기준
+
+- 페이지 추가/수정: 새 제목과 본문 일부가 현재 페이지와 목록에 모두 보이는지 확인한다.
+- 섹션 생성: 왼쪽 섹션 목록에 새 섹션 이름이 나타나는지 확인한다.
+- 섹션 그룹 생성: 전자필기장 패널에서 새 그룹이 나타나는지 확인한다.
+- 전자필기장 열기/닫기: 왼쪽 패널에서 해당 전자필기장이 나타나거나 사라졌는지 확인한다.
+- 내보내기: 저장 경로에 파일이 실제로 생성됐는지 확인한다.
+- 위치 캐시 갱신: 저장한 경로로 다시 읽었을 때 같은 전자필기장/섹션이 보이는지 확인한다.
+
+## 실패 대응
+
+- 실패하면 먼저 잘못된 대상 경로, 전자필기장 미오픈, 동기화 지연, 접근성 권한 문제를 구분한다.
+- 대상 찾기 실패 시 전체 창을 무한 탐색하지 말고 상위 전자필기장부터 제한적으로 다시 연다.
+- UI 구조가 예상과 다르면 현재 화면 구성을 다시 읽고, 가능한 다른 표준 경로를 한 번만 시도한다.
+- 쓰기 성공 여부가 애매하면 추가 쓰기를 하지 말고 조회/화면 검증부터 수행한다.
+
+## 보고 기준
+
+- 성공하면 만든/수정한 OneNote 항목, 대상 경로, 검증 결과만 간단히 보고한다.
+- 실패하면 대상 경로, 실패한 단계, 추정 원인, 다음 확인 값을 짧게 보고한다.
+"""
+
+    def _codex_builtin_internal_instructions_text(self) -> str:
+        if _codex_active_platform_key() == CODEX_PLATFORM_MACOS:
+            return self._codex_builtin_internal_instructions_text_macos()
+        return self._codex_builtin_internal_instructions_text_windows()
+
     def _codex_internal_instructions_text(self) -> str:
         path = self._codex_internal_instructions_path()
         try:
@@ -5756,9 +7225,22 @@ $one.NavigateToUrl($url, $true)
     def _ensure_codex_internal_instructions_file(self) -> str:
         path = self._codex_internal_instructions_path()
         if not os.path.exists(path):
+            legacy_path = self._codex_internal_instructions_legacy_path()
+            if (
+                _codex_active_platform_key() == CODEX_PLATFORM_WINDOWS
+                and os.path.exists(legacy_path)
+            ):
+                try:
+                    with open(legacy_path, "r", encoding="utf-8") as f:
+                        legacy_text = f.read().strip()
+                    if legacy_text:
+                        self._write_text_file_atomic(path, legacy_text + "\n")
+                        return path
+                except Exception:
+                    pass
             self._write_text_file_atomic(
                 path,
-                self._codex_builtin_internal_instructions_text(),
+                self._codex_builtin_internal_instructions_text() + "\n",
             )
         return path
 
@@ -5806,7 +7288,7 @@ $one.NavigateToUrl($url, $true)
     def _open_codex_instructions_folder(self) -> None:
         try:
             os.makedirs(self._codex_instructions_dir(), exist_ok=True)
-            os.startfile(self._codex_instructions_dir())
+            open_path_in_system(self._codex_instructions_dir())
         except Exception as e:
             QMessageBox.warning(self, "코덱스 전용 지침 폴더 열기 실패", str(e))
 
@@ -6370,21 +7852,21 @@ $one.NavigateToUrl($url, $true)
             QMessageBox.information(self, "안내", "먼저 스킬을 선택하세요.")
             return
         try:
-            os.startfile(path)
+            open_path_in_system(path)
         except Exception as e:
             QMessageBox.warning(self, "스킬 파일 열기 실패", str(e))
 
     def _open_codex_skills_folder(self) -> None:
         try:
             os.makedirs(self._codex_skills_dir(), exist_ok=True)
-            os.startfile(self._codex_skills_dir())
+            open_path_in_system(self._codex_skills_dir())
         except Exception as e:
             QMessageBox.warning(self, "스킬 폴더 열기 실패", str(e))
 
     def _open_codex_requests_folder(self) -> None:
         try:
             os.makedirs(self._codex_requests_dir(), exist_ok=True)
-            os.startfile(self._codex_requests_dir())
+            open_path_in_system(self._codex_requests_dir())
         except Exception as e:
             QMessageBox.warning(self, "주문서 폴더 열기 실패", str(e))
 
@@ -6999,7 +8481,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             QMessageBox.information(self, "안내", "먼저 작업 주문서를 선택하세요.")
             return
         try:
-            os.startfile(path)
+            open_path_in_system(path)
         except Exception as e:
             QMessageBox.warning(self, "작업 주문서 열기 실패", str(e))
 
@@ -8774,34 +10256,42 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         layout.setContentsMargins(12, 10, 12, 12)
         layout.setSpacing(8)
 
-        header = QLabel("📄 OneNote 작업 양식")
+        header = QLabel("📄 플랫폼별 OneNote 작업 양식")
         header.setObjectName("CodexCardTitle")
         layout.addWidget(header)
 
+        subtitle = QLabel(
+            "Windows OneNote COM 기준 스킬과 macOS OneNote 화면/UI 기준 스킬을 분리해서 관리합니다."
+        )
+        subtitle.setObjectName("CodexPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        platform_row = QHBoxLayout()
+        platform_row.setSpacing(6)
+        platform_row.addWidget(QLabel("스킬 플랫폼"))
+        self.codex_template_platform_combo = WheelSafeComboBox()
+        for key, label in _codex_platform_variants():
+            self.codex_template_platform_combo.addItem(f"{label} 스킬", key)
+        default_platform = _codex_active_platform_key()
+        default_index = max(
+            0,
+            self.codex_template_platform_combo.findData(default_platform),
+        )
+        self.codex_template_platform_combo.setCurrentIndex(default_index)
+        self.codex_template_platform_combo.currentIndexChanged.connect(
+            self._on_codex_template_platform_changed
+        )
+        platform_row.addWidget(self.codex_template_platform_combo, stretch=1)
+        layout.addLayout(platform_row)
+
+        self.codex_template_scope_label = QLabel("")
+        self.codex_template_scope_label.setObjectName("CodexPageSubtitle")
+        self.codex_template_scope_label.setWordWrap(True)
+        layout.addWidget(self.codex_template_scope_label)
+
         row = QHBoxLayout()
         self.codex_template_combo = WheelSafeComboBox()
-        self.codex_template_combo.addItem("페이지 추가", "add_page")
-        self.codex_template_combo.addItem("새 섹션 생성", "add_section")
-        self.codex_template_combo.addItem("새 섹션 그룹 생성", "add_section_group")
-        self.codex_template_combo.addItem("새 전자필기장 생성", "add_notebook")
-        self.codex_template_combo.addItem("계층 구조 조회", "list_hierarchy")
-        self.codex_template_combo.addItem("섹션 페이지 목록 읽기", "read_section_pages")
-        self.codex_template_combo.addItem("페이지 XML 읽기", "read_page_xml")
-        self.codex_template_combo.addItem("페이지 본문 추가", "append_page_body")
-        self.codex_template_combo.addItem("페이지 제목 변경", "rename_page")
-        self.codex_template_combo.addItem("전자필기장 열기", "open_notebook")
-        self.codex_template_combo.addItem("ID로 이동", "navigate_to_id")
-        self.codex_template_combo.addItem("페이지 검색", "find_pages")
-        self.codex_template_combo.addItem("링크 생성", "get_object_link")
-        self.codex_template_combo.addItem("웹 링크 생성", "get_web_link")
-        self.codex_template_combo.addItem("부모 ID 조회", "get_parent_id")
-        self.codex_template_combo.addItem("계층 동기화", "sync_hierarchy")
-        self.codex_template_combo.addItem("PDF 내보내기", "export_pdf")
-        self.codex_template_combo.addItem("MHTML 내보내기", "export_mhtml")
-        self.codex_template_combo.addItem("XPS 내보내기", "export_xps")
-        self.codex_template_combo.addItem("특수 위치 조회", "get_special_locations")
-        self.codex_template_combo.addItem("전자필기장 닫기", "close_notebook")
-        self.codex_template_combo.addItem("URL로 이동", "navigate_to_url")
         self.codex_template_combo.currentIndexChanged.connect(self._update_codex_template_preview)
         row.addWidget(self.codex_template_combo, stretch=1)
 
@@ -8815,6 +10305,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.codex_template_preview.setReadOnly(True)
         self.codex_template_preview.setMinimumHeight(140)
         layout.addWidget(self.codex_template_preview)
+        self._populate_codex_template_combo(default_platform)
         self._update_codex_template_preview()
 
         return card
@@ -9072,7 +10563,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         layout.addWidget(header)
 
         help_label = QLabel(
-            "OneNote COM 사용 방식, 대상 판정, 안전 실행 순서, 검증 기준처럼 사용자가 매번 볼 필요 없는 실행 전제를 관리합니다."
+            (
+                "OneNote for Mac 접근성/UI 자동화, 대상 경로 판정, 안전 실행 순서, 검증 기준처럼 "
+                "사용자가 매번 볼 필요 없는 실행 전제를 관리합니다."
+                if IS_MACOS
+                else "OneNote COM 사용 방식, 대상 판정, 안전 실행 순서, 검증 기준처럼 사용자가 매번 볼 필요 없는 실행 전제를 관리합니다."
+            )
         )
         help_label.setObjectName("CodexPageSubtitle")
         help_label.setWordWrap(True)
@@ -9252,46 +10748,92 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         return card
 
 
-    def _codex_skill_package_default_codex_skills(self) -> List[str]:
-        return [
-            "페이지 추가",
-            "전자필기장 추가",
-            "전자필기장 삭제",
-            "섹션 추가",
-            "섹션 그룹 추가",
-            "페이지 읽기",
-            "페이지 XML 읽기",
-            "페이지 본문 추가",
-            "페이지 제목 변경",
-            "섹션 페이지 목록 읽기",
-            "계층 구조 조회",
-            "위치 조회",
-            "전자필기장 열기",
-            "ID로 이동",
-            "페이지 검색",
-            "링크 생성",
-            "웹 링크 생성",
-            "부모 ID 조회",
-            "계층 동기화",
-            "PDF 내보내기",
-            "MHTML 내보내기",
-            "XPS 내보내기",
-            "특수 위치 조회",
-            "전자필기장 닫기",
-            "URL로 이동",
-        ]
+    def _codex_skill_package_default_codex_skills_by_platform(
+        self,
+    ) -> Dict[str, List[str]]:
+        return {
+            CODEX_PLATFORM_WINDOWS: [
+                "페이지 추가",
+                "전자필기장 추가",
+                "전자필기장 삭제",
+                "섹션 추가",
+                "섹션 그룹 추가",
+                "페이지 읽기",
+                "페이지 XML 읽기",
+                "페이지 본문 추가",
+                "페이지 제목 변경",
+                "섹션 페이지 목록 읽기",
+                "계층 구조 조회",
+                "위치 조회",
+                "전자필기장 열기",
+                "ID로 이동",
+                "페이지 검색",
+                "링크 생성",
+                "웹 링크 생성",
+                "부모 ID 조회",
+                "계층 동기화",
+                "PDF 내보내기",
+                "MHTML 내보내기",
+                "XPS 내보내기",
+                "특수 위치 조회",
+                "전자필기장 닫기",
+                "URL로 이동",
+            ],
+            CODEX_PLATFORM_MACOS: [
+                "페이지 추가",
+                "전자필기장 추가",
+                "섹션 추가",
+                "섹션 그룹 추가",
+                "페이지 읽기",
+                "페이지 본문 추가",
+                "페이지 제목 변경",
+                "섹션 페이지 목록 읽기",
+                "계층 구조 조회",
+                "위치 조회",
+                "전자필기장 열기",
+                "페이지 검색",
+                "앱 링크 생성",
+                "웹 링크 생성",
+                "상위 위치 조회",
+                "계층 동기화",
+                "PDF 내보내기",
+                "특수 위치 조회",
+                "전자필기장 닫기",
+                "URL로 이동",
+            ],
+        }
+
+    def _codex_skill_package_default_codex_skills(
+        self, platform_key: Optional[str] = None
+    ) -> List[str]:
+        platform_key = platform_key or _codex_active_platform_key()
+        return list(
+            self._codex_skill_package_default_codex_skills_by_platform().get(
+                platform_key, []
+            )
+        )
 
     def _codex_skill_package_default_instructions(self) -> List[str]:
-        return [
+        common = [
             "사용자 요청에서 목표, 대상, 출력 형식, 금지 조건을 먼저 분리",
             "사용자 스킬은 글쓰기/정리 형식에만 적용",
             "OneNote 조작은 코덱스 전용 지침과 작업별 내부 문서를 우선",
-            "명시 ID, 저장 대상 ID, 위치 캐시, 제한 계층 조회 순서로 대상 확정",
-            "OneNote COM API 우선, 화면 클릭 자동화는 최후 수단",
+            "명시 ID 또는 저장된 위치 후보를 우선 확인",
             "삭제, 덮어쓰기, 대량 작업은 영향 범위 확인 후 실행",
+            "실패 시 단계, 대상, 추정 원인, 다음 확인 값을 보고",
+        ]
+        if _codex_active_platform_key() == CODEX_PLATFORM_MACOS:
+            return common + [
+                "OneNote for Mac 접근성/UI 자동화를 우선 사용",
+                "현재 보이는 전자필기장/섹션/페이지 경로를 먼저 확인",
+                "쓰기 직후 왼쪽 패널과 현재 본문에서 결과를 다시 검증",
+                "ID 대신 경로/URL/현재 선택 위치를 우선 식별자로 사용",
+            ]
+        return common + [
+            "OneNote COM API 우선, 화면 클릭 자동화는 최후 수단",
+            "명시 ID, 저장 대상 ID, 위치 캐시, 제한 계층 조회 순서로 대상 확정",
             "쓰기 직후 GetHierarchy 또는 GetPageContent로 자동 검증",
             "ID 실패 시 전체 탐색보다 상위 대상부터 제한 재조회",
-            "실패 시 단계, 대상 ID, 추정 원인, 다음 확인 값을 보고",
         ]
 
     def _codex_text_lines_from_widget(self, widget: Optional[QTextEdit]) -> List[str]:
@@ -9378,6 +10920,13 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             getattr(self, "codex_skill_package_user_skill_list", None)
         )
 
+    def _codex_skill_package_platform_list_widget(
+        self, platform_key: str
+    ) -> Optional[QListWidget]:
+        if platform_key == CODEX_PLATFORM_MACOS:
+            return getattr(self, "codex_skill_package_macos_skill_list", None)
+        return getattr(self, "codex_skill_package_windows_skill_list", None)
+
     def _populate_codex_skill_package_user_skill_choices(
         self, checked_values: Optional[List[str]] = None
     ) -> None:
@@ -9433,134 +10982,188 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             [str(item) for item in skills or [] if str(item).strip()]
         )
 
-    def _codex_selected_package_codex_skills(self) -> List[str]:
-        selected: List[str] = []
-        skill_list = getattr(self, "codex_skill_package_codex_skill_list", None)
-        if skill_list is not None:
-            selected.extend(self._codex_checked_list_values(skill_list))
-        for text in self._codex_text_lines_from_widget(
-            getattr(self, "codex_skill_package_extra_skills_editor", None)
-        ):
-            if text not in selected:
-                selected.append(text)
-        return selected
-
-    def _set_codex_package_codex_skills(self, skills: List[str]) -> None:
-        known = set(self._codex_skill_package_default_codex_skills())
-        selected = set(skills or [])
-        skill_list = getattr(self, "codex_skill_package_codex_skill_list", None)
-        if skill_list is not None:
-            skill_list.blockSignals(True)
-            for i in range(skill_list.count()):
-                item = skill_list.item(i)
-                value = str(item.data(Qt.ItemDataRole.UserRole) or item.text()).strip()
-                item.setCheckState(
-                    Qt.CheckState.Checked
-                    if value in selected or item.text() in selected
-                    else Qt.CheckState.Unchecked
-                )
-            skill_list.blockSignals(False)
-        extras = [skill for skill in skills or [] if skill not in known]
-        self._set_codex_text_lines(
-            getattr(self, "codex_skill_package_extra_skills_editor", None),
-            extras,
+    def _codex_selected_package_codex_skills_for_platform(
+        self, platform_key: str
+    ) -> List[str]:
+        return self._codex_checked_list_values(
+            self._codex_skill_package_platform_list_widget(platform_key)
         )
+
+    def _codex_selected_package_extra_skills(self) -> List[str]:
+        return self._codex_text_lines_from_widget(
+            getattr(self, "codex_skill_package_extra_skills_editor", None)
+        )
+
+    def _set_codex_package_platform_skills(
+        self, platform_key: str, skills: List[str]
+    ) -> None:
+        selected = {
+            _canonical_codex_platform_skill(platform_key, str(skill))
+            for skill in skills or []
+            if str(skill).strip()
+        }
+        skill_list = self._codex_skill_package_platform_list_widget(platform_key)
+        if skill_list is None:
+            return
+        skill_list.blockSignals(True)
+        for i in range(skill_list.count()):
+            item = skill_list.item(i)
+            value = _canonical_codex_platform_skill(
+                platform_key,
+                str(item.data(Qt.ItemDataRole.UserRole) or item.text()),
+            )
+            label = _canonical_codex_platform_skill(platform_key, item.text())
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if value in selected or label in selected
+                else Qt.CheckState.Unchecked
+            )
+        skill_list.blockSignals(False)
 
     def _codex_skill_package_templates(self) -> Dict[str, Dict[str, Any]]:
         default_instructions = self._codex_skill_package_default_instructions()
+        active_platform = _codex_active_platform_key()
+
+        def package(
+            name: str,
+            description: str,
+            user_skills: List[str],
+            active_skills: List[str],
+            extra_instructions: Optional[List[str]] = None,
+        ) -> Dict[str, Any]:
+            windows_skills = (
+                list(active_skills) if active_platform == CODEX_PLATFORM_WINDOWS else []
+            )
+            macos_skills = (
+                list(active_skills) if active_platform == CODEX_PLATFORM_MACOS else []
+            )
+            return {
+                "version": 2,
+                "name": name,
+                "description": description,
+                "user_skills": user_skills,
+                "codex_skills_windows": windows_skills,
+                "codex_skills_macos": macos_skills,
+                "codex_skills_extra": [],
+                "codex_skills": list(active_skills),
+                "instructions": default_instructions + list(extra_instructions or []),
+            }
+
         return {
-            "quick_note": {
-                "version": 1,
-                "name": "기본 메모 패키지",
-                "description": "사용자 글쓰기 형태에 맞춰 OneNote 페이지를 빠르게 추가하는 기본 패키지입니다.",
-                "user_skills": ["SK-001"],
-                "codex_skills": ["페이지 추가"],
-                "instructions": default_instructions,
-            },
-            "work_log": {
-                "version": 1,
-                "name": "업무 기록 패키지",
-                "description": "업무 메모를 정리하고 필요한 경우 기존 페이지를 읽어 맥락을 이어가는 패키지입니다.",
-                "user_skills": ["SK-001"],
-                "codex_skills": ["페이지 추가", "페이지 읽기", "페이지 본문 추가"],
-                "instructions": default_instructions
-                + ["결과는 업무 기록 형식으로 정리", "다음 행동은 체크리스트로 분리"],
-            },
-            "notebook_admin": {
-                "version": 1,
-                "name": "전자필기장 관리 패키지",
-                "description": "전자필기장 추가, 삭제, 위치 확인 같은 관리 작업을 안전하게 실행하는 패키지입니다.",
-                "user_skills": [],
-                "codex_skills": [
-                    "전자필기장 추가",
-                    "전자필기장 삭제",
-                    "전자필기장 열기",
-                    "전자필기장 닫기",
-                    "계층 구조 조회",
-                    "계층 동기화",
-                    "특수 위치 조회",
-                    "위치 조회",
-                ],
-                "instructions": default_instructions
-                + ["삭제 작업은 실행 전 대상 ID를 재확인", "작업 전후 계층 구조를 비교"],
-            },
-            "meeting_note": {
-                "version": 1,
-                "name": "회의 정리 패키지",
-                "description": "회의 내용을 OneNote 페이지로 만들고 결정 사항과 후속 작업을 분리하는 패키지입니다.",
-                "user_skills": ["SK-001"],
-                "codex_skills": ["페이지 추가", "페이지 읽기", "섹션 페이지 목록 읽기"],
-                "instructions": default_instructions
-                + ["결정 사항과 할 일을 분리", "담당자와 기한이 있으면 본문에 유지"],
-            },
-            "page_maintenance": {
-                "version": 1,
-                "name": "페이지 유지보수 패키지",
-                "description": "기존 페이지를 읽고 본문 추가, 제목 변경, 이동까지 이어서 처리하는 패키지입니다.",
-                "user_skills": [],
-                "codex_skills": [
-                    "페이지 XML 읽기",
-                    "페이지 본문 추가",
-                    "페이지 제목 변경",
-                    "링크 생성",
-                    "웹 링크 생성",
-                    "부모 ID 조회",
-                    "ID로 이동",
-                ],
-                "instructions": default_instructions
-                + ["대상 Page ID를 먼저 확인", "수정 전후 Page XML을 비교"],
-            },
-            "search_export": {
-                "version": 1,
-                "name": "검색과 내보내기 패키지",
-                "description": "OneNote에서 페이지를 찾고 링크를 만들거나 PDF로 내보내는 조회 중심 패키지입니다.",
-                "user_skills": [],
-                "codex_skills": [
-                    "페이지 검색",
-                    "섹션 페이지 목록 읽기",
-                    "링크 생성",
-                    "웹 링크 생성",
-                    "PDF 내보내기",
-                    "MHTML 내보내기",
-                ],
-                "instructions": default_instructions
-                + ["검색 결과는 최대 50개까지만 보고", "내보내기 파일 경로를 보고에 남김"],
-            },
-            "sharing_export": {
-                "version": 1,
-                "name": "공유와 내보내기 패키지",
-                "description": "OneNote 항목의 앱 링크/웹 링크를 만들고 PDF, MHTML, XPS로 내보내는 패키지입니다.",
-                "user_skills": [],
-                "codex_skills": [
-                    "링크 생성",
-                    "웹 링크 생성",
-                    "PDF 내보내기",
-                    "MHTML 내보내기",
-                    "XPS 내보내기",
-                ],
-                "instructions": default_instructions
-                + ["내보내기 대상 ID와 저장 경로를 보고", "생성된 링크는 클립보드 복사 여부를 확인"],
-            },
+            "quick_note": package(
+                "기본 메모 패키지",
+                "사용자 글쓰기 형태에 맞춰 OneNote 페이지를 빠르게 추가하는 기본 패키지입니다.",
+                ["SK-001"],
+                ["페이지 추가"],
+            ),
+            "work_log": package(
+                "업무 기록 패키지",
+                "업무 메모를 정리하고 필요한 경우 기존 페이지를 읽어 맥락을 이어가는 패키지입니다.",
+                ["SK-001"],
+                ["페이지 추가", "페이지 읽기", "페이지 본문 추가"],
+                ["결과는 업무 기록 형식으로 정리", "다음 행동은 체크리스트로 분리"],
+            ),
+            "notebook_admin": package(
+                "전자필기장 관리 패키지",
+                "전자필기장 추가, 위치 확인, 열기/닫기 같은 관리 작업을 안전하게 실행하는 패키지입니다.",
+                [],
+                (
+                    [
+                        "전자필기장 추가",
+                        "전자필기장 삭제",
+                        "전자필기장 열기",
+                        "전자필기장 닫기",
+                        "계층 구조 조회",
+                        "계층 동기화",
+                        "특수 위치 조회",
+                        "위치 조회",
+                    ]
+                    if active_platform == CODEX_PLATFORM_WINDOWS
+                    else [
+                        "전자필기장 추가",
+                        "전자필기장 열기",
+                        "전자필기장 닫기",
+                        "계층 구조 조회",
+                        "계층 동기화",
+                        "특수 위치 조회",
+                        "위치 조회",
+                    ]
+                ),
+                ["작업 전후 계층 구조를 비교"],
+            ),
+            "meeting_note": package(
+                "회의 정리 패키지",
+                "회의 내용을 OneNote 페이지로 만들고 결정 사항과 후속 작업을 분리하는 패키지입니다.",
+                ["SK-001"],
+                ["페이지 추가", "페이지 읽기", "섹션 페이지 목록 읽기"],
+                ["결정 사항과 할 일을 분리", "담당자와 기한이 있으면 본문에 유지"],
+            ),
+            "page_maintenance": package(
+                "페이지 유지보수 패키지",
+                "기존 페이지를 읽고 본문 추가, 제목 변경, 이동까지 이어서 처리하는 패키지입니다.",
+                [],
+                (
+                    [
+                        "페이지 XML 읽기",
+                        "페이지 본문 추가",
+                        "페이지 제목 변경",
+                        "링크 생성",
+                        "웹 링크 생성",
+                        "부모 ID 조회",
+                        "ID로 이동",
+                    ]
+                    if active_platform == CODEX_PLATFORM_WINDOWS
+                    else [
+                        "페이지 읽기",
+                        "페이지 본문 추가",
+                        "페이지 제목 변경",
+                        "앱 링크 생성",
+                        "웹 링크 생성",
+                        "상위 위치 조회",
+                        "URL로 이동",
+                    ]
+                ),
+                (
+                    ["대상 Page ID를 먼저 확인", "수정 전후 Page XML을 비교"]
+                    if active_platform == CODEX_PLATFORM_WINDOWS
+                    else ["현재 선택 페이지와 제목을 먼저 확인", "수정 후 화면에서 다시 검증"]
+                ),
+            ),
+            "search_export": package(
+                "검색과 내보내기 패키지",
+                "OneNote에서 페이지를 찾고 링크를 만들거나 PDF로 내보내는 조회 중심 패키지입니다.",
+                [],
+                (
+                    [
+                        "페이지 검색",
+                        "섹션 페이지 목록 읽기",
+                        "링크 생성",
+                        "웹 링크 생성",
+                        "PDF 내보내기",
+                        "MHTML 내보내기",
+                    ]
+                    if active_platform == CODEX_PLATFORM_WINDOWS
+                    else [
+                        "페이지 검색",
+                        "섹션 페이지 목록 읽기",
+                        "앱 링크 생성",
+                        "웹 링크 생성",
+                        "PDF 내보내기",
+                    ]
+                ),
+                ["검색 결과는 최대 50개까지만 보고", "내보내기 파일 경로를 보고에 남김"],
+            ),
+            "sharing_export": package(
+                "공유와 내보내기 패키지",
+                "OneNote 항목의 앱 링크/웹 링크를 만들고 내보내기를 정리하는 패키지입니다.",
+                [],
+                (
+                    ["링크 생성", "웹 링크 생성", "PDF 내보내기", "MHTML 내보내기", "XPS 내보내기"]
+                    if active_platform == CODEX_PLATFORM_WINDOWS
+                    else ["앱 링크 생성", "웹 링크 생성", "PDF 내보내기"]
+                ),
+                ["내보내기 대상과 저장 경로를 보고", "생성된 링크는 클립보드 복사 여부를 확인"],
+            ),
         }
 
     def _apply_codex_skill_package_template(self) -> None:
@@ -9578,11 +11181,21 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             pass
 
     def _default_codex_skill_package(self) -> Dict[str, Any]:
+        active_platform = _codex_active_platform_key()
         return {
-            "version": 1,
+            "version": 2,
             "name": "기본 원노트 하네스",
-            "description": "OneNote에 새 페이지를 만들고 사용자 스킬 형식에 맞춰 기록할 때 쓰는 기본 패키지입니다.",
+            "description": (
+                "현재 플랫폼 기준 OneNote 작업 흐름으로 새 페이지를 만들고 사용자 스킬 형식에 맞춰 기록할 때 쓰는 기본 패키지입니다."
+            ),
             "user_skills": ["SK-001"],
+            "codex_skills_windows": ["페이지 추가"]
+            if active_platform == CODEX_PLATFORM_WINDOWS
+            else [],
+            "codex_skills_macos": ["페이지 추가"]
+            if active_platform == CODEX_PLATFORM_MACOS
+            else [],
+            "codex_skills_extra": [],
             "codex_skills": ["페이지 추가"],
             "instructions": self._codex_skill_package_default_instructions(),
         }
@@ -9592,12 +11205,26 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         desc_editor = getattr(self, "codex_skill_package_desc_editor", None)
         name = name_input.text().strip() if name_input is not None else ""
         desc = desc_editor.toPlainText().strip() if desc_editor is not None else ""
+        windows_skills = self._codex_selected_package_codex_skills_for_platform(
+            CODEX_PLATFORM_WINDOWS
+        )
+        macos_skills = self._codex_selected_package_codex_skills_for_platform(
+            CODEX_PLATFORM_MACOS
+        )
+        extra_skills = self._codex_selected_package_extra_skills()
+        combined: List[str] = []
+        for skill in windows_skills + macos_skills + extra_skills:
+            if skill and skill not in combined:
+                combined.append(skill)
         return {
-            "version": 1,
+            "version": 2,
             "name": name or "새 스킬 패키지",
             "description": desc,
             "user_skills": self._codex_selected_package_user_skills(),
-            "codex_skills": self._codex_selected_package_codex_skills(),
+            "codex_skills_windows": windows_skills,
+            "codex_skills_macos": macos_skills,
+            "codex_skills_extra": extra_skills,
+            "codex_skills": combined,
             "instructions": self._codex_text_lines_from_widget(
                 getattr(self, "codex_skill_package_instructions_editor", None)
             ),
@@ -9615,8 +11242,25 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self._set_codex_package_user_skills(
             [str(item) for item in package.get("user_skills", [])]
         )
-        self._set_codex_package_codex_skills(
-            [str(item) for item in package.get("codex_skills", [])]
+        legacy_skills = [str(item) for item in package.get("codex_skills", [])]
+        windows_skills = package.get("codex_skills_windows")
+        macos_skills = package.get("codex_skills_macos")
+        extra_skills = package.get("codex_skills_extra")
+        if windows_skills is None and macos_skills is None and extra_skills is None:
+            windows_skills = legacy_skills
+            macos_skills = []
+            extra_skills = []
+        self._set_codex_package_platform_skills(
+            CODEX_PLATFORM_WINDOWS,
+            [str(item) for item in windows_skills or []],
+        )
+        self._set_codex_package_platform_skills(
+            CODEX_PLATFORM_MACOS,
+            [str(item) for item in macos_skills or []],
+        )
+        self._set_codex_text_lines(
+            getattr(self, "codex_skill_package_extra_skills_editor", None),
+            [str(item) for item in extra_skills or []],
         )
         self._set_codex_text_lines(
             getattr(self, "codex_skill_package_instructions_editor", None),
@@ -9631,7 +11275,21 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         name = str(package.get("name") or "새 스킬 패키지")
         description = str(package.get("description") or "").strip()
         user_skills = [str(item) for item in package.get("user_skills", []) if str(item).strip()]
-        codex_skills = [str(item) for item in package.get("codex_skills", []) if str(item).strip()]
+        windows_skills = [
+            str(item)
+            for item in package.get("codex_skills_windows", [])
+            if str(item).strip()
+        ]
+        macos_skills = [
+            str(item)
+            for item in package.get("codex_skills_macos", [])
+            if str(item).strip()
+        ]
+        extra_skills = [
+            str(item)
+            for item in package.get("codex_skills_extra", [])
+            if str(item).strip()
+        ]
         instructions = [str(item) for item in package.get("instructions", []) if str(item).strip()]
 
         def bullet(items: List[str], fallback: str) -> str:
@@ -9646,9 +11304,17 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
 {bullet(user_skills, "사용자 스킬 미지정")}
 
-## 코덱스 스킬
+## Windows 코덱스 스킬
 
-{bullet(codex_skills, "코덱스 스킬 미지정")}
+{bullet(windows_skills, "Windows 스킬 미지정")}
+
+## macOS 코덱스 스킬
+
+{bullet(macos_skills, "macOS 스킬 미지정")}
+
+## 추가/혼합 스킬
+
+{bullet(extra_skills, "추가 스킬 미지정")}
 
 ## 코덱스 지침
 
@@ -9658,6 +11324,8 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
 이 스킬 패키지를 적용해서 현재 OneNote 작업 요청을 처리한다.
 사용자 스킬은 결과물의 글쓰기 형태와 에이전트 역할에만 적용한다.
+현재 실행 플랫폼은 `{_codex_platform_display_name(_codex_active_platform_key())}` 기준으로 우선 적용한다.
+다른 플랫폼 스킬 섹션은 참고/혼합용으로 유지한다.
 코덱스 스킬과 코덱스 지침은 OneNote 작업 실행 방식과 검증 기준으로 적용한다.
 """
 
@@ -9810,7 +11478,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
     def _open_codex_skill_packages_folder(self) -> None:
         try:
             os.makedirs(self._codex_skill_packages_dir(), exist_ok=True)
-            os.startfile(self._codex_skill_packages_dir())
+            open_path_in_system(self._codex_skill_packages_dir())
         except Exception as e:
             QMessageBox.warning(self, "스킬 패키지 폴더 열기 실패", str(e))
 
@@ -9827,8 +11495,8 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         layout.addWidget(header)
 
         desc = QLabel(
-            "사용자 스킬, 코덱스 스킬, 실행 지침을 하나의 템플릿처럼 묶어 저장합니다. "
-            "각 항목은 여러 개를 넣을 수 있습니다."
+            "사용자 스킬, Windows 코덱스 스킬, macOS 코덱스 스킬, 실행 지침을 하나의 템플릿처럼 묶어 저장합니다. "
+            "윈도우 자료는 유지하고 맥 흐름을 따로 확장하는 구조입니다."
         )
         desc.setObjectName("CodexPageSubtitle")
         desc.setWordWrap(True)
@@ -9895,42 +11563,61 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         form.addWidget(QLabel("사용자 스킬"), 2, 0)
         form.addWidget(self.codex_skill_package_user_skill_list, 2, 1)
 
-        self.codex_skill_package_codex_skill_list = QListWidget()
-        self.codex_skill_package_codex_skill_list.setSelectionMode(
+        self.codex_skill_package_windows_skill_list = QListWidget()
+        self.codex_skill_package_windows_skill_list.setSelectionMode(
             QAbstractItemView.SelectionMode.NoSelection
         )
-        self.codex_skill_package_codex_skill_list.setMinimumHeight(92)
-        for name in self._codex_skill_package_default_codex_skills():
-            self.codex_skill_package_codex_skill_list.addItem(
+        self.codex_skill_package_windows_skill_list.setMinimumHeight(108)
+        for name in self._codex_skill_package_default_codex_skills(
+            CODEX_PLATFORM_WINDOWS
+        ):
+            self.codex_skill_package_windows_skill_list.addItem(
                 self._make_codex_checkable_item(name, name)
             )
-        self.codex_skill_package_codex_skill_list.itemChanged.connect(
+        self.codex_skill_package_windows_skill_list.itemChanged.connect(
             self._schedule_codex_skill_package_preview
         )
-        form.addWidget(QLabel("코덱스 스킬"), 3, 0)
-        form.addWidget(self.codex_skill_package_codex_skill_list, 3, 1)
+        form.addWidget(QLabel("Windows 스킬"), 3, 0)
+        form.addWidget(self.codex_skill_package_windows_skill_list, 3, 1)
+
+        self.codex_skill_package_macos_skill_list = QListWidget()
+        self.codex_skill_package_macos_skill_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.NoSelection
+        )
+        self.codex_skill_package_macos_skill_list.setMinimumHeight(108)
+        for name in self._codex_skill_package_default_codex_skills(
+            CODEX_PLATFORM_MACOS
+        ):
+            self.codex_skill_package_macos_skill_list.addItem(
+                self._make_codex_checkable_item(name, name)
+            )
+        self.codex_skill_package_macos_skill_list.itemChanged.connect(
+            self._schedule_codex_skill_package_preview
+        )
+        form.addWidget(QLabel("macOS 스킬"), 4, 0)
+        form.addWidget(self.codex_skill_package_macos_skill_list, 4, 1)
 
         self.codex_skill_package_extra_skills_editor = QTextEdit()
         self.codex_skill_package_extra_skills_editor.setMinimumHeight(54)
         self.codex_skill_package_extra_skills_editor.setPlaceholderText(
-            "목록에 없는 코덱스 스킬을 한 줄에 하나씩 추가"
+            "혼합 운영용 추가 스킬을 한 줄에 하나씩 추가"
         )
         self.codex_skill_package_extra_skills_editor.textChanged.connect(
             self._schedule_codex_skill_package_preview
         )
-        form.addWidget(QLabel("추가 스킬"), 4, 0)
-        form.addWidget(self.codex_skill_package_extra_skills_editor, 4, 1)
+        form.addWidget(QLabel("추가/혼합"), 5, 0)
+        form.addWidget(self.codex_skill_package_extra_skills_editor, 5, 1)
 
         self.codex_skill_package_instructions_editor = QTextEdit()
         self.codex_skill_package_instructions_editor.setMinimumHeight(96)
         self.codex_skill_package_instructions_editor.setPlaceholderText(
-            "코덱스 지침을 한 줄에 하나씩 입력. 예: 대상 ID 우선, 쓰기 직후 자동 검증"
+            "코덱스 지침을 한 줄에 하나씩 입력. 예: 현재 보이는 위치 먼저 확인, 쓰기 직후 자동 검증"
         )
         self.codex_skill_package_instructions_editor.textChanged.connect(
             self._schedule_codex_skill_package_preview
         )
-        form.addWidget(QLabel("코덱스 지침"), 5, 0)
-        form.addWidget(self.codex_skill_package_instructions_editor, 5, 1)
+        form.addWidget(QLabel("코덱스 지침"), 6, 0)
+        form.addWidget(self.codex_skill_package_instructions_editor, 6, 1)
 
         layout.addLayout(form)
 
@@ -10248,7 +11935,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             left_width = min(max(int(total * 0.42), 390), 610)
             if total - left_width < 420:
                 left_width = max(300, total - 420)
-            status_name = "위치정렬"
+            status_name = _remocon_workspace_tab_title()
 
         right_width = max(260, total - left_width)
         main_splitter.setSizes([left_width, right_width])
@@ -10324,7 +12011,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         )
 
         remocon_btn = QToolButton()
-        remocon_btn.setText("위치정렬 폭")
+        remocon_btn.setText(f"{_remocon_workspace_tab_title()} 폭")
         remocon_btn.clicked.connect(
             lambda: self._select_workspace_splitter_preset("remocon")
         )
@@ -10387,12 +12074,13 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
     def _build_codex_tab(self, section: str) -> QWidget:
         root = QWidget()
         root.setObjectName("CodexRoot")
+        codex_font_stack = _platform_ui_font_stack()
         root.setStyleSheet(
             """
             QWidget#CodexRoot {
                 background-color: #111316;
                 color: #E2E2E6;
-                font-family: 'Segoe UI', 'Malgun Gothic';
+                font-family: __FONT_STACK__;
             }
             QWidget#CodexSidePanel {
                 background-color: #0C0E11;
@@ -10593,6 +12281,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 background-color: #1E2023;
             }
             """
+            .replace("__FONT_STACK__", codex_font_stack)
         )
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -10721,7 +12410,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             page_package, package_layout = make_scroll_page(
                 "SKILL PACKAGE",
                 "스킬 패키지",
-                "사용자 스킬과 코덱스 실행 자료를 하나의 요청 묶음으로 관리합니다.",
+                (
+                    "사용자 스킬과 Windows/macOS 코덱스 실행 자료를 하나의 요청 묶음으로 관리합니다."
+                    if IS_MACOS
+                    else "사용자 스킬과 코덱스 실행 자료를 하나의 요청 묶음으로 관리합니다."
+                ),
             )
             self.codex_skill_package_widget = self._build_codex_skill_package_group()
             package_layout.addWidget(self.codex_skill_package_widget)
@@ -10742,7 +12435,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             page_codex_skills, codex_skills_layout = make_scroll_page(
                 "CODEX SKILLS",
                 "코덱스 스킬",
-                "페이지 추가, 전자필기장 추가 같은 OneNote 실행 템플릿을 관리합니다.",
+                (
+                    "Windows OneNote COM 스킬과 macOS OneNote 화면/UI 스킬을 나눠 관리합니다."
+                    if IS_MACOS
+                    else "페이지 추가, 전자필기장 추가 같은 OneNote 실행 템플릿을 관리합니다."
+                ),
             )
             self.codex_template_group_widget = self._build_codex_template_group()
             codex_skills_layout.addWidget(self.codex_template_group_widget)
@@ -10752,7 +12449,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             page_instructions, instructions_layout = make_scroll_page(
                 "CODEX INSTRUCTIONS",
                 "코덱스 지침",
-                "OneNote COM API 우선, 대상 ID 우선, 안전 실행 순서, 자동 검증 기준을 관리합니다.",
+                (
+                    "OneNote for Mac 접근성/UI 우선, 경로/현재 선택 위치 우선, 안전 실행 순서, 자동 검증 기준을 관리합니다."
+                    if IS_MACOS
+                    else "OneNote COM API 우선, 대상 ID 우선, 안전 실행 순서, 자동 검증 기준을 관리합니다."
+                ),
             )
             self.codex_internal_instructions_widget = self._build_codex_internal_instructions_group()
             instructions_layout.addWidget(self.codex_internal_instructions_widget)
@@ -10872,12 +12573,14 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         dialog = QDialog(self)
         dialog.setWindowTitle("원노트 하네스 도움말")
         dialog.resize(780, 680)
+        help_font_stack = _platform_ui_font_stack()
+        help_html_font_stack = _platform_ui_font_stack(include_generic=True)
         dialog.setStyleSheet(
             """
             QDialog {
                 background-color: #111316;
                 color: #E2E2E6;
-                font-family: 'Malgun Gothic', 'Segoe UI';
+                font-family: __FONT_STACK__;
             }
             QTextEdit {
                 background-color: #0C0E11;
@@ -10900,6 +12603,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 background-color: #95C743;
             }
             """
+            .replace("__FONT_STACK__", help_font_stack)
         )
 
         layout = QVBoxLayout(dialog)
@@ -10909,6 +12613,32 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         help_view = QTextEdit(dialog)
         help_view.setReadOnly(True)
         help_view.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        help_codex_skill_desc = (
+            "Codex가 실제로 수행할 OneNote for Mac 작업입니다. Windows 스킬과 분리해서 관리합니다."
+            if IS_MACOS
+            else "Codex가 실제로 수행할 OneNote 작업입니다."
+        )
+        help_codex_skill_tags = (
+            """
+                        <span class="tag">macOS 스킬</span>
+                        <span class="tag">왼쪽 패널 기준</span>
+                        <span class="tag">섹션/페이지 UI</span>
+            """
+            if IS_MACOS
+            else """
+                        <span class="tag">페이지 추가</span>
+                        <span class="tag">전자필기장 추가</span>
+                        <span class="tag">전자필기장 삭제</span>
+            """
+        )
+        help_instruction_primary = (
+            "OneNote for Mac 접근성/UI 우선"
+            if IS_MACOS
+            else "OneNote COM API 우선"
+        )
+        help_instruction_secondary = (
+            "경로/현재 선택 위치 우선" if IS_MACOS else "대상 ID 우선"
+        )
         help_view.setHtml(
             """
             <html>
@@ -10919,7 +12649,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                     padding: 0;
                     background: #0C0E11;
                     color: #E2E2E6;
-                    font-family: 'Malgun Gothic', 'Segoe UI', sans-serif;
+                    font-family: __FONT_STACK__;
                     font-size: 13px;
                     line-height: 1.55;
                 }
@@ -11042,11 +12772,9 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
                 <div class="section">
                     <h2>코덱스 스킬</h2>
-                    <p>Codex가 실제로 수행할 OneNote 작업입니다.</p>
+                    <p>__CODEX_SKILL_DESC__</p>
                     <div class="tags">
-                        <span class="tag">페이지 추가</span>
-                        <span class="tag">전자필기장 추가</span>
-                        <span class="tag">전자필기장 삭제</span>
+__CODEX_SKILL_TAGS__
                     </div>
                 </div>
 
@@ -11054,8 +12782,8 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                     <h2>코덱스 지침</h2>
                     <p>Codex가 OneNote 작업을 안전하게 실행하기 위한 내부 실행 기준입니다.</p>
                     <div class="tags">
-                        <span class="tag tag-accent">OneNote COM API 우선</span>
-                        <span class="tag">대상 ID 우선</span>
+                        <span class="tag tag-accent">__PRIMARY_INSTRUCTION__</span>
+                        <span class="tag">__SECONDARY_INSTRUCTION__</span>
                         <span class="tag">작업별 안전 실행 순서</span>
                         <span class="tag">완료 후 자동 검증</span>
                         <span class="tag">실패 시 단계와 원인 보고</span>
@@ -11078,6 +12806,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             </body>
             </html>
             """
+            .replace("__FONT_STACK__", help_html_font_stack)
+            .replace("__CODEX_SKILL_DESC__", help_codex_skill_desc)
+            .replace("__CODEX_SKILL_TAGS__", help_codex_skill_tags)
+            .replace("__PRIMARY_INSTRUCTION__", help_instruction_primary)
+            .replace("__SECONDARY_INSTRUCTION__", help_instruction_secondary)
         )
         layout.addWidget(help_view)
 
@@ -11087,8 +12820,27 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         dialog.exec()
 
+    def _show_app_info(self) -> None:
+        app_path = os.path.abspath(QApplication.applicationFilePath() or sys.executable)
+        if IS_MACOS and ".app/" in app_path:
+            app_path = app_path.split(".app/", 1)[0] + ".app"
+        settings_path = _get_settings_file_path()
+        QMessageBox.information(
+            self,
+            "앱 정보",
+            (
+                "OneNote Remocon\n\n"
+                f"버전: {APP_VERSION}\n"
+                f"빌드: {APP_BUILD_VERSION}\n"
+                f"플랫폼: {'macOS' if IS_MACOS else 'Windows' if IS_WINDOWS else sys.platform}\n"
+                f"실행 경로: {app_path}\n"
+                f"설정 JSON: {settings_path}\n"
+                f"설정 모드: {_settings_path_mode_label()}"
+            ),
+        )
+
     def init_ui(self, initial_status):
-        self.setWindowTitle("OneNote 전자필기장 위치정렬")
+        self.setWindowTitle(_main_window_title())
 
         # --- 메뉴바 생성 ---
         menubar = self.menuBar()
@@ -11138,10 +12890,28 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.open_all_notebooks_action.setEnabled(False)
         special_menu.addAction(self.open_all_notebooks_action)
 
+        self.refresh_open_notebooks_action = QAction(
+            "현재 열린 전자필기장 종합 새로고침", self
+        )
+        self.refresh_open_notebooks_action.setStatusTip(
+            "macOS OneNote 사이드바의 열린 전자필기장 목록을 백그라운드로 수집해 종합에 반영합니다."
+        )
+        self.refresh_open_notebooks_action.triggered.connect(
+            lambda: self._register_all_notebooks_from_current_onenote(force=True)
+        )
+        self.refresh_open_notebooks_action.setEnabled(False)
+        special_menu.addAction(self.refresh_open_notebooks_action)
+
         help_menu = menubar.addMenu("&도움말")
         onenote_harness_help_action = QAction("원노트 하네스 도움말", self)
         onenote_harness_help_action.triggered.connect(self._show_onenote_harness_help)
         help_menu.addAction(onenote_harness_help_action)
+        help_menu.addSeparator()
+
+        app_info_action = QAction("앱 정보", self)
+        app_info_action.setMenuRole(QAction.MenuRole.AboutRole)
+        app_info_action.triggered.connect(self._show_app_info)
+        help_menu.addAction(app_info_action)
 
         # --- 스타일시트 정의 (생략) ---
         COLOR_BACKGROUND = "#2E2E2E"
@@ -11157,14 +12927,15 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         COLOR_LIST_BG = "#252525"
         COLOR_LIST_SELECTED = "#0078D7"
         COLOR_STATUS_BAR = "#252525"
+        app_font_stack = _platform_ui_font_stack()
 
         self.setStyleSheet(
             f"""
             QWidget {{
                 background-color: {COLOR_BACKGROUND};
                 color: {COLOR_PRIMARY_TEXT};
-                font-family: 'Malgun Gothic';
-                font-size: 10pt;
+                font-family: {app_font_stack};
+                font-size: 11pt;
             }}
             QGroupBox {{
                 background-color: {COLOR_GROUPBOX_BG};
@@ -11245,7 +13016,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 background-color: {COLOR_STATUS_BAR};
                 color: {COLOR_PRIMARY_TEXT};
                 padding: 5px 12px;
-                font-size: 9pt;
+                font-size: 10pt;
                 border-top: 1px solid #444444;
             }}
             QLineEdit {{
@@ -11333,25 +13104,25 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         buffer_layout.setContentsMargins(0, 0, 0, 0)
         buffer_layout.setSpacing(8)
 
-        buffer_group = QGroupBox("프로젝트/등록 영역")
+        buffer_group = QGroupBox(_buffer_group_title())
         buffer_group_layout = QVBoxLayout(buffer_group)
 
         # 즐겨찾기 버퍼 상단 툴바: 추가, 이름변경
         buffer_toolbar_top_layout = QHBoxLayout()
         self.btn_add_buffer_group = QToolButton()
-        self.btn_add_buffer_group.setText("그룹")
+        self.btn_add_buffer_group.setText(_buffer_group_add_label())
         self.btn_add_buffer_group.clicked.connect(self._add_buffer_group)
 
         self.btn_add_buffer = QToolButton()
-        self.btn_add_buffer.setText("버퍼")
+        self.btn_add_buffer.setText(_buffer_item_add_label())
         self.btn_add_buffer.clicked.connect(self._add_buffer)
 
         self.btn_rename_buffer = QToolButton()
-        self.btn_rename_buffer.setText("이름변경")
+        self.btn_rename_buffer.setText(_rename_button_label())
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
 
         self.btn_register_all_notebooks = QToolButton()
-        self.btn_register_all_notebooks.setText("종합 새로고침")
+        self.btn_register_all_notebooks.setText(_register_all_notebooks_button_label())
         self.btn_register_all_notebooks.setToolTip(
             "현재 열린 OneNote 전자필기장 목록을 다시 읽고 미분류/분류 상태를 한 번에 갱신합니다."
         )
@@ -11429,7 +13200,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
-        fav_group = QGroupBox("모듈영역")
+        fav_group = QGroupBox(_favorites_group_title())
         fav_layout = QVBoxLayout(fav_group)
 
         # 툴바 - 1행: 그룹추가, 현재 전자필기장 추가, 이름 바꾸기
@@ -11438,12 +13209,17 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.btn_add_group.setText("그룹 추가")
         self.btn_add_group.clicked.connect(self._add_group)
         self.btn_add_section_current = QToolButton()
-        self.btn_add_section_current.setText("현재 전자필기장 추가")
+        self.btn_add_section_current.setText(_current_add_button_label())
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
+        self.btn_activate_favorite = QToolButton()
+        self.btn_activate_favorite.setText(_favorite_activate_button_label())
+        self.btn_activate_favorite.clicked.connect(self._activate_current_favorite_item)
+        self.btn_activate_favorite.setEnabled(False)
         self.btn_rename = QToolButton()
-        self.btn_rename.setText("이름바꾸기")
+        self.btn_rename.setText(_rename_button_label())
         self.btn_rename.clicked.connect(self._rename_favorite_item)
         tb1_layout.addWidget(self.btn_add_section_current)
+        tb1_layout.addWidget(self.btn_activate_favorite)
         tb1_layout.addWidget(self.btn_rename)
         tb1_layout.addStretch(1)
 
@@ -11541,6 +13317,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         fav_layout.addLayout(move_buttons_layout)
 
         self.fav_tree.itemSelectionChanged.connect(self._update_move_button_state)
+        self.fav_tree.itemSelectionChanged.connect(self._sync_favorite_action_buttons)
         self.fav_tree.itemSelectionChanged.connect(
             self._sync_codex_target_from_current_fav_item
         )
@@ -11555,12 +13332,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
 
-        connection_group = QGroupBox("OneNote 창 목록")
+        connection_group = QGroupBox(_connection_group_title())
         connection_layout = QVBoxLayout(connection_group)
 
         list_header_layout = QHBoxLayout()
         list_header_layout.addWidget(
-            QLabel("더블클릭하여 연결 및 중앙 정렬"),
+            QLabel(_onenote_list_hint_text()),
             alignment=Qt.AlignmentFlag.AlignLeft,
         )
         list_header_layout.addStretch()
@@ -11573,6 +13350,17 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.refresh_button.clicked.connect(self.refresh_onenote_list)
         list_header_layout.addWidget(self.refresh_button)
 
+        self.connect_selected_list_button = QPushButton("선택 연결")
+        connect_icon = self.style().standardIcon(
+            QApplication.style().StandardPixmap.SP_ArrowForward
+        )
+        self.connect_selected_list_button.setIcon(QIcon(connect_icon))
+        self.connect_selected_list_button.clicked.connect(
+            self._connect_selected_onenote_list_item
+        )
+        self.connect_selected_list_button.setEnabled(False)
+        list_header_layout.addWidget(self.connect_selected_list_button)
+
         connection_layout.addLayout(list_header_layout)
 
         self.onenote_list_widget = QListWidget()
@@ -11582,13 +13370,19 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.onenote_list_widget.itemDoubleClicked.connect(
             self.connect_and_center_from_list_item
         )
+        self.onenote_list_widget.itemActivated.connect(
+            self.connect_and_center_from_list_item
+        )
+        self.onenote_list_widget.itemSelectionChanged.connect(
+            self._sync_onenote_list_action_buttons
+        )
         connection_layout.addWidget(self.onenote_list_widget)
         right_layout.addWidget(connection_group)
 
-        actions_group = QGroupBox("현재 열린 항목 제어")
+        actions_group = QGroupBox(_current_actions_group_title())
         actions_layout = QVBoxLayout(actions_group)
 
-        self.center_button = QPushButton("현재 선택된 전자필기장 중앙으로 정렬")
+        self.center_button = QPushButton(_primary_restore_button_text())
         center_icon = self.style().standardIcon(
             QApplication.style().StandardPixmap.SP_ArrowRight
         )
@@ -11626,19 +13420,17 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         right_layout.addWidget(actions_group)
 
-        search_group = QGroupBox("검색 / 위치정렬")
+        search_group = QGroupBox(_search_group_title())
         search_group_layout = QVBoxLayout(search_group)
         search_group_layout.setSpacing(8)
 
-        project_search_label = QLabel("프로젝트 검색")
+        project_search_label = QLabel(_project_search_label_text())
         project_search_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         search_group_layout.addWidget(project_search_label)
 
         module_search_layout = QHBoxLayout()
         self.module_project_search_input = QLineEdit()
-        self.module_project_search_input.setPlaceholderText(
-            "프로젝트/등록영역 + 모듈영역 검색 (띄어쓰기 무시)..."
-        )
+        self.module_project_search_input.setPlaceholderText(_project_search_placeholder_text())
         self.module_project_search_input.setClearButtonEnabled(True)
         self.module_project_search_input.textChanged.connect(
             self._schedule_project_buffer_search_highlight
@@ -11654,9 +13446,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         module_search_layout.addStretch(1)
         search_group_layout.addLayout(module_search_layout)
 
-        project_search_hint = QLabel(
-            "입력한 글자가 포함된 항목은 프로젝트/등록영역과 모듈영역에 하이라이트로 표시됩니다."
-        )
+        project_search_hint = QLabel(_project_search_hint_text())
         project_search_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         project_search_hint.setWordWrap(True)
         project_search_hint.setStyleSheet("color: #B8B8B8; font-size: 9pt;")
@@ -11674,7 +13464,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self._active_workspace_splitter_mode = "remocon"
         self.remocon_workspace_tabs = QTabWidget()
         self.remocon_workspace_tabs.setObjectName("RemoconWorkspaceTabs")
-        self.remocon_workspace_tabs.addTab(right_panel, "위치정렬")
+        self.remocon_workspace_tabs.addTab(right_panel, _remocon_workspace_tab_title())
         self.remocon_workspace_tabs.addTab(self._build_codex_tab("remocon"), "원노트 리모컨")
         self.remocon_workspace_tabs.addTab(self._build_codex_tab("harness"), "원노트 하네스")
         self.remocon_workspace_tabs.currentChanged.connect(
@@ -11685,6 +13475,9 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         self.connection_status_label = QLabel(initial_status)
         self.statusBar().addPermanentWidget(self.connection_status_label)
+        self.version_status_label = QLabel(f"v{APP_VERSION} ({APP_BUILD_VERSION})")
+        self.version_status_label.setToolTip("앱 버전 / 빌드")
+        self.statusBar().addPermanentWidget(self.version_status_label)
         self.statusBar().setStyleSheet(f"background-color: {COLOR_STATUS_BAR};")
 
         # --- [START] 스플리터 상태 복원 로직 (수정됨) ---
@@ -11778,6 +13571,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             "_center_worker",
             "_favorite_activation_worker",
             "_open_all_notebooks_worker",
+            "_open_notebooks_refresh_worker",
             "_codex_location_lookup_worker",
         ]:
             t = getattr(self, attr, None)
@@ -11843,8 +13637,16 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             self._open_all_notebooks_worker
             and self._open_all_notebooks_worker.isRunning()
         )
+        refresh_open_busy = bool(
+            self._open_notebooks_refresh_worker
+            and self._open_notebooks_refresh_worker.isRunning()
+        )
         if hasattr(self, "open_all_notebooks_action"):
             self.open_all_notebooks_action.setEnabled(is_connected and not open_all_busy)
+        if hasattr(self, "refresh_open_notebooks_action"):
+            self.refresh_open_notebooks_action.setEnabled(
+                is_connected and not refresh_open_busy
+            )
 
     def _capture_onenote_list_selection_key(self):
         item = None
@@ -11901,6 +13703,95 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         except Exception:
             return None
         return None
+
+    def _coerce_macos_window(self, window: Optional[object] = None) -> Optional[MacWindow]:
+        if not IS_MACOS:
+            return None
+        candidate = window or getattr(self, "onenote_window", None)
+        if candidate is None:
+            return None
+        if isinstance(candidate, MacWindow):
+            return candidate
+        try:
+            info = getattr(candidate, "info", None)
+        except Exception:
+            info = None
+        if isinstance(info, dict) and info:
+            try:
+                return MacWindow(dict(info))
+            except Exception:
+                pass
+
+        rebuilt: Dict[str, Any] = {}
+        for key, attr_name in (
+            ("handle", "handle"),
+            ("pid", "process_id"),
+            ("title", "window_text"),
+            ("bundle_id", "bundle_id"),
+            ("class_name", "class_name"),
+            ("app_name", "app_name"),
+        ):
+            try:
+                value = getattr(candidate, attr_name)
+                value = value() if callable(value) else value
+            except Exception:
+                value = None
+            if value not in (None, "", 0):
+                rebuilt[key] = value
+        if rebuilt:
+            try:
+                return MacWindow(rebuilt)
+            except Exception:
+                pass
+
+        try:
+            sig = build_window_signature_quick(candidate)
+        except Exception:
+            sig = {}
+        if isinstance(sig, dict) and sig:
+            try:
+                resolved = resolve_window_target(sig)
+                if isinstance(resolved, MacWindow):
+                    return resolved
+            except Exception:
+                pass
+            try:
+                return MacWindow(dict(sig))
+            except Exception:
+                pass
+        return None
+
+    def _mac_selected_outline_context(
+        self, window: Optional[object] = None
+    ) -> Dict[str, str]:
+        if not IS_MACOS:
+            return {}
+        win = self._coerce_macos_window(window)
+        if win is None:
+            return {}
+        try:
+            try:
+                win.set_focus()
+                time.sleep(0.08)
+            except Exception:
+                pass
+            return mac_current_outline_context(win)
+        except Exception as e:
+            print(f"[WARN] 맥 현재 위치 조회 실패: {e}")
+            return {}
+
+    def _restore_macos_page_context(self, page_text: str) -> bool:
+        if not IS_MACOS:
+            return False
+        text = str(page_text or "").strip()
+        win = self._coerce_macos_window(getattr(self, "onenote_window", None))
+        if not text or win is None:
+            return False
+        try:
+            return mac_select_page_row_by_text(win, text)
+        except Exception as e:
+            print(f"[WARN] 맥 페이지 복구 실패: {e}")
+            return False
 
     def _is_sig_same_as_connected_window(self, sig: Dict[str, Any]) -> bool:
         if not sig or not getattr(self, "onenote_window", None):
@@ -11976,17 +13867,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             win = self.onenote_window
         else:
             direct_source = "direct_connect"
-            win = None
-            handle = sig.get("handle")
-            if handle:
-                try:
-                    candidate = Desktop(backend="uia").window(handle=handle)
-                    if candidate.is_visible():
-                        win = candidate
-                except Exception:
-                    win = None
-            if win is None:
-                win = reacquire_window_by_signature(sig)
+            win = resolve_window_target(sig)
             if win is None:
                 return False
             self.onenote_window = win
@@ -12079,17 +13960,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             win = self.onenote_window
         else:
             direct_source = "direct_connect"
-            win = None
-            handle = sig.get("handle")
-            if handle:
-                try:
-                    candidate = Desktop(backend="uia").window(handle=handle)
-                    if candidate.is_visible():
-                        win = candidate
-                except Exception:
-                    win = None
-            if win is None:
-                win = reacquire_window_by_signature(sig)
+            win = resolve_window_target(sig)
             if win is None:
                 return False
             self.onenote_window = win
@@ -12228,6 +14099,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 resolved_name,
                 resolved_notebook_id,
             )
+        elif IS_MACOS:
+            page_text = str((target or {}).get("page_text") or "").strip()
+            if page_text:
+                self._restore_macos_page_context(page_text)
+            self._restore_favorite_item_from_stale(item, display_name)
 
         self.center_selected_item_action(
             debug_source="fav_fastpath",
@@ -12242,19 +14118,26 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
     def eventFilter(self, obj, event):
         try:
             list_widget = getattr(self, "onenote_list_widget", None)
-            if list_widget is not None and obj is list_widget.viewport():
+            if list_widget is not None:
                 event_type = event.type()
-                if event_type == QEvent.Type.MouseButtonPress:
-                    app = QApplication.instance()
-                    delay_ms = 120
-                    if app is not None:
-                        try:
-                            delay_ms = int(app.doubleClickInterval()) + 30
-                        except Exception:
-                            delay_ms = 120
-                    self._schedule_onenote_list_auto_refresh(delay_ms=delay_ms)
-                elif event_type == QEvent.Type.MouseButtonDblClick:
-                    self._cancel_pending_onenote_list_auto_refresh()
+                if obj is list_widget.viewport():
+                    if event_type == QEvent.Type.MouseButtonPress:
+                        app = QApplication.instance()
+                        delay_ms = 120
+                        if app is not None:
+                            try:
+                                delay_ms = int(app.doubleClickInterval()) + 30
+                            except Exception:
+                                delay_ms = 120
+                        self._schedule_onenote_list_auto_refresh(delay_ms=delay_ms)
+                    elif event_type == QEvent.Type.MouseButtonDblClick:
+                        self._cancel_pending_onenote_list_auto_refresh()
+                elif obj is list_widget and event_type == QEvent.Type.KeyPress:
+                    if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                        current_item = list_widget.currentItem()
+                        if current_item is not None:
+                            self.connect_and_center_from_list_item(current_item)
+                            return True
         except Exception:
             pass
         return super().eventFilter(obj, event)
@@ -12265,28 +14148,80 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self._reconnect_worker.finished.connect(self._on_reconnect_done)
         self._reconnect_worker.start()
 
+    def _run_macos_auto_reconnect(self):
+        if self._reconnect_worker is not None:
+            return
+        try:
+            ensure_pywinauto()
+            current_sig = self.settings.get("connection_signature")
+            win = reacquire_window_by_signature(current_sig or {})
+            if win:
+                next_sig = build_window_signature_quick(win, current_sig)
+                title = _preferred_connected_window_title_quick(win, next_sig)
+                status = f"(자동 재연결) '{title}'"
+                payload = {"ok": True, "status": status, "sig": next_sig}
+            else:
+                payload = {
+                    "ok": False,
+                    "status": "(재연결 실패) 이전 앱을 찾을 수 없습니다.",
+                }
+        except Exception as e:
+            payload = {"ok": False, "status": f"연결되지 않음 (오류: {e})"}
+        self._on_reconnect_done(payload)
+
+    def _sync_onenote_list_action_buttons(self) -> None:
+        list_widget = getattr(self, "onenote_list_widget", None)
+        connect_button = getattr(self, "connect_selected_list_button", None)
+        if list_widget is None or connect_button is None:
+            return
+        try:
+            current_item = list_widget.currentItem()
+        except Exception:
+            current_item = None
+        connect_button.setEnabled(bool(current_item) and list_widget.isEnabled())
+
+    def _connect_selected_onenote_list_item(self) -> None:
+        item = None
+        try:
+            item = self.onenote_list_widget.currentItem()
+        except Exception:
+            item = None
+        if item is None:
+            self.update_status_and_ui("먼저 연결할 OneNote 창을 선택해 주세요.", False)
+            return
+        self.connect_and_center_from_list_item(item)
+
     def _on_reconnect_done(self, payload):
         self._reconnect_worker = None
         status = payload.get("status", "연결되지 않음")
         if payload.get("ok"):
             ensure_pywinauto()
             sig = payload.get("sig", {})
-            target = None
-            try:
-                h = sig.get("handle")
-                if h:
-                    target = Desktop(backend="uia").window(handle=h)
-                if not target or not target.is_visible():
-                    target = reacquire_window_by_signature(sig)
-            except Exception:
-                target = None
+            if IS_MACOS:
+                target_info = payload.get("target_info") if isinstance(payload, dict) else None
+                target = MacWindow(dict(target_info or sig))
+            else:
+                target = resolve_window_target(sig)
 
             if target:
                 self.onenote_window = target
-                try:
-                    save_connection_info(self.onenote_window)
-                except Exception:
-                    pass
+                if IS_MACOS:
+                    self.settings["connection_signature"] = _merge_connection_signature(
+                        sig,
+                        self.settings.get("connection_signature")
+                        if isinstance(self.settings.get("connection_signature"), dict)
+                        else None,
+                    )
+                    try:
+                        save_settings(self.settings)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        save_connection_info(self.onenote_window)
+                    except Exception:
+                        pass
+                    self._remember_connection_signature(self.onenote_window)
                 self.update_status_and_ui(f"연결됨: {status}", True)
                 QTimer.singleShot(0, self._cache_tree_control)
                 self.refresh_onenote_list()
@@ -12297,17 +14232,22 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.update_status_and_ui(f"상태: {status}", False)
         self.refresh_onenote_list()
 
-    def refresh_onenote_list(self):
+    def refresh_onenote_list(self, reset_retry_budget: bool = True):
         if self._scanner_worker and self._scanner_worker.isRunning():
             return
         self._last_onenote_list_refresh_at = time.monotonic()
         if self._onenote_list_refresh_timer.isActive():
             self._onenote_list_refresh_timer.stop()
+        if reset_retry_budget:
+            self._mac_empty_scan_retry_attempts = 0
+            if self._mac_empty_scan_retry_timer.isActive():
+                self._mac_empty_scan_retry_timer.stop()
 
         self.onenote_list_widget.clear()
         self.onenote_list_widget.addItem("OneNote 창을 검색 중입니다...")
         self.onenote_list_widget.setEnabled(False)
         self.refresh_button.setEnabled(False)
+        self.connect_selected_list_button.setEnabled(False)
 
         self._scanner_worker = OneNoteWindowScanner(self.my_pid)
         self._scanner_worker.done.connect(self._on_onenote_list_ready)
@@ -12321,20 +14261,159 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self._pending_onenote_list_selection_key = None
 
         if not results:
-            self.onenote_list_widget.addItem("실행 중인 OneNote 창을 찾지 못했습니다.")
+            if IS_MACOS and self._mac_empty_scan_retry_attempts < 2:
+                self._mac_empty_scan_retry_attempts += 1
+                retry_delay_ms = 1200 * self._mac_empty_scan_retry_attempts
+                self.onenote_list_widget.addItem(
+                    "실행 중인 OneNote 창을 찾지 못했습니다. 잠시 후 다시 확인합니다..."
+                )
+                self._mac_empty_scan_retry_timer.start(retry_delay_ms)
+                print(
+                    "[DBG][LIST][MAC]",
+                    f"empty_retry={self._mac_empty_scan_retry_attempts}",
+                    f"delay_ms={retry_delay_ms}",
+                )
+            else:
+                self.onenote_list_widget.addItem("실행 중인 OneNote 창을 찾지 못했습니다.")
         else:
+            self._mac_empty_scan_retry_attempts = 0
+            if self._mac_empty_scan_retry_timer.isActive():
+                self._mac_empty_scan_retry_timer.stop()
+            duplicate_title_counts: Dict[str, int] = {}
             for info in results:
-                item = QListWidgetItem(f'{info["title"]}  [{info["class_name"]}]')
+                display_title = self._preferred_onenote_list_display_title(info)
+                title_key = display_title.strip().casefold()
+                duplicate_title_counts[title_key] = (
+                    duplicate_title_counts.get(title_key, 0) + 1
+                )
+            for info in results:
+                item = QListWidgetItem(
+                    self._format_onenote_list_item_label(info, duplicate_title_counts)
+                )
                 item.setData(Qt.ItemDataRole.UserRole, copy.deepcopy(info))
                 self.onenote_list_widget.addItem(item)
                 item_key = (info.get("handle"), info.get("pid"), info.get("title"))
                 if selection_key and item_key == selection_key:
                     self.onenote_list_widget.setCurrentItem(item)
+            if self.onenote_list_widget.currentItem() is None and self.onenote_list_widget.count() > 0:
+                self.onenote_list_widget.setCurrentRow(0)
 
         self.onenote_list_widget.setEnabled(True)
         self.refresh_button.setEnabled(True)
+        self._sync_onenote_list_action_buttons()
+
+    def _retry_onenote_list_after_empty_macos_scan(self):
+        if not IS_MACOS:
+            return
+        if self._scanner_worker and self._scanner_worker.isRunning():
+            return
+        self.refresh_onenote_list(reset_retry_budget=False)
+
+    def _remember_connection_signature(self, window_element) -> None:
+        try:
+            current_sig = self.settings.get("connection_signature")
+            next_sig = build_window_signature(window_element)
+            self.settings["connection_signature"] = _merge_connection_signature(
+                next_sig,
+                current_sig if isinstance(current_sig, dict) else None,
+            )
+        except Exception:
+            pass
+
+    def _preferred_onenote_list_display_title(self, info: Dict[str, Any]) -> str:
+        raw_title = str(info.get("title") or "").strip()
+        app_name = str(info.get("app_name") or "").strip()
+        class_name = str(info.get("class_name") or "").strip()
+        bundle_id = str(info.get("bundle_id") or class_name or "").strip()
+
+        if raw_title and raw_title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
+            return raw_title
+
+        if IS_MACOS and bundle_id == ONENOTE_MAC_BUNDLE_ID:
+            # 창 목록은 앱 시작 직후에도 즉시 그려져야 한다. OneNote 내부
+            # 접근(사이드바/최근 목록/페이지 트리)은 여기서 하지 않고,
+            # 연결/특수 기능 실행 시점의 백그라운드 작업에 맡긴다.
+            hydrated_title = _preferred_connected_window_title_quick(
+                MacWindow(dict(info)),
+                info,
+            )
+            if (
+                hydrated_title
+                and hydrated_title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES
+            ):
+                return hydrated_title
+
+        candidate_sigs: List[Dict[str, Any]] = []
+        current_window = getattr(self, "onenote_window", None)
+        if current_window is not None:
+            try:
+                candidate_sigs.append(
+                    build_window_signature_quick(
+                        current_window,
+                        self.settings.get("connection_signature")
+                        if isinstance(self.settings.get("connection_signature"), dict)
+                        else None,
+                    )
+                )
+            except Exception:
+                pass
+        saved_sig = self.settings.get("connection_signature")
+        if isinstance(saved_sig, dict):
+            candidate_sigs.append(saved_sig)
+
+        info_handle = int(info.get("handle") or 0)
+        info_pid = int(info.get("pid") or 0)
+        for sig in candidate_sigs:
+            sig_title = str(sig.get("title") or "").strip()
+            if not sig_title:
+                continue
+            sig_bundle = str(sig.get("bundle_id") or sig.get("class_name") or "").strip()
+            sig_handle = int(sig.get("handle") or 0)
+            sig_pid = int(sig.get("pid") or 0)
+            if info_handle and sig_handle and info_handle == sig_handle:
+                return sig_title
+            if bundle_id and sig_bundle and bundle_id == sig_bundle:
+                if info_pid and sig_pid and info_pid == sig_pid:
+                    return sig_title
+                if bundle_id == ONENOTE_MAC_BUNDLE_ID:
+                    return sig_title
+
+        return raw_title or app_name or class_name or "이름 없는 창"
+
+    def _format_onenote_list_item_label(
+        self,
+        info: Dict[str, Any],
+        duplicate_title_counts: Optional[Dict[str, int]] = None,
+    ) -> str:
+        display_title = self._preferred_onenote_list_display_title(info)
+        title_key = display_title.strip().casefold()
+        duplicates = 0
+        if duplicate_title_counts:
+            duplicates = int(duplicate_title_counts.get(title_key, 0))
+
+        if duplicates <= 1:
+            return display_title
+
+        if IS_MACOS:
+            app_name = str(info.get("app_name") or "").strip()
+            if app_name and app_name.casefold() not in {"microsoft onenote", "onenote"}:
+                return f"{display_title} ({app_name})"
+            pid = info.get("pid")
+            if pid:
+                return f"{display_title} (pid {pid})"
+            return display_title
+
+        class_name = str(info.get("class_name") or "").strip()
+        if class_name:
+            return f"{display_title}  [{class_name}]"
+        return display_title
 
     def _cache_tree_control(self):
+        if IS_MACOS:
+            # macOS resolves the active OneNote row on demand. Doing a full tree
+            # lookup during startup can block the Qt main thread on Accessibility.
+            self.tree_control = None
+            return
         self.tree_control = _find_tree_or_list(self.onenote_window)
         if self.tree_control:
             try:
@@ -12357,22 +14436,14 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 f"title={info.get('title')!r}",
             )
             target = None
-            handle = info.get("handle")
-            if handle:
-                try:
-                    target = Desktop(backend="uia").window(handle=handle)
-                    if not target.is_visible():
-                        target = None
-                except Exception:
-                    target = None
-            if target is None:
-                target = reacquire_window_by_signature(info)
+            target = resolve_window_target(info)
             if target is None:
                 raise ElementNotFoundError
 
             self.onenote_window = target
-            window_title = self.onenote_window.window_text()
+            window_title = _preferred_connected_window_title(self.onenote_window, info)
             save_connection_info(self.onenote_window)
+            self._remember_connection_signature(self.onenote_window)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             print(
                 f"[DBG][CONNECT] success title={window_title!r} "
@@ -12613,7 +14684,18 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
-            self.update_status_and_ui(f"성공: '{item_name}' 중앙 정렬 완료.", True)
+            if IS_MACOS:
+                summary = _mac_context_summary_text(
+                    self._mac_selected_outline_context(self.onenote_window),
+                    fallback=str(item_name or ""),
+                )
+                success_message = (
+                    f"성공: OneNote 보기 복구 완료."
+                    + (f" {summary}" if summary else "")
+                )
+            else:
+                success_message = f"성공: '{item_name}' 중앙 정렬 완료."
+            self.update_status_and_ui(success_message, True)
         elif allow_retry:
             self.tree_control = _find_tree_or_list(self.onenote_window)
             success, item_name = scroll_selected_item_to_center(
@@ -12625,7 +14707,18 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                     f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
                     f"at_s={(time.perf_counter() - self._t_boot):.3f}"
                 )
-                self.update_status_and_ui(f"성공: '{item_name}' 중앙 정렬 완료.", True)
+                if IS_MACOS:
+                    summary = _mac_context_summary_text(
+                        self._mac_selected_outline_context(self.onenote_window),
+                        fallback=str(item_name or ""),
+                    )
+                    success_message = (
+                        f"성공: OneNote 보기 복구 완료."
+                        + (f" {summary}" if summary else "")
+                    )
+                else:
+                    success_message = f"성공: '{item_name}' 중앙 정렬 완료."
+                self.update_status_and_ui(success_message, True)
             else:
                 print(
                     f"[DBG][CENTER][DONE] source={debug_source} success=False "
@@ -12639,7 +14732,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
             self.update_status_and_ui(
-                "실패: 선택 항목을 찾거나 정렬하지 못했습니다.", True
+                (
+                    "실패: 현재 섹션/페이지 보기 복구를 완료하지 못했습니다."
+                    if IS_MACOS
+                    else "실패: 선택 항목을 찾거나 정렬하지 못했습니다."
+                ),
+                True,
             )
 
     def _open_all_notebooks_from_connected_onenote(self):
@@ -12669,12 +14767,21 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             self.update_status_and_ui("오류: 자동화 모듈이 로드되지 않았습니다.", True)
             return
 
-        try:
-            win.set_focus()
-        except Exception:
-            pass
+        if not IS_MACOS:
+            try:
+                win.set_focus()
+            except Exception:
+                pass
 
-        sig = build_window_signature(win)
+        if IS_MACOS:
+            saved_sig = (
+                self.settings.get("connection_signature")
+                if isinstance(self.settings.get("connection_signature"), dict)
+                else None
+            )
+            sig = build_window_signature_quick(win, saved_sig)
+        else:
+            sig = build_window_signature(win)
         if not sig:
             self.update_status_and_ui("오류: OneNote 창 정보를 읽지 못했습니다.", True)
             return
@@ -12700,8 +14807,18 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             connected = self._apply_connected_window_info(result.get("window_info"))
             is_connected = connected or bool(getattr(self, "onenote_window", None))
             opened_count = int(result.get("opened_count") or 0)
+            verified_open_count = int(result.get("verified_open_count") or 0)
             remaining = result.get("remaining_names") or []
             error = (result.get("error") or "").strip()
+
+            should_refresh_open_notebooks = opened_count > 0 or bool(
+                result.get("refresh_open_notebooks")
+            )
+            if IS_MACOS and should_refresh_open_notebooks:
+                # macOS OneNote can block while reading sidebar/cache data. Keep the
+                # "open all" command responsive; aggregate refresh remains available
+                # from the dedicated aggregate refresh action.
+                should_refresh_open_notebooks = False
 
             if result.get("ok"):
                 if opened_count > 0:
@@ -12709,10 +14826,25 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                         f"실제 OneNote 전체 열기 완료: {opened_count}개",
                         is_connected,
                     )
+                elif verified_open_count > 0:
+                    self.update_status_and_ui(
+                        (
+                            "실제 OneNote 전체 열기 확인 완료: "
+                            f"이미 열린 전자필기장 {verified_open_count}개"
+                        ),
+                        is_connected,
+                    )
                 else:
                     self.update_status_and_ui(
                         "열어야 할 전자필기장이 더 이상 없습니다.",
                         is_connected,
+                    )
+                if should_refresh_open_notebooks:
+                    QTimer.singleShot(
+                        400,
+                        lambda: self._register_all_notebooks_from_current_onenote(
+                            force=True
+                        ),
                     )
                 return
 
@@ -12728,6 +14860,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 f"{detail} (시도 {opened_count}개).{suffix}",
                 is_connected,
             )
+            if should_refresh_open_notebooks:
+                QTimer.singleShot(
+                    400,
+                    lambda: self._register_all_notebooks_from_current_onenote(force=True),
+                )
 
         worker.progress.connect(_on_progress)
         worker.done.connect(_on_done)
@@ -13043,12 +15180,10 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         return _collect_all_sections_dedup(self.settings)
 
     def _persist_active_aggregate_data(self, data: List[Dict[str, Any]]) -> None:
-        if getattr(self, "active_buffer_id", None) != AGG_BUFFER_ID:
-            return
         new_sig = self._calc_nodes_signature(data)
-        if self.active_buffer_node is not None:
+        if getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID and self.active_buffer_node is not None:
             self.active_buffer_node["data"] = data
-        if self.active_buffer_item is not None:
+        if getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID and self.active_buffer_item is not None:
             payload = self.active_buffer_item.data(0, ROLE_DATA) or {}
             payload["data"] = data
             self.active_buffer_item.setData(0, ROLE_DATA, payload)
@@ -13824,7 +15959,11 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         if update_status:
             try:
                 self.connection_status_label.setText(
-                    f"프로젝트 검색: '{text}' - 프로젝트 {self._buffer_search_match_count}개, 모듈 {self._module_search_match_count}개 강조"
+                    _project_search_status_text(
+                        text,
+                        self._buffer_search_match_count,
+                        self._module_search_match_count,
+                    )
                 )
             except Exception:
                 pass
@@ -14324,7 +16463,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         folder = os.path.dirname(path)
         try:
             os.makedirs(folder, exist_ok=True)
-            os.startfile(folder)
+            open_path_in_system(folder)
         except Exception as e:
             QMessageBox.warning(self, "폴더 열기 실패", str(e))
 
@@ -15281,6 +17420,29 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         items = self.fav_tree.selectedItems()
         return items[0] if items else None
 
+    def _sync_favorite_action_buttons(self):
+        item = self._current_fav_item()
+        node_type = item.data(0, ROLE_TYPE) if item is not None else None
+        try:
+            self.btn_activate_favorite.setEnabled(node_type in ("section", "notebook"))
+        except Exception:
+            pass
+        try:
+            self.btn_rename.setEnabled(item is not None)
+        except Exception:
+            pass
+
+    def _activate_current_favorite_item(self):
+        item = self._current_fav_item()
+        if item is None:
+            return
+        node_type = item.data(0, ROLE_TYPE)
+        if node_type not in ("section", "notebook"):
+            return
+        started_at = time.perf_counter()
+        self._sync_codex_target_from_fav_item(item)
+        self._activate_favorite_section(item, started_at=started_at)
+
     def _move_item_up(self):
         item = self._current_fav_item()
         if not item:
@@ -15339,7 +17501,15 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         self.fav_tree.editItem(item, 0)
         self._save_favorites()
 
-    def _register_all_notebooks_from_current_onenote(self):
+    def _register_all_notebooks_from_current_onenote(
+        self,
+        *,
+        force: bool = False,
+        _prefetched_records: Optional[List[Dict[str, str]]] = None,
+        _prefetched_source: str = "",
+        _prefetched_sig: Optional[Dict[str, Any]] = None,
+        _prefetched_error: str = "",
+    ):
         """종합 버퍼를 OneNote의 열린 전자필기장 목록으로 새로고침하고 분류까지 갱신합니다."""
         started_at = time.perf_counter()
         refresh_button = getattr(self, "btn_register_all_notebooks", None)
@@ -15353,7 +17523,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 getattr(self, "active_buffer_id", None) == AGG_BUFFER_ID
                 or bool(isinstance(cur_payload, dict) and cur_payload.get("id") == AGG_BUFFER_ID)
             )
-            if not is_agg:
+            if not is_agg and not force:
                 QMessageBox.information(self, "안내", "이 기능은 '종합' 버퍼에서만 사용할 수 있습니다.")
                 return
 
@@ -15370,17 +17540,67 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 self.update_status_and_ui("OneNote 창이 연결되지 않았습니다. 먼저 OneNote 창 연결/선택을 해주세요.", False)
                 return
 
+            if IS_MACOS and _prefetched_records is None:
+                worker = getattr(self, "_open_notebooks_refresh_worker", None)
+                if worker is not None and worker.isRunning():
+                    self.update_status_and_ui("종합 새로고침이 이미 실행 중입니다.", True)
+                    return
+
+                saved_sig = (
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None
+                )
+                sig = build_window_signature_quick(onenote_window, saved_sig)
+                worker = OpenNotebookRecordsWorker(sig, self)
+                self._open_notebooks_refresh_worker = worker
+                self.update_status_and_ui("종합 새로고침 중... 열린 전자필기장 목록 수집", True)
+
+                def _on_done(result: Dict[str, Any]):
+                    if self._open_notebooks_refresh_worker is not worker:
+                        return
+                    self._open_notebooks_refresh_worker = None
+                    try:
+                        worker.deleteLater()
+                    except Exception:
+                        pass
+                    self._register_all_notebooks_from_current_onenote(
+                        force=force,
+                        _prefetched_records=[
+                            dict(record) for record in (result.get("records") or [])
+                        ],
+                        _prefetched_source=str(result.get("source") or "MAC_SIDEBAR"),
+                        _prefetched_sig=result.get("sig") if isinstance(result.get("sig"), dict) else sig,
+                        _prefetched_error=str(result.get("error") or ""),
+                    )
+
+                worker.done.connect(_on_done)
+                worker.start()
+                return
+
             try:
                 self.connection_status_label.setText("종합 새로고침 중...")
                 QApplication.processEvents()
             except Exception:
                 pass
 
-            try:
-                sig = build_window_signature(onenote_window)
-            except Exception as e:
-                print(f"[WARN][AGG_REFRESH] signature build failed: {e}")
-                sig = {}
+            if _prefetched_sig is not None:
+                sig = dict(_prefetched_sig or {})
+            else:
+                try:
+                    sig = (
+                        build_window_signature_quick(
+                            onenote_window,
+                            self.settings.get("connection_signature")
+                            if isinstance(self.settings.get("connection_signature"), dict)
+                            else None,
+                        )
+                        if IS_MACOS
+                        else build_window_signature(onenote_window)
+                    )
+                except Exception as e:
+                    print(f"[WARN][AGG_REFRESH] signature build failed: {e}")
+                    sig = {}
 
             notebook_nodes: List[Dict[str, Any]] = []
             seen_keys: Set[str] = set()
@@ -15413,8 +17633,14 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                     }
                 )
 
+            prefetched_records = _prefetched_records if _prefetched_records is not None else None
             try:
-                for record in _get_open_notebook_records_via_com(refresh=True):
+                source_records = (
+                    [dict(record) for record in prefetched_records]
+                    if prefetched_records is not None
+                    else _get_open_notebook_records_via_com(refresh=True)
+                )
+                for record in source_records:
                     _append_notebook_node(
                         record.get("name", ""),
                         notebook_id=record.get("id", ""),
@@ -15423,9 +17649,31 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             except Exception as e:
                 com_error = str(e)
                 print(f"[WARN][AGG_REFRESH][COM] {e}")
+            if _prefetched_error and not com_error:
+                com_error = _prefetched_error
 
-            source = "COM"
-            if not notebook_nodes:
+            source = _prefetched_source or "COM"
+            allow_ui_fallback = not (
+                IS_MACOS and prefetched_records is not None and bool(prefetched_records)
+            )
+            if IS_MACOS and _prefetched_error and "AX 직접 목록" in _prefetched_error:
+                allow_ui_fallback = False
+            if IS_MACOS and not notebook_nodes and onenote_window is not None and allow_ui_fallback:
+                source = "CONNECTED_WINDOW"
+                try:
+                    fallback_window = (
+                        MacWindow(dict(sig))
+                        if isinstance(sig, dict) and sig
+                        else onenote_window
+                    )
+                    for nb_name in mac_current_open_notebook_names(fallback_window):
+                        _append_notebook_node(nb_name, notebook_path=nb_name)
+                except Exception as e:
+                    if not com_error:
+                        com_error = str(e)
+                    print(f"[WARN][AGG_REFRESH][MAC_WINDOW] {e}")
+
+            if not notebook_nodes and allow_ui_fallback:
                 source = "UI"
                 try:
                     ensure_pywinauto()
@@ -15445,7 +17693,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 message = "등록할 전자필기장을 찾지 못했습니다."
                 if com_error:
                     message += f"\n\nCOM 조회 오류: {com_error}"
-                QMessageBox.information(self, "안내", message)
+                status_message = "열린 전자필기장을 찾지 못했습니다."
+                if com_error:
+                    status_message = f"{status_message} {str(com_error).splitlines()[0][:140]}"
+                self.update_status_and_ui(status_message, True)
+                if not force:
+                    QMessageBox.information(self, "안내", message)
                 return
 
             self._invalidate_aggregate_cache(invalidate_classified_keys=True)
@@ -15453,11 +17706,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
             self._aggregate_reclassify_in_progress = True
             try:
-                self._load_favorites_into_center_tree(categorized)
-                self._fav_reset_undo_context_from_data(
-                    categorized,
-                    reason="aggregate_onenote_refresh",
-                )
+                if is_agg:
+                    self._load_favorites_into_center_tree(categorized)
+                    self._fav_reset_undo_context_from_data(
+                        categorized,
+                        reason="aggregate_onenote_refresh",
+                    )
                 self._persist_active_aggregate_data(categorized)
             finally:
                 self._aggregate_reclassify_in_progress = False
@@ -15465,9 +17719,10 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             unclassified_count = len(categorized[0].get("children") or []) if categorized else 0
             classified_count = len(categorized[1].get("children") or []) if len(categorized) > 1 else 0
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            prefix = "종합 새로고침 완료" if is_agg else "종합 데이터 자동 갱신 완료"
             self.update_status_and_ui(
                 (
-                    "종합 새로고침 완료: "
+                    f"{prefix}: "
                     f"전체 {len(notebook_nodes)}개, "
                     f"미분류 {unclassified_count}개, "
                     f"분류됨 {classified_count}개 "
@@ -15491,24 +17746,40 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
             return
 
         title = ""
+        notebook_text = ""
+        page_text = ""
         try:
             title = self.onenote_window.window_text()
         except Exception:
             pass
 
         section_text = None
-        try:
-            tc = self.tree_control or _find_tree_or_list(self.onenote_window)
-            if tc:
-                sel = get_selected_tree_item_fast(tc)
-                if sel:
-                    section_text = sel.window_text()
-        except Exception:
-            pass
+        if IS_MACOS:
+            context = self._mac_selected_outline_context(self.onenote_window)
+            notebook_text = str(context.get("notebook") or "").strip()
+            section_text = str(context.get("section") or "").strip() or None
+            page_text = str(context.get("page") or "").strip()
+        else:
+            try:
+                tc = self.tree_control or _find_tree_or_list(self.onenote_window)
+                if tc:
+                    sel = get_selected_tree_item_fast(tc)
+                    if sel:
+                        section_text = sel.window_text()
+            except Exception:
+                pass
 
-        default_name = section_text or title or "새 섹션"
+        if IS_MACOS and section_text and page_text:
+            default_name = f"{section_text} · {page_text}"
+        else:
+            default_name = section_text or page_text or notebook_text or title or (
+                "새 보기" if IS_MACOS else "새 섹션"
+            )
         name, ok = QInputDialog.getText(
-            self, "섹션 즐겨찾기 추가", "표시 이름:", text=default_name
+            self,
+            "보기 바로가기 추가" if IS_MACOS else "섹션 즐겨찾기 추가",
+            "표시 이름:",
+            text=default_name,
         )
         if not ok or not name.strip():
             return
@@ -15518,7 +17789,12 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         except Exception:
             sig = {}
 
-        target = {"sig": sig, "section_text": section_text}
+        target = {
+            "sig": sig,
+            "notebook_text": notebook_text,
+            "section_text": section_text,
+            "page_text": page_text,
+        }
         node = {"type": "section", "name": name.strip(), "target": target}
 
         parent = self._current_fav_item()
@@ -15538,14 +17814,19 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
 
         default_name = (info.get("title") or "새 섹션").strip() or "새 섹션"
         name, ok = QInputDialog.getText(
-            self, "섹션 즐겨찾기 추가", "표시 이름:", text=default_name
+            self,
+            "보기 바로가기 추가" if IS_MACOS else "섹션 즐겨찾기 추가",
+            "표시 이름:",
+            text=default_name,
         )
         if not ok or not name.strip():
             return
 
         try:
             ensure_pywinauto()
-            win = Desktop(backend="uia").window(handle=info["handle"])
+            win = resolve_window_target(info)
+            if win is None:
+                raise ElementNotFoundError
             sig = build_window_signature(win)
         except Exception:
             sig = {
@@ -15626,7 +17907,7 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         act_add_group.triggered.connect(self._add_group)
         menu.addAction(act_add_group)
 
-        act_add_curr = QAction("현재 전자필기장 추가", self)
+        act_add_curr = QAction(_current_add_button_label(), self)
         act_add_curr.triggered.connect(self._add_section_from_current)
         menu.addAction(act_add_curr)
 
@@ -15767,6 +18048,44 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                 pass
         return new_name
 
+    def _restore_favorite_item_from_stale(
+        self,
+        item: Optional[QTreeWidgetItem],
+        fallback_name: str,
+    ) -> Dict[str, Any]:
+        current_name = ""
+        if item is not None:
+            try:
+                current_name = item.text(0) or ""
+            except Exception:
+                current_name = ""
+
+        result = {
+            "display_name": current_name or fallback_name or "",
+            "changed": False,
+            "was_stale": False,
+        }
+        if item is None:
+            return result
+
+        stale_prefixes = ("(구) ", "(old) ")
+        restored_name = current_name or fallback_name or ""
+        for prefix in stale_prefixes:
+            if restored_name.startswith(prefix):
+                restored_name = restored_name[len(prefix):]
+                result["was_stale"] = True
+                break
+
+        if restored_name and restored_name != current_name:
+            try:
+                item.setText(0, restored_name)
+                self._save_favorites()
+                result["changed"] = True
+            except Exception:
+                pass
+        result["display_name"] = restored_name or current_name or fallback_name or ""
+        return result
+
     def _sync_favorite_notebook_target(
         self,
         item: Optional[QTreeWidgetItem],
@@ -15860,9 +18179,18 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
                     "name_changed": False,
                     "was_stale": False,
                 }
+                payload = item.data(0, ROLE_DATA) if item is not None else {}
+                target = payload.get("target") if isinstance(payload, dict) else {}
                 if target_kind == "notebook":
                     notebook_sync = self._sync_favorite_notebook_target(
                         item, resolved_name, resolved_notebook_id
+                    )
+                elif IS_MACOS and isinstance(target, dict):
+                    page_text = str(target.get("page_text") or "").strip()
+                    if page_text:
+                        self._restore_macos_page_context(page_text)
+                    notebook_sync = self._restore_favorite_item_from_stale(
+                        item, display_name
                     )
 
                 aligned_now = False
@@ -15930,8 +18258,28 @@ OneNote 조작 방식과 검증 기준은 코덱스 전용 지침에서 필요�
         if not info or not info.get("handle"):
             return False
         try:
-            self.onenote_window = Desktop(backend="uia").window(handle=info["handle"])
-            if not self.onenote_window.is_visible():
+            if IS_MACOS:
+                self.onenote_window = MacWindow(dict(info))
+                next_sig = build_window_signature_quick(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+                self.settings["connection_signature"] = _merge_connection_signature(
+                    next_sig,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+                try:
+                    save_settings(self.settings)
+                except Exception:
+                    pass
+                return True
+
+            self.onenote_window = resolve_window_target(info)
+            if self.onenote_window is None:
                 raise ElementNotFoundError
             save_connection_info(self.onenote_window)
             self._cache_tree_control()

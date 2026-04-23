@@ -7,6 +7,9 @@ pywinauto를 사용한 UI 자동화 기능을 제공합니다.
 
 from typing import Optional, List
 
+from src.macos_ui import MacDesktop
+from src.platform_support import IS_MACOS
+
 
 class UIAutomationClient:
     """UI Automation 작업을 수행하는 클래스 (싱글톤 패턴)"""
@@ -41,6 +44,18 @@ class UIAutomationClient:
             bool: 로딩 성공 여부
         """
         if self._pwa_ready:
+            return True
+
+        if IS_MACOS:
+            self.Desktop = MacDesktop
+            self.WindowNotFoundError = RuntimeError
+            self.ElementNotFoundError = RuntimeError
+            self.TimeoutError = RuntimeError
+            self.UIAWrapper = None
+            self.UIAElementInfo = None
+            self.mouse = None
+            self.keyboard = None
+            self._pwa_ready = True
             return True
 
         try:

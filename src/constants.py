@@ -7,9 +7,11 @@
 
 from PyQt6.QtCore import Qt
 
+from src.platform_support import default_icon_path
+
 # ----------------- 파일 경로 관련 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
-APP_ICON_PATH = "assets/app_icon.ico"
+APP_ICON_PATH = default_icon_path()
 
 # ----------------- 윈도우 관련 -----------------
 ONENOTE_CLASS_NAME = "ApplicationFrameWindow"

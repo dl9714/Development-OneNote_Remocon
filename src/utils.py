@@ -9,6 +9,13 @@ import sys
 import os
 
 
+def app_base_path() -> str:
+    """실행 환경에 맞는 애플리케이션 기준 경로."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
 def resource_path(relative_path: str) -> str:
     """
     PyInstaller에서 묶인 리소스 파일을 찾는 경로를 반환합니다.
@@ -27,6 +34,6 @@ def resource_path(relative_path: str) -> str:
         # PyInstaller creates a temp folder and stores path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
-        base_path = os.path.abspath(".")
+        base_path = app_base_path()
 
     return os.path.join(base_path, relative_path)

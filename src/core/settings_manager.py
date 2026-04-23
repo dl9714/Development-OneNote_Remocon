@@ -29,19 +29,17 @@ class SettingsManager:
             str: 설정 파일의 전체 경로
 
         Notes:
-            - PyInstaller로 패키징된 경우: 실행 파일(.exe)이 위치한 디렉토리
-            - 스크립트 실행인 경우: 현재 작업 디렉토리
+            - PyInstaller로 패키징된 경우: 실행 파일이 위치한 디렉토리
+            - 스크립트 실행인 경우: 프로젝트 루트
         """
         if self._settings_path:
             return self._settings_path
 
         # sys.frozen은 PyInstaller에 의해 생성된 실행 파일인지 확인하는 일반적인 방법입니다.
         if getattr(sys, "frozen", False):
-            # 실행 파일(.exe)이 있는 디렉토리
             base_path = os.path.dirname(sys.executable)
         else:
-            # 스크립트 실행 환경 (현재 작업 디렉토리)
-            base_path = os.path.abspath(".")
+            base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
         self._settings_path = os.path.join(base_path, SETTINGS_FILE)
         return self._settings_path

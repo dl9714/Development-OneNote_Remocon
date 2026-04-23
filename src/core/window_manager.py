@@ -7,8 +7,13 @@ OneNote 윈도우 검색, 검증, 연결 시그니처 관리를 담당합니다.
 
 import os
 import ctypes
-from ctypes import wintypes
 from typing import Optional, List, Dict, Any
+
+try:
+    from ctypes import wintypes
+except ImportError:  # pragma: no cover - non-Windows
+    wintypes = None
+
 from src.constants import (
     ONENOTE_CLASS_NAME,
     ONENOTE_KEYWORDS,
@@ -18,6 +23,12 @@ from src.constants import (
     SCORE_WEIGHT_CLASS,
     SCORE_WEIGHT_EXE,
 )
+from src.macos_ui import (
+    MacDesktop,
+    is_onenote_window_info as is_macos_onenote_window_info,
+    enumerate_macos_windows,
+)
+from src.platform_support import IS_MACOS, IS_WINDOWS, ONENOTE_MAC_BUNDLE_ID
 
 
 class WindowManager:
@@ -25,8 +36,8 @@ class WindowManager:
 
     def __init__(self):
         """윈도우 관리자를 초기화합니다."""
-        self._user32 = ctypes.windll.user32
         self._current_pid = os.getpid()
+        self._user32 = ctypes.windll.user32 if IS_WINDOWS else None
 
     # ==================== Win32 API 헬퍼 메소드 ====================
 
@@ -40,6 +51,8 @@ class WindowManager:
         Returns:
             str: 윈도우 제목
         """
+        if not self._user32:
+            return ""
         length = self._user32.GetWindowTextLengthW(hwnd)
         buf = ctypes.create_unicode_buffer(length + 1 if length > 0 else 1)
         self._user32.GetWindowTextW(hwnd, buf, len(buf))
@@ -55,6 +68,8 @@ class WindowManager:
         Returns:
             str: 클래스 이름
         """
+        if not self._user32:
+            return ""
         buf = ctypes.create_unicode_buffer(256)
         self._user32.GetClassNameW(hwnd, buf, 256)
         return buf.value
@@ -70,6 +85,8 @@ class WindowManager:
             Optional[str]: 실행 파일 경로 또는 None
         """
         if not pid:
+            return None
+        if not IS_WINDOWS or wintypes is None:
             return None
 
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -142,6 +159,9 @@ class WindowManager:
 
         results = []
 
+        if not IS_WINDOWS or self._user32 is None or wintypes is None:
+            return enumerate_macos_windows(filter_title_substr=filter_title_substr)
+
         @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
         def _enum_proc(hwnd, lparam):
             try:
@@ -183,6 +203,9 @@ class WindowManager:
         Returns:
             bool: OneNote 윈도우 여부
         """
+        if IS_MACOS:
+            return is_macos_onenote_window_info(window_info, self._current_pid)
+
         # 자기 자신의 프로세스는 제외
         if window_info.get("pid") == self._current_pid:
             return False
@@ -245,7 +268,10 @@ class WindowManager:
             pid = None
 
         exe_path = self.get_process_image_path(pid) if pid else None
-        exe_name = os.path.basename(exe_path).lower() if exe_path else None
+        if IS_MACOS:
+            exe_name = os.path.basename(window_element.class_name() or "").lower()
+        else:
+            exe_name = os.path.basename(exe_path).lower() if exe_path else None
 
         try:
             handle = window_element.handle
@@ -269,6 +295,7 @@ class WindowManager:
             "title": title,
             "exe_path": exe_path,
             "exe_name": exe_name,
+            "bundle_id": getattr(window_element, "bundle_id", lambda: "")() if IS_MACOS else "",
         }
 
     def score_candidate(self, candidate: Dict[str, Any], signature: Dict[str, Any]) -> int:
@@ -286,8 +313,12 @@ class WindowManager:
             title = (candidate.get("title") or "").lower()
             cls = candidate.get("class_name") or ""
             pid = candidate.get("pid")
-            exe_path = self.get_process_image_path(pid) or ""
-            exe_name = os.path.basename(exe_path).lower() if exe_path else ""
+            if IS_MACOS:
+                exe_path = ""
+                exe_name = os.path.basename(str(candidate.get("bundle_id") or cls or "")).lower()
+            else:
+                exe_path = self.get_process_image_path(pid) or ""
+                exe_name = os.path.basename(exe_path).lower() if exe_path else ""
 
             score = 0
 
@@ -300,7 +331,9 @@ class WindowManager:
                 score += 50
 
             # OneNote EXE인지 확인
-            if "onenote.exe" in exe_name:
+            if IS_MACOS and str(candidate.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID:
+                score += 50
+            elif "onenote.exe" in exe_name:
                 score += 50
 
             # 제목에 OneNote 키워드 포함
@@ -348,12 +381,14 @@ class WindowManager:
         Returns:
             Optional[object]: pywinauto 윈도우 객체 또는 None
         """
-        # pywinauto를 이 시점에서 임포트 (지연 로딩)
-        try:
-            from pywinauto import Desktop
-        except ImportError:
-            print("[ERROR] pywinauto를 임포트할 수 없습니다.")
-            return None
+        if IS_MACOS:
+            Desktop = MacDesktop
+        else:
+            try:
+                from pywinauto import Desktop
+            except ImportError:
+                print("[ERROR] pywinauto를 임포트할 수 없습니다.")
+                return None
 
         # 핸들로 먼저 시도
         h = signature.get("handle")
