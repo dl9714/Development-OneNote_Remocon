@@ -2095,6 +2095,11 @@ def _read_open_notebook_names_from_sidebar(window: Optional[MacWindow]) -> List[
     if window is None:
         return []
     try:
+        window.set_focus()
+        time.sleep(0.08)
+    except Exception:
+        pass
+    try:
         sidebar_ready, opened_sidebar = _ensure_notebook_sidebar(window)
     except Exception:
         return []
@@ -2167,6 +2172,10 @@ end replaceText
     seen = set()
     for line in (raw or "").splitlines():
         name = _clean_field(line)
+        for marker in (", 동기화할 수 없습니다", ", 동기화 중"):
+            if marker in name:
+                name = name.split(marker, 1)[0].strip()
+                break
         key = _normalize_text(name)
         if not key or key in seen:
             continue
@@ -2445,17 +2454,125 @@ end replaceText
     return _run_osascript(script, timeout=timeout).strip() == "OK"
 
 
+def _press_notebook_sidebar_button(
+    window: MacWindow,
+    *,
+    open_sidebar: bool,
+    timeout: int = 4,
+) -> bool:
+    """Press the macOS OneNote notebook-list toggle without scanning the full UI tree."""
+    locator = _applescript_window_locator(window.process_id(), window.window_text())
+    if open_sidebar:
+        help_matchers = [
+            "전자 필기장 보기, 만들기 또는 열기",
+            "View, create, or open notebooks",
+            "View, create or open notebooks",
+        ]
+    else:
+        help_matchers = [
+            "전자 필기장 목록 숨기기",
+            "Hide notebook list",
+        ]
+    help_tokens = ", ".join(_quote_applescript_text(item) for item in help_matchers)
+    script = locator + f'''
+        set helpMatchers to {{{help_tokens}}}
+        try
+            set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
+            set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
+            set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
+            set scanItems to UI elements of nestedSplitGroup
+        on error
+            set scanItems to UI elements of targetWindow
+        end try
+
+        repeat with e in scanItems
+            try
+                set roleText to role of e as text
+            on error
+                set roleText to ""
+            end try
+            if roleText is "AXButton" or roleText is "AXMenuButton" then
+                set helpText to ""
+                try
+                    set helpText to my cleanText(help of e as text)
+                end try
+                repeat with wantedHelp in helpMatchers
+                    if wantedHelp is not "" and helpText contains wantedHelp then
+                        try
+                            perform action "AXPress" of e
+                        on error
+                            click e
+                        end try
+                        return "OK"
+                    end if
+                end repeat
+            end if
+        end repeat
+        return ""
+end tell
+
+on cleanText(v)
+    if v is missing value then return ""
+    set t to v as text
+    set t to my replaceText(tab, " ", t)
+    set t to my replaceText(return, " ", t)
+    set t to my replaceText(linefeed, " ", t)
+    return t
+end cleanText
+
+on replaceText(findText, replaceText, sourceText)
+    set AppleScript's text item delimiters to findText
+    set parts to every text item of sourceText
+    set AppleScript's text item delimiters to replaceText
+    set newText to parts as text
+    set AppleScript's text item delimiters to ""
+    return newText
+end replaceText
+'''
+    try:
+        return _run_osascript(script, timeout=timeout).strip() == "OK"
+    except Exception:
+        return False
+
+
 def _has_notebook_sidebar_ui(window: MacWindow) -> bool:
     script = _applescript_window_locator(window.process_id(), window.window_text()) + r'''
         try
             set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
             set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
             set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
-            set notebookGroup to first UI element of nestedSplitGroup whose role is "AXGroup"
-            set notebookScrollArea to first UI element of notebookGroup whose role is "AXScrollArea"
-            set targetOutline to first UI element of notebookScrollArea whose role is "AXOutline"
-            if targetOutline is not missing value then return "OK"
+            set scanItems to UI elements of nestedSplitGroup
+        on error
+            set scanItems to {}
         end try
+        repeat with e in scanItems
+            try
+                set roleText to role of e as text
+                if roleText is "AXButton" or roleText is "AXMenuButton" then
+                    set helpText to ""
+                    set valueText to ""
+                    set titleText to ""
+                    try
+                        set helpText to my cleanText(help of e as text)
+                    end try
+                    try
+                        set valueText to my cleanText(value of e as text)
+                    end try
+                    try
+                        set titleText to my cleanText(title of e as text)
+                    end try
+                    if helpText contains "전자 필기장 목록 숨기기" then
+                        return "OK"
+                    end if
+                    if helpText contains "Hide notebook list" then
+                        return "OK"
+                    end if
+                    if (valueText is "전자 필기장" or titleText is "전자 필기장") and helpText contains "숨기기" then
+                        return "OK"
+                    end if
+                end if
+            end try
+        end repeat
         return ""
 end tell
 
@@ -2484,16 +2601,24 @@ end replaceText
 
 
 def _ensure_notebook_sidebar(window: MacWindow) -> Tuple[bool, bool]:
+    try:
+        window.set_focus()
+        time.sleep(0.08)
+    except Exception:
+        pass
     if _has_notebook_sidebar_ui(window):
         return True, False
-    if not _press_window_button(
-        window,
-        help_contains=["전자 필기장 보기, 만들기 또는 열기"],
-        timeout=15,
+    if not (
+        _press_notebook_sidebar_button(window, open_sidebar=True, timeout=4)
+        or _press_window_button(
+            window,
+            help_contains=["전자 필기장 보기, 만들기 또는 열기"],
+            timeout=6,
+        )
     ):
         return False, False
-    for _ in range(8):
-        time.sleep(0.12)
+    for _ in range(12):
+        time.sleep(0.15)
         if _has_notebook_sidebar_ui(window):
             return True, True
     return False, True
@@ -2503,11 +2628,13 @@ def _restore_notebook_sidebar(window: MacWindow, opened_by_us: bool) -> None:
     if not opened_by_us:
         return
     try:
+        if _press_notebook_sidebar_button(window, open_sidebar=False, timeout=4):
+            return
         _press_window_button(
             window,
             help_contains=["전자 필기장 목록 숨기기"],
             value_equals=["전자 필기장"],
-            timeout=10,
+            timeout=6,
         )
     except Exception:
         pass

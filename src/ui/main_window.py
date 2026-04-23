@@ -5104,10 +5104,10 @@ class OpenNotebookRecordsWorker(QThread):
                 win = MacWindow(dict(self.sig))
                 quick = mac_current_open_notebook_names_quick(
                     win,
-                    ax_timeout_sec=1.8,
-                    plist_timeout_sec=0.8,
-                    sidebar_timeout_sec=0.4,
-                    min_names_before_sidebar=8,
+                    ax_timeout_sec=1.2,
+                    plist_timeout_sec=0.6,
+                    sidebar_timeout_sec=14.0,
+                    min_names_before_sidebar=48,
                 )
                 names = [
                     str(name or "").strip()
@@ -17757,7 +17757,12 @@ __CODEX_SKILL_TAGS__
     ) -> QTreeWidgetItem:
         item = QTreeWidgetItem(parent)
         node_type = node.get("type", "group")
-        name = node.get("name", "이름 없음")
+        raw_name = str(node.get("name", "이름 없음") or "이름 없음")
+        name = (
+            _strip_stale_favorite_prefix(raw_name)
+            if node_type in ("section", "notebook")
+            else raw_name
+        )
         item.setText(0, name)
         item.setData(0, ROLE_TYPE, node_type)
         payload = {"id": node.get("id", str(uuid.uuid4()))}
@@ -17768,19 +17773,12 @@ __CODEX_SKILL_TAGS__
                 or node.get("open")
                 or (node.get("target") or {}).get("is_open")
             )
+            item.setData(0, ROLE_OPEN_NOTEBOOK, bool(is_open_notebook))
             if is_open_notebook:
                 payload["is_open"] = True
-                item.setData(0, ROLE_OPEN_NOTEBOOK, True)
                 item.setToolTip(0, "현재 OneNote에 열려 있는 전자필기장")
-            icon = (
-                getattr(self, "_icon_open_notebook", None)
-                if is_open_notebook
-                else None
-            )
-            icon = icon or getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+            icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
             item.setIcon(0, icon)
-            if is_open_notebook:
-                item.setForeground(0, QBrush(QColor("#B9FF5A")))
         else:
             icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
             item.setIcon(0, icon)
@@ -19295,17 +19293,10 @@ __CODEX_SKILL_TAGS__
         stale_prefixes = ("(구) ", "(old) ")
         if not base_name:
             return ""
-        if any(base_name.startswith(prefix) for prefix in stale_prefixes):
-            return base_name
-
-        new_name = f"(구) {base_name}"
-        if item is not None:
-            try:
-                item.setText(0, new_name)
-                self._save_favorites()
-            except Exception:
-                pass
-        return new_name
+        for prefix in stale_prefixes:
+            if base_name.startswith(prefix):
+                return base_name[len(prefix):]
+        return base_name
 
     def _restore_favorite_item_from_stale(
         self,
@@ -19500,10 +19491,7 @@ __CODEX_SKILL_TAGS__
             if item is not None and not any(
                 current_name.startswith(prefix) for prefix in stale_prefixes
             ):
-                new_name = f"(구) {current_name}"
-                item.setText(0, new_name)
-                self._save_favorites()
-                fail_msg = result.get("error") or f"항목 찾기 실패: '{new_name}'"
+                fail_msg = result.get("error") or f"항목 찾기 실패: '{current_name}'"
                 self.update_status_and_ui(fail_msg, True)
             else:
                 fail_msg = result.get("error") or f"항목 찾기 실패: '{display_name}'"
@@ -19652,43 +19640,6 @@ __CODEX_SKILL_TAGS__
                 display_name=display_name,
                 result=result,
             )
-
-            connected = self._apply_connected_window_info(result.get("window_info"))
-            ok = bool(result.get("ok"))
-            target_kind = result.get("target_kind")
-            expected_center_text = result.get("expected_center_text")
-
-            if connected and ok:
-                is_name_restored = False
-                current_name = item.text(0)
-                restored_name = current_name
-                if current_name.startswith("(구) "):
-                    restored_name = current_name[4:]
-                    item.setText(0, restored_name)
-                    self._save_favorites()
-                    is_name_restored = True
-
-                if target_kind in ("section", "notebook") and expected_center_text:
-                    self._schedule_center_after_activate(sig, expected_center_text)
-                else:
-                    self._cancel_pending_center_after_activate()
-
-                if is_name_restored:
-                    self.update_status_and_ui(f"활성화: '{restored_name}' (이름 복원)", True)
-                else:
-                    self.update_status_and_ui(f"활성화: '{display_name}'", True)
-                return
-
-            current_name = item.text(0)
-            if not current_name.startswith("(구) "):
-                new_name = f"(구) {current_name}"
-                item.setText(0, new_name)
-                self._save_favorites()
-                fail_msg = result.get("error") or f"섹션 찾기 실패: '{new_name}'"
-                self.update_status_and_ui(fail_msg, True)
-            else:
-                fail_msg = result.get("error") or f"섹션 찾기 실패: '{display_name}' 을 찾을 수 없음"
-                self.update_status_and_ui(fail_msg, True)
 
         worker.done.connect(_on_done)
         worker.start()

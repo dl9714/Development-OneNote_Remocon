@@ -6,10 +6,17 @@ import os
 애플리케이션에서 사용하는 커스텀 위젯들을 정의합니다.
 """
 
-from PyQt6.QtWidgets import QTreeWidget, QAbstractItemView, QLineEdit, QStyledItemDelegate
+from PyQt6.QtWidgets import (
+    QTreeWidget,
+    QAbstractItemView,
+    QLineEdit,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+)
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
+from PyQt6.QtGui import QColor, QPainter, QPen
 import traceback
-from src.constants import ROLE_TYPE
+from src.constants import ROLE_TYPE, ROLE_OPEN_NOTEBOOK
 from typing import Optional
 
 
@@ -219,6 +226,39 @@ class TreeNameEditDelegate(QStyledItemDelegate):
     _HORIZONTAL_TEXT_MARGIN = 8
     _VERTICAL_TEXT_MARGIN = 2
     _EDITOR_EXTRA_HEIGHT = 2
+    _OPEN_NOTEBOOK_MARK_WIDTH = 18
+
+    def paint(self, painter, option, index):
+        node_type = index.data(ROLE_TYPE)
+        if node_type == "notebook":
+            shifted_option = QStyleOptionViewItem(option)
+            shifted_option.rect = option.rect.adjusted(
+                self._OPEN_NOTEBOOK_MARK_WIDTH,
+                0,
+                0,
+                0,
+            )
+            super().paint(painter, shifted_option, index)
+
+            if bool(index.data(ROLE_OPEN_NOTEBOOK)):
+                painter.save()
+                try:
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                    pen = QPen(QColor("#B9FF5A"))
+                    pen.setWidth(2)
+                    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+                    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                    painter.setPen(pen)
+
+                    left = option.rect.left() + 3
+                    center_y = option.rect.center().y()
+                    painter.drawLine(left + 1, center_y, left + 6, center_y + 5)
+                    painter.drawLine(left + 6, center_y + 5, left + 14, center_y - 6)
+                finally:
+                    painter.restore()
+            return
+
+        super().paint(painter, option, index)
 
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
@@ -248,6 +288,8 @@ class TreeNameEditDelegate(QStyledItemDelegate):
 
     def updateEditorGeometry(self, editor, option, index):
         rect = option.rect.adjusted(0, -1, 0, 1)
+        if index.data(ROLE_TYPE) == "notebook":
+            rect = rect.adjusted(self._OPEN_NOTEBOOK_MARK_WIDTH, 0, 0, 0)
         editor_height = max(rect.height(), editor.minimumHeight())
 
         if editor_height > rect.height():

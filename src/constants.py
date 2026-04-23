@@ -29,6 +29,7 @@ DEFAULT_FAVORITES_BUFFER = "기본 즐겨찾기 버퍼"
 # ----------------- Qt ItemDataRole 관련 -----------------
 ROLE_TYPE = Qt.ItemDataRole.UserRole + 1
 ROLE_DATA = Qt.ItemDataRole.UserRole + 2
+ROLE_OPEN_NOTEBOOK = Qt.ItemDataRole.UserRole + 3
 
 # ----------------- 기본 설정 -----------------
 DEFAULT_SETTINGS = {
