@@ -68,7 +68,7 @@ from PyQt6.QtCore import (
     QRect,
     QByteArray,
 )
-from PyQt6.QtGui import QIcon, QAction, QBrush, QColor
+from PyQt6.QtGui import QIcon, QAction, QBrush, QColor, QPixmap, QPainter, QPen
 from src.app_version import APP_BUILD_VERSION, APP_VERSION
 from src.macos_ui import (
     MacAutomationError,
@@ -152,6 +152,7 @@ CODEX_PLATFORM_MACOS = "macos"
 
 ROLE_TYPE = Qt.ItemDataRole.UserRole + 1
 ROLE_DATA = Qt.ItemDataRole.UserRole + 2
+ROLE_OPEN_NOTEBOOK = Qt.ItemDataRole.UserRole + 3
 
 # ----------------- 0.1 버퍼 트리 고정/가상 노드 -----------------
 DEFAULT_GROUP_ID = "group-default-fixed"
@@ -277,7 +278,7 @@ def _connection_group_title() -> str:
 
 
 def _current_actions_group_title() -> str:
-    return "현재 선택 항목 제어" if IS_MACOS else "현재 열린 항목 제어"
+    return "현재 전자필기장 보기 제어" if IS_MACOS else "현재 열린 항목 제어"
 
 
 def _buffer_group_title() -> str:
@@ -302,6 +303,32 @@ def _favorites_group_title() -> str:
 
 def _register_all_notebooks_button_label() -> str:
     return "열린 전자필기장 새로고침" if IS_MACOS else "종합 새로고침"
+
+
+def _open_unchecked_notebooks_button_label() -> str:
+    return "체크 안 된 전자필기장 열기"
+
+
+def _open_unchecked_notebooks_tip() -> str:
+    return "종합 목록에서 연두색 체크가 없는 전자필기장만 현재 열린 목록과 대조해서 엽니다."
+
+
+def _make_open_notebook_check_icon(size: int = 18) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#B9FF5A"))
+        pen.setWidth(max(2, size // 6))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.drawLine(size // 5, size // 2, size // 2 - 1, size - size // 4)
+        painter.drawLine(size // 2 - 1, size - size // 4, size - size // 5, size // 4)
+    finally:
+        painter.end()
+    return QIcon(pixmap)
 
 
 def _onenote_list_hint_text() -> str:
@@ -4283,10 +4310,13 @@ class OpenAllNotebooksWorker(QThread):
                 result["window_info"] = None
 
             if IS_MACOS:
-                unclassified_open_mode = self.candidate_scope == "AGG_UNCLASSIFIED"
+                candidate_limited_mode = self.candidate_scope in (
+                    "AGG_UNCHECKED",
+                    "AGG_UNCLASSIFIED",
+                )
                 mac_open_action_label = (
-                    "미분류 전자필기장 열기"
-                    if unclassified_open_mode
+                    _open_unchecked_notebooks_button_label()
+                    if candidate_limited_mode
                     else "실제 OneNote 전체 열기"
                 )
 
@@ -4455,25 +4485,45 @@ class OpenAllNotebooksWorker(QThread):
                 )
 
                 merged_records_by_key: Dict[str, Dict[str, Any]] = {}
-                for source_records in (
-                    recent_records,
-                    shortcut_records,
-                    settings_records,
-                ):
-                    for record in source_records:
-                        name = str((record or {}).get("name") or "").strip()
-                        key = _normalize_notebook_name_key(name)
-                        if not key:
-                            continue
-                        existing = merged_records_by_key.get(key)
-                        if existing is None:
+
+                def _merge_open_candidate(record: Dict[str, Any], *, allow_new: bool) -> None:
+                    name = str((record or {}).get("name") or "").strip()
+                    key = _normalize_notebook_name_key(name)
+                    if not key:
+                        return
+                    existing = merged_records_by_key.get(key)
+                    if existing is None:
+                        if allow_new:
                             merged_records_by_key[key] = dict(record)
-                            continue
+                        return
+                    for field in ("url", "path", "id", "source"):
                         if (
-                            not str(existing.get("url") or "").strip()
-                            and str(record.get("url") or "").strip()
+                            not str(existing.get(field) or "").strip()
+                            and str(record.get(field) or "").strip()
                         ):
-                            existing["url"] = str(record.get("url") or "").strip()
+                            existing[field] = str(record.get(field) or "").strip()
+                    try:
+                        incoming_last = int(record.get("last_accessed_at") or 0)
+                        existing_last = int(existing.get("last_accessed_at") or 0)
+                        if incoming_last > existing_last:
+                            existing["last_accessed_at"] = incoming_last
+                    except Exception:
+                        pass
+
+                if candidate_limited_mode and settings_records:
+                    for record in settings_records:
+                        _merge_open_candidate(record, allow_new=True)
+                    for source_records in (recent_records, shortcut_records):
+                        for record in source_records:
+                            _merge_open_candidate(record, allow_new=False)
+                else:
+                    for source_records in (
+                        recent_records,
+                        shortcut_records,
+                        settings_records,
+                    ):
+                        for record in source_records:
+                            _merge_open_candidate(record, allow_new=True)
 
                 recent_records = list(merged_records_by_key.values())
                 _mac_open_all_debug(
@@ -4539,9 +4589,9 @@ class OpenAllNotebooksWorker(QThread):
                 )
 
                 total_targets = len(pending_records)
-                if self.candidate_scope == "AGG_UNCLASSIFIED":
+                if candidate_limited_mode:
                     self.progress.emit(
-                        "미분류 전자필기장 열기 준비 완료... "
+                        f"{mac_open_action_label} 준비 완료... "
                         f"후보 {len(records_by_key)}개, 열 대상 {total_targets}개, "
                         f"이미 열림 {len(overlap_keys)}개"
                     )
@@ -4810,7 +4860,49 @@ class OpenAllNotebooksWorker(QThread):
                 self.done.emit(result)
                 return
 
+            windows_candidate_limited_mode = self.candidate_scope == "AGG_UNCHECKED"
+            windows_open_action_label = (
+                _open_unchecked_notebooks_button_label()
+                if windows_candidate_limited_mode
+                else "실제 OneNote 전체 열기"
+            )
+            settings_targets = [
+                dict(record)
+                for record in self.notebook_candidates
+                if str((record or {}).get("name") or "").strip()
+            ]
             shortcut_targets = _collect_onenote_notebook_shortcuts()
+            merged_targets_by_key: Dict[str, Dict[str, Any]] = {}
+
+            def _merge_windows_target(record: Dict[str, Any], *, allow_new: bool) -> None:
+                name = str((record or {}).get("name") or "").strip()
+                key = _normalize_notebook_name_key(name)
+                if not key:
+                    return
+                existing = merged_targets_by_key.get(key)
+                if existing is None:
+                    if allow_new:
+                        merged_targets_by_key[key] = dict(record)
+                    return
+                for field in ("path", "url", "id", "source"):
+                    if (
+                        not str(existing.get(field) or "").strip()
+                        and str(record.get(field) or "").strip()
+                    ):
+                        existing[field] = str(record.get(field) or "").strip()
+
+            if windows_candidate_limited_mode and settings_targets:
+                for target in settings_targets:
+                    _merge_windows_target(target, allow_new=True)
+                for target in shortcut_targets:
+                    _merge_windows_target(target, allow_new=False)
+            else:
+                for target in shortcut_targets:
+                    _merge_windows_target(target, allow_new=True)
+                for target in settings_targets:
+                    _merge_windows_target(target, allow_new=True)
+
+            shortcut_targets = list(merged_targets_by_key.values())
 
             if shortcut_targets:
                 try:
@@ -4823,15 +4915,26 @@ class OpenAllNotebooksWorker(QThread):
                     print(f"[WARN][OPEN_ALL_NOTEBOOKS][COM][LIST] {e}")
                     open_names = set()
 
+                targets_by_key = {
+                    _normalize_notebook_name_key(t.get("name")): t
+                    for t in shortcut_targets
+                    if _normalize_notebook_name_key(t.get("name"))
+                }
                 pending_targets = [
                     t
                     for t in shortcut_targets
                     if _normalize_notebook_name_key(t.get("name")) not in open_names
                 ]
+                overlap_keys = [key for key in targets_by_key if key in open_names]
+                result["candidate_total"] = len(targets_by_key)
+                result["pending_count"] = len(pending_targets)
+                result["already_open_count"] = len(overlap_keys)
 
                 total_targets = len(pending_targets)
                 self.progress.emit(
-                    f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
+                    f"{windows_open_action_label} 준비 완료... "
+                    f"후보 {len(targets_by_key)}개, 열 대상 {total_targets}개, "
+                    f"이미 열림 {len(overlap_keys)}개"
                 )
 
                 if not pending_targets:
@@ -4858,7 +4961,7 @@ class OpenAllNotebooksWorker(QThread):
                         continue
 
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 시도 - {name}"
+                        f"{windows_open_action_label} 진행 중... {index}/{total_targets} 시도 - {name}"
                     )
                     try:
                         step = _open_notebook_shortcut_via_shell(
@@ -4866,7 +4969,7 @@ class OpenAllNotebooksWorker(QThread):
                             url,
                             name,
                             progress_callback=lambda msg, idx=index, total=total_targets: self.progress.emit(
-                                f"실제 OneNote 전체 열기 진행 중... {idx}/{total} - {msg}"
+                                f"{windows_open_action_label} 진행 중... {idx}/{total} - {msg}"
                             ),
                         )
                     except Exception as e:
@@ -4876,7 +4979,7 @@ class OpenAllNotebooksWorker(QThread):
                         result["opened_names"].append(name)
                         result["opened_count"] += 1
                         self.progress.emit(
-                            f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 완료 - {name}"
+                            f"{windows_open_action_label} 진행 중... {index}/{total_targets} 완료 - {name}"
                         )
                     else:
                         failed_names.append(name)
@@ -4981,80 +5084,46 @@ class OpenNotebookRecordsWorker(QThread):
                 self.done.emit(result)
                 return
             if IS_MACOS and self.sig:
-                ax_box: Dict[str, Any] = {}
-                ax_done = threading.Event()
-
-                def _read_ax_records() -> None:
-                    try:
-                        win = MacWindow(dict(self.sig))
-                        ax_box["records"] = [
-                            {
-                                "id": "",
-                                "name": name,
-                                "path": name,
-                                "url": "",
-                                "last_accessed_at": 0,
-                                "source": "MAC_AX_OPEN_NOTEBOOKS",
-                            }
-                            for name in mac_current_open_notebook_names(win)
-                            if str(name or "").strip()
-                        ]
-                    except Exception as exc:
-                        ax_box["error"] = exc
-                    finally:
-                        ax_done.set()
-
-                threading.Thread(
-                    target=_read_ax_records,
-                    name="onenote-mac-open-notebooks-worker",
-                    daemon=True,
-                ).start()
-                if ax_done.wait(8.0):
-                    if "error" in ax_box:
-                        raise ax_box["error"]
-                    records = [dict(record) for record in (ax_box.get("records") or [])]
-                else:
-                    records = []
-                    result["error"] = (
-                        "macOS 열린 전자필기장 AX 조회가 8초를 넘어 중단되었습니다."
-                    )
-                ax_debug = macos_last_ax_notebook_debug()
-                if (
-                    records
-                    and len(records) <= 1
-                    and ax_debug
-                    and ax_debug.get("reason") != "ok"
-                ):
-                    records = []
-                    result["error"] = (
-                        "macOS AX 직접 목록 조회가 현재 창 1개까지만 도달했습니다 "
-                        f"(trusted={ax_debug.get('trusted')}, "
-                        f"roots={ax_debug.get('roots')}, "
-                        f"groups={ax_debug.get('groups')}, "
-                        f"best={ax_debug.get('best_count')}, "
-                        f"reason={ax_debug.get('reason')})."
-                    )
-                    self.done.emit(result)
-                    return
+                win = MacWindow(dict(self.sig))
+                quick = mac_current_open_notebook_names_quick(
+                    win,
+                    ax_timeout_sec=1.8,
+                    plist_timeout_sec=0.8,
+                    sidebar_timeout_sec=0.4,
+                    min_names_before_sidebar=8,
+                )
+                names = [
+                    str(name or "").strip()
+                    for name in (quick.get("names") or [])
+                    if str(name or "").strip()
+                ]
+                debug = dict(quick.get("debug") or {})
+                records = [
+                    {
+                        "id": "",
+                        "name": name,
+                        "path": name,
+                        "url": "",
+                        "last_accessed_at": 0,
+                        "source": "MAC_QUICK_OPEN_NOTEBOOKS",
+                    }
+                    for name in names
+                ]
+                result["source"] = "MAC_QUICK_OPEN_NOTEBOOKS"
                 if not records:
                     if not macos_accessibility_is_trusted():
                         result["error"] = (
                             "macOS 손쉬운 사용 권한이 없어 OneNote 화면 목록을 읽지 못했습니다. "
                             "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon을 허용해야 합니다."
                         )
-                    elif ax_debug:
+                    else:
                         result["error"] = (
-                            "macOS AX 직접 조회가 빈 결과입니다 "
-                            f"(trusted={ax_debug.get('trusted')}, "
-                            f"roots={ax_debug.get('roots')}, "
-                            f"groups={ax_debug.get('groups')}, "
-                            f"best={ax_debug.get('best_count')}, "
-                            f"reason={ax_debug.get('reason')})."
+                            "macOS 빠른 열린 전자필기장 조회가 빈 결과입니다 "
+                            f"(title={debug.get('title_count')}, "
+                            f"ax={debug.get('ax_count')}, "
+                            f"plist={debug.get('plist_count')}, "
+                            f"sidebar={debug.get('sidebar_count')})."
                         )
-                if not records:
-                    records = _get_open_notebook_records_via_com(refresh=True)
-                elif any(not str(record.get("url") or "").strip() for record in records):
-                    records = _get_open_notebook_records_via_com(refresh=True)
             else:
                 records = _get_open_notebook_records_via_com(refresh=True)
             result["records"] = [dict(record) for record in records]
@@ -13615,20 +13684,10 @@ __CODEX_SKILL_TAGS__
 
         special_menu = menubar.addMenu("&특수 기능")
         self.open_all_notebooks_action = QAction(
-            (
-                "미분류 전자필기장 열기"
-                if IS_MACOS
-                else "실제 OneNote 전자필기장 모두 열기"
-            ),
+            _open_unchecked_notebooks_button_label(),
             self,
         )
-        self.open_all_notebooks_action.setStatusTip(
-            (
-                "미분류 카테고리의 전자필기장 중 아직 안 열린 항목만 확인해서 엽니다."
-                if IS_MACOS
-                else "OneNote의 '전자 필기장 열기' 화면에서 아직 안 열린 전자필기장을 순서대로 엽니다."
-            )
-        )
+        self.open_all_notebooks_action.setStatusTip(_open_unchecked_notebooks_tip())
         self.open_all_notebooks_action.triggered.connect(
             self._open_all_notebooks_from_connected_onenote
         )
@@ -14013,10 +14072,12 @@ __CODEX_SKILL_TAGS__
             self._icon_file = self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
             self._icon_dir = self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
             self._icon_agg = self.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon)
+            self._icon_open_notebook = _make_open_notebook_check_icon()
         except Exception:
             self._icon_file = None
             self._icon_dir = None
             self._icon_agg = None
+            self._icon_open_notebook = None
 
         self.action_expand_all_groups.triggered.connect(
             lambda: self._expand_fav_groups_always(reason="toolbar")
@@ -14160,10 +14221,10 @@ __CODEX_SKILL_TAGS__
         if IS_MACOS:
             mac_bulk_actions_layout = QHBoxLayout()
 
-            self.open_all_notebooks_button = QPushButton("미분류 전자필기장 열기")
-            self.open_all_notebooks_button.setToolTip(
-                "미분류 카테고리의 전자필기장 중 아직 안 열린 항목만 확인해서 엽니다."
+            self.open_all_notebooks_button = QPushButton(
+                _open_unchecked_notebooks_button_label()
             )
+            self.open_all_notebooks_button.setToolTip(_open_unchecked_notebooks_tip())
             self.open_all_notebooks_button.clicked.connect(
                 self._open_all_notebooks_from_connected_onenote
             )
@@ -15593,11 +15654,7 @@ __CODEX_SKILL_TAGS__
             and self._open_all_notebooks_worker.isRunning()
         ):
             self.update_status_and_ui(
-                (
-                    "이미 미분류 전자필기장 열기 작업이 실행 중입니다."
-                    if IS_MACOS
-                    else "이미 실제 OneNote 전체 열기 작업이 실행 중입니다."
-                ),
+                f"이미 {_open_unchecked_notebooks_button_label()} 작업이 실행 중입니다.",
                 True,
             )
             return
@@ -15650,9 +15707,9 @@ __CODEX_SKILL_TAGS__
             f"count={len(notebook_candidates)}",
             f"sample={[str((record or {}).get('name') or '').strip() for record in notebook_candidates[:8]]!r}",
         )
-        if candidate_scope == "AGG_UNCLASSIFIED" and not notebook_candidates:
+        if candidate_scope == "AGG_UNCHECKED" and not notebook_candidates:
             self.update_status_and_ui(
-                "미분류 카테고리에 열 대상 전자필기장이 없습니다.",
+                "체크 안 된 전자필기장 열 대상이 없습니다.",
                 False,
             )
             return
@@ -15663,9 +15720,9 @@ __CODEX_SKILL_TAGS__
             parent=self,
         )
         self._open_all_notebooks_worker = worker
-        if IS_MACOS and candidate_scope == "AGG_UNCLASSIFIED":
+        if candidate_scope == "AGG_UNCHECKED":
             self.update_status_and_ui(
-                "미분류 전자필기장 열기 준비 중...",
+                f"{_open_unchecked_notebooks_button_label()} 준비 중...",
                 True,
             )
         else:
@@ -15704,8 +15761,8 @@ __CODEX_SKILL_TAGS__
             if result.get("ok"):
                 if opened_count > 0:
                     status = (
-                        f"미분류 전자필기장 열기 완료: {opened_count}개"
-                        if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                        f"{_open_unchecked_notebooks_button_label()} 완료: {opened_count}개"
+                        if result_scope == "AGG_UNCHECKED"
                         else f"실제 OneNote 전체 열기 완료: {opened_count}개"
                     )
                     if should_refresh_open_notebooks:
@@ -15716,14 +15773,13 @@ __CODEX_SKILL_TAGS__
                     )
                     self.update_status_and_ui(status, is_connected)
                 elif (
-                    IS_MACOS
-                    and result_scope == "AGG_UNCLASSIFIED"
+                    result_scope == "AGG_UNCHECKED"
                     and candidate_total > 0
                     and pending_count == 0
                 ):
                     already = already_open_count or verified_open_count
                     status = (
-                        "미분류 카테고리 확인 완료: "
+                        "체크 안 된 전자필기장 확인 완료: "
                         f"후보 {candidate_total}개 중 열 대상 0개"
                     )
                     if already > 0:
@@ -15735,8 +15791,8 @@ __CODEX_SKILL_TAGS__
                     self.update_status_and_ui(
                         (
                             (
-                                "미분류 전자필기장 열기 확인 완료: "
-                                if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                                f"{_open_unchecked_notebooks_button_label()} 확인 완료: "
+                                if result_scope == "AGG_UNCHECKED"
                                 else "실제 OneNote 전체 열기 확인 완료: "
                             )
                             + f"이미 열린 전자필기장 {verified_open_count}개"
@@ -15765,8 +15821,8 @@ __CODEX_SKILL_TAGS__
             else:
                 suffix = ""
             detail = error or (
-                "미분류 전자필기장 열기에 실패했습니다."
-                if IS_MACOS and result_scope == "AGG_UNCLASSIFIED"
+                f"{_open_unchecked_notebooks_button_label()}에 실패했습니다."
+                if result_scope == "AGG_UNCHECKED"
                 else "실제 OneNote 전체 열기에 실패했습니다."
             )
             self.update_status_and_ui(
@@ -15900,12 +15956,18 @@ __CODEX_SKILL_TAGS__
                 node_keys = self._aggregate_notebook_keys_from_node(node)
                 if node_keys and not (node_keys & seen):
                     seen.update(node_keys)
+                    is_open = bool(
+                        node.get("is_open")
+                        or node.get("open")
+                        or (node.get("target") or {}).get("is_open")
+                    )
                     found.append(
                         {
                             "type": "notebook",
                             "id": node.get("id") or str(uuid.uuid4()),
                             "name": node.get("name") or "전자필기장",
                             "target": copy.deepcopy(node.get("target") or {}),
+                            "is_open": is_open,
                         }
                     )
                 continue
@@ -16204,27 +16266,19 @@ __CODEX_SKILL_TAGS__
         try:
             source_nodes = self._aggregate_source_nodes_for_fast_classification()
             categorized = self._build_aggregate_categorized_display_nodes(source_nodes)
-            unclassified_nodes: List[Dict[str, Any]] = []
-            unclassified_group_found = False
-            for node in categorized:
-                if not isinstance(node, dict):
+            aggregate_nodes = self._collect_notebook_nodes_from_nodes(categorized)
+            for node in aggregate_nodes:
+                if bool(node.get("is_open") or (node.get("target") or {}).get("is_open")):
                     continue
-                if node.get("id") == AGG_UNCLASSIFIED_GROUP_ID:
-                    unclassified_group_found = True
-                    unclassified_nodes = self._collect_notebook_nodes_from_nodes(
-                        node.get("children") or []
-                    )
-                    break
-            for node in unclassified_nodes:
                 target = dict(node.get("target") or {})
                 notebook_name = (
                     str(target.get("notebook_text") or "").strip()
                     or str(node.get("name") or "").strip()
                 )
                 if notebook_name:
-                    _append_record(notebook_name, target, "AGG_UNCLASSIFIED")
-            if unclassified_group_found:
-                self._last_open_all_candidate_scope = "AGG_UNCLASSIFIED"
+                    _append_record(notebook_name, target, "AGG_UNCHECKED")
+            if aggregate_nodes:
+                self._last_open_all_candidate_scope = "AGG_UNCHECKED"
                 return records
         except Exception as e:
             print(f"[WARN][OPEN_ALL][CANDIDATES][AGG] {e}")
@@ -17540,6 +17594,8 @@ __CODEX_SKILL_TAGS__
         }
         if node_type in ("section", "notebook"):
             node["target"] = payload.get("target", {})
+        if node_type == "notebook" and bool(payload.get("is_open")):
+            node["is_open"] = True
         children = []
         for i in range(item.childCount()):
             children.append(self._serialize_fav_item(item.child(i)))
@@ -17558,8 +17614,24 @@ __CODEX_SKILL_TAGS__
         payload = {"id": node.get("id", str(uuid.uuid4()))}
         if node_type in ("section", "notebook"):
             payload["target"] = node.get("target", {})
-            icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+            is_open_notebook = node_type == "notebook" and bool(
+                node.get("is_open")
+                or node.get("open")
+                or (node.get("target") or {}).get("is_open")
+            )
+            if is_open_notebook:
+                payload["is_open"] = True
+                item.setData(0, ROLE_OPEN_NOTEBOOK, True)
+                item.setToolTip(0, "현재 OneNote에 열려 있는 전자필기장")
+            icon = (
+                getattr(self, "_icon_open_notebook", None)
+                if is_open_notebook
+                else None
+            )
+            icon = icon or getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
             item.setIcon(0, icon)
+            if is_open_notebook:
+                item.setForeground(0, QBrush(QColor("#B9FF5A")))
         else:
             icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
             item.setIcon(0, icon)
@@ -18581,6 +18653,7 @@ __CODEX_SKILL_TAGS__
             notebook_nodes: List[Dict[str, Any]] = []
             seen_keys: Set[str] = set()
             com_error = ""
+            current_open_keys: Set[str] = set()
 
             def _append_notebook_node(
                 nb_name: str,
@@ -18590,6 +18663,7 @@ __CODEX_SKILL_TAGS__
                 notebook_url: str = "",
                 last_accessed_at: int = 0,
                 notebook_source: str = "",
+                is_open: bool = False,
             ) -> None:
                 nb_name_clean = _strip_stale_favorite_prefix(str(nb_name or "").strip())
                 name_key = _normalize_notebook_name_key(nb_name_clean)
@@ -18599,6 +18673,8 @@ __CODEX_SKILL_TAGS__
                     return
                 seen_keys.add(dedupe_key)
                 target = {"sig": sig, "notebook_text": nb_name_clean}
+                if is_open:
+                    target["is_open"] = True
                 if notebook_id:
                     target["notebook_id"] = str(notebook_id).strip()
                 if notebook_path:
@@ -18619,6 +18695,7 @@ __CODEX_SKILL_TAGS__
                         "id": str(uuid.uuid4()),
                         "name": nb_name_clean,
                         "target": target,
+                        "is_open": bool(is_open),
                     }
                 )
 
@@ -18629,6 +18706,11 @@ __CODEX_SKILL_TAGS__
                     if prefetched_records is not None
                     else _get_open_notebook_records_via_com(refresh=True)
                 )
+                current_open_keys = {
+                    _normalize_notebook_name_key((record or {}).get("name"))
+                    for record in source_records
+                    if _normalize_notebook_name_key((record or {}).get("name"))
+                }
                 for record in source_records:
                     _append_notebook_node(
                         record.get("name", ""),
@@ -18637,6 +18719,7 @@ __CODEX_SKILL_TAGS__
                         notebook_url=record.get("url", ""),
                         last_accessed_at=record.get("last_accessed_at", 0),
                         notebook_source=record.get("source", ""),
+                        is_open=True,
                     )
             except Exception as e:
                 com_error = str(e)
@@ -18659,7 +18742,10 @@ __CODEX_SKILL_TAGS__
                         else onenote_window
                     )
                     for nb_name in mac_current_open_notebook_names(fallback_window):
-                        _append_notebook_node(nb_name, notebook_path=nb_name)
+                        key = _normalize_notebook_name_key(nb_name)
+                        if key:
+                            current_open_keys.add(key)
+                        _append_notebook_node(nb_name, notebook_path=nb_name, is_open=True)
                 except Exception as e:
                     if not com_error:
                         com_error = str(e)
@@ -18677,7 +18763,10 @@ __CODEX_SKILL_TAGS__
                         self.tree_control,
                         limit=512,
                     ):
-                        _append_notebook_node(nb_name)
+                        key = _normalize_notebook_name_key(nb_name)
+                        if key:
+                            current_open_keys.add(key)
+                        _append_notebook_node(nb_name, is_open=True)
                 except Exception as e:
                     print(f"[WARN][AGG_REFRESH][UI_FALLBACK] {e}")
 
@@ -18696,6 +18785,10 @@ __CODEX_SKILL_TAGS__
                     notebook_url=record.get("url", ""),
                     last_accessed_at=record.get("last_accessed_at", 0),
                     notebook_source=record.get("source", ""),
+                    is_open=(
+                        _normalize_notebook_name_key(record.get("name"))
+                        in current_open_keys
+                    ),
                 )
             known_records_added = max(0, len(notebook_nodes) - before_known_merge)
             if known_records_added:
@@ -18730,12 +18823,16 @@ __CODEX_SKILL_TAGS__
 
             unclassified_count = len(categorized[0].get("children") or []) if categorized else 0
             classified_count = len(categorized[1].get("children") or []) if len(categorized) > 1 else 0
+            open_checked_count = sum(
+                1 for node in notebook_nodes if bool(node.get("is_open"))
+            )
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
             prefix = "종합 새로고침 완료" if is_agg else "종합 데이터 자동 갱신 완료"
             self.update_status_and_ui(
                 (
                     f"{prefix}: "
                     f"전체 {len(notebook_nodes)}개, "
+                    f"열림 체크 {open_checked_count}개, "
                     f"미분류 {unclassified_count}개, "
                     f"분류됨 {classified_count}개 "
                     f"(known+{known_records_added}) "
