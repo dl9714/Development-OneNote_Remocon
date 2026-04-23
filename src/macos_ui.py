@@ -3010,6 +3010,28 @@ end tell
     return ok
 
 
+def _drain_onenote_open_warning_dialogs(
+    window: MacWindow,
+    *,
+    timeout_sec: float = 0.6,
+    poll_sec: float = 0.12,
+) -> bool:
+    deadline = time.monotonic() + max(timeout_sec, poll_sec)
+    dismissed = False
+    misses = 0
+    max_misses = 5
+    while time.monotonic() < deadline:
+        if _dismiss_onenote_open_warning_dialog(window):
+            dismissed = True
+            misses = 0
+            continue
+        misses += 1
+        if misses >= max_misses:
+            break
+        time.sleep(max(poll_sec, 0.05))
+    return dismissed
+
+
 def _press_recent_notebook_open(window: MacWindow, notebook_name: str) -> bool:
     script = _recent_notebook_dialog_locator(window) + f'''
     set wantedText to {_quote_applescript_text(notebook_name)}
@@ -3441,6 +3463,7 @@ def select_open_notebook_by_name(
         _activate_selected_notebook_sidebar_row(window)
 
         if not wait_for_visible:
+            _drain_onenote_open_warning_dialogs(window, timeout_sec=0.35, poll_sec=0.1)
             return True
 
         deadline = time.monotonic() + 6.0
@@ -3492,11 +3515,16 @@ def open_recent_notebook_by_name(
             _wait_for_recent_notebook_rows(window, timeout_sec=2.5)
             opened = _press_recent_notebook_open(window, wanted_name)
         if opened and not wait_for_visible:
+            dismissed_warning = _drain_onenote_open_warning_dialogs(
+                window,
+                timeout_sec=0.7,
+                poll_sec=0.12,
+            )
             try:
                 _restore_notebook_sidebar(window, opened_sidebar)
             except Exception:
                 pass
-            return True
+            return not dismissed_warning
         deadline = time.monotonic() + 12.0
         while time.monotonic() < deadline:
             if _is_target_notebook_visible(window, wanted_name):
