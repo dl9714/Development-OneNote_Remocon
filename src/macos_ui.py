@@ -2605,7 +2605,12 @@ end replaceText
     return not _is_recent_notebooks_dialog_open(window)
 
 
-def _clear_recent_notebooks_dialog_search(window: MacWindow) -> bool:
+def _clear_recent_notebooks_dialog_search(
+    window: MacWindow,
+    *,
+    settle_sec: float = 0.25,
+) -> bool:
+    settle_delay = max(0.05, float(settle_sec))
     script = _recent_notebook_dialog_locator(window) + r'''
     set didClear to false
     repeat with e in UI elements of targetWindow
@@ -2659,7 +2664,7 @@ def _clear_recent_notebooks_dialog_search(window: MacWindow) -> bool:
         end try
     end repeat
     if didClear then
-        delay 0.2
+        delay ''' + f"{settle_delay:.2f}" + r'''
         return "OK"
     end if
     return ""
@@ -2688,14 +2693,22 @@ end replaceText
     except Exception:
         return False
     if ok:
-        time.sleep(0.25)
+        time.sleep(settle_delay)
     return ok
 
 
-def _set_recent_notebooks_dialog_search(window: MacWindow, search_text: str) -> bool:
+def _set_recent_notebooks_dialog_search(
+    window: MacWindow,
+    search_text: str,
+    *,
+    settle_sec: float = 0.25,
+) -> bool:
     wanted_text = _clean_field(search_text)
     if not wanted_text:
-        return _clear_recent_notebooks_dialog_search(window)
+        return _clear_recent_notebooks_dialog_search(window, settle_sec=settle_sec)
+    settle_delay = max(0.08, float(settle_sec))
+    focus_delay = max(0.04, min(0.12, settle_delay / 2.0))
+    key_delay = max(0.03, min(0.06, settle_delay / 3.0))
     previous_clipboard = _read_macos_clipboard_text()
     clipboard_written = _write_macos_clipboard_text(wanted_text)
     script = _recent_notebook_dialog_locator(window) + f'''
@@ -2714,7 +2727,7 @@ def _set_recent_notebooks_dialog_search(window: MacWindow, search_text: str) -> 
                 end try
                 try
                     set value of attribute "AXValue" of e to wantedText
-                    delay 0.25
+                    delay {settle_delay:.2f}
                     return "OK"
                 end try
                 try
@@ -2723,19 +2736,19 @@ def _set_recent_notebooks_dialog_search(window: MacWindow, search_text: str) -> 
                     set clickX to (item 1 of fieldPos) + ((item 1 of fieldSize) / 2)
                     set clickY to (item 2 of fieldPos) + ((item 2 of fieldSize) / 2)
                     click at {{clickX, clickY}}
-                    delay 0.1
+                    delay {focus_delay:.2f}
                 end try
                 try
                     perform action "AXPress" of e
                 end try
-                delay 0.1
+                delay {focus_delay:.2f}
                 try
                     keystroke "a" using command down
-                    delay 0.05
+                    delay {key_delay:.2f}
                 end try
                 try
                     key code 51
-                    delay 0.05
+                    delay {key_delay:.2f}
                 end try
                 try
                     if {str(bool(clipboard_written)).lower()} then
@@ -2744,7 +2757,7 @@ def _set_recent_notebooks_dialog_search(window: MacWindow, search_text: str) -> 
                         keystroke wantedText
                     end if
                 end try
-                delay 0.35
+                delay {settle_delay:.2f}
                 return "OK"
             end if
         end try
@@ -2760,7 +2773,7 @@ end tell
         if clipboard_written:
             _write_macos_clipboard_text(previous_clipboard)
     if ok:
-        time.sleep(0.25)
+        time.sleep(settle_delay)
     return ok
 
 
@@ -3499,20 +3512,29 @@ def open_recent_notebook_by_name(
         if not ready and _recent_notebook_dialog_row_count(window) <= 0:
             return False
     try:
-        _clear_recent_notebooks_dialog_search(window)
-        _wait_for_recent_notebook_rows(window, timeout_sec=6.0)
+        initial_rows_timeout = 6.0 if wait_for_visible else 1.2
+        search_rows_timeout = 2.5 if wait_for_visible else 0.55
+        search_settle_sec = 0.25 if wait_for_visible else 0.09
+        _clear_recent_notebooks_dialog_search(window, settle_sec=search_settle_sec)
+        _wait_for_recent_notebook_rows(window, timeout_sec=initial_rows_timeout)
         opened = False
         dismissed_warning = False
 
         # Recent-notebook search is noticeably faster and more reliable on macOS
-        # than walking long tables via repeated arrow-key moves.
-        if _set_recent_notebooks_dialog_search(window, wanted_name):
-            _wait_for_recent_notebook_rows(window, timeout_sec=2.5)
+        # than walking long tables via repeated arrow-key moves. For the fast
+        # "open all" worker, keep search settle waits short so missing results
+        # do not stall every candidate for multiple seconds.
+        if _set_recent_notebooks_dialog_search(
+            window,
+            wanted_name,
+            settle_sec=search_settle_sec,
+        ):
+            _wait_for_recent_notebook_rows(window, timeout_sec=search_rows_timeout)
             opened = _press_recent_notebook_open(window, wanted_name)
 
         if not opened:
-            _clear_recent_notebooks_dialog_search(window)
-            _wait_for_recent_notebook_rows(window, timeout_sec=2.5)
+            _clear_recent_notebooks_dialog_search(window, settle_sec=search_settle_sec)
+            _wait_for_recent_notebook_rows(window, timeout_sec=search_rows_timeout)
             opened = _press_recent_notebook_open(window, wanted_name)
         if opened and not wait_for_visible:
             dismissed_warning = _drain_onenote_open_warning_dialogs(
