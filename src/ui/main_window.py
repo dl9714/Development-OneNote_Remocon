@@ -4229,10 +4229,12 @@ class OpenAllNotebooksWorker(QThread):
         self,
         sig: Dict[str, Any],
         notebook_candidates: Optional[List[Dict[str, Any]]] = None,
+        candidate_scope: str = "",
         parent=None,
     ):
         super().__init__(parent)
         self.sig = copy.deepcopy(sig or {})
+        self.candidate_scope = str(candidate_scope or "").strip()
         self.notebook_candidates = [
             dict(record)
             for record in (notebook_candidates or [])
@@ -4248,6 +4250,10 @@ class OpenAllNotebooksWorker(QThread):
             "remaining_names": [],
             "error": "",
             "verified_open_count": 0,
+            "candidate_scope": self.candidate_scope,
+            "candidate_total": 0,
+            "pending_count": 0,
+            "already_open_count": 0,
         }
         try:
             ensure_pywinauto()
@@ -4514,6 +4520,9 @@ class OpenAllNotebooksWorker(QThread):
                     if key not in open_names:
                         pending_records.append(dict(record))
                 overlap_keys = [key for key in records_by_key if key in open_names]
+                result["candidate_total"] = len(records_by_key)
+                result["pending_count"] = len(pending_records)
+                result["already_open_count"] = len(overlap_keys)
                 _mac_open_all_debug(
                     f"[DBG][OPEN_ALL][MAC] overlap={len(overlap_keys)}",
                     f"overlap-sample={[str((records_by_key.get(key) or {}).get('name') or '').strip() for key in overlap_keys[:8]]!r}",
@@ -4523,16 +4532,29 @@ class OpenAllNotebooksWorker(QThread):
                 )
 
                 total_targets = len(pending_records)
-                self.progress.emit(
-                    f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
-                )
+                if self.candidate_scope == "AGG_UNCLASSIFIED":
+                    self.progress.emit(
+                        "미분류 카테고리 전체 열기 준비 완료... "
+                        f"후보 {len(records_by_key)}개, 열 대상 {total_targets}개, "
+                        f"이미 열림 {len(overlap_keys)}개"
+                    )
+                else:
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 준비 완료... 대상 {total_targets}개"
+                    )
 
                 if not pending_records:
                     result["ok"] = True
-                    if open_detected_names:
+                    if overlap_keys:
+                        result["verified_open_count"] = len(overlap_keys)
+                        result["opened_names"] = [
+                            str((records_by_key.get(key) or {}).get("name") or "").strip()
+                            for key in overlap_keys
+                            if str((records_by_key.get(key) or {}).get("name") or "").strip()
+                        ]
+                    elif open_detected_names:
                         result["verified_open_count"] = len(open_detected_names)
                         result["opened_names"] = list(open_detected_names)
-                        result["refresh_open_notebooks"] = True
                     result["remaining_names"] = []
                     self.done.emit(result)
                     return
@@ -15614,10 +15636,17 @@ __CODEX_SKILL_TAGS__
         worker = OpenAllNotebooksWorker(
             sig,
             notebook_candidates=notebook_candidates,
+            candidate_scope=candidate_scope,
             parent=self,
         )
         self._open_all_notebooks_worker = worker
-        self.update_status_and_ui("실제 OneNote 전체 열기 준비 중...", True)
+        if IS_MACOS and candidate_scope == "AGG_UNCLASSIFIED":
+            self.update_status_and_ui(
+                "미분류 카테고리 기준 OneNote 전체 열기 준비 중...",
+                True,
+            )
+        else:
+            self.update_status_and_ui("실제 OneNote 전체 열기 준비 중...", True)
 
         def _on_progress(message: str):
             if self._open_all_notebooks_worker is worker:
@@ -15637,6 +15666,10 @@ __CODEX_SKILL_TAGS__
             is_connected = connected or bool(getattr(self, "onenote_window", None))
             opened_count = int(result.get("opened_count") or 0)
             verified_open_count = int(result.get("verified_open_count") or 0)
+            candidate_total = int(result.get("candidate_total") or 0)
+            pending_count = int(result.get("pending_count") or 0)
+            already_open_count = int(result.get("already_open_count") or 0)
+            result_scope = str(result.get("candidate_scope") or candidate_scope or "")
             remaining = result.get("remaining_names") or []
             error = (result.get("error") or "").strip()
 
@@ -15653,7 +15686,23 @@ __CODEX_SKILL_TAGS__
                             ", 종합 새로고침 예약"
                             if IS_MACOS
                             else ", 종합 새로고침"
-                        )
+                    )
+                    self.update_status_and_ui(status, is_connected)
+                elif (
+                    IS_MACOS
+                    and result_scope == "AGG_UNCLASSIFIED"
+                    and candidate_total > 0
+                    and pending_count == 0
+                ):
+                    already = already_open_count or verified_open_count
+                    status = (
+                        "미분류 카테고리 확인 완료: "
+                        f"후보 {candidate_total}개 중 열 대상 0개"
+                    )
+                    if already > 0:
+                        status += f", 이미 열림 {already}개"
+                    if should_refresh_open_notebooks:
+                        status += ", 종합 새로고침 예약"
                     self.update_status_and_ui(status, is_connected)
                 elif verified_open_count > 0:
                     self.update_status_and_ui(
