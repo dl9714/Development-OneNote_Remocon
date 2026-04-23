@@ -1095,6 +1095,32 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
     return out
 
 
+def _collect_known_notebook_name_records(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    records: Dict[str, Dict[str, Any]] = {}
+    for node in _collect_all_sections_dedup(settings):
+        if not isinstance(node, dict):
+            continue
+        target = node.get("target") or {}
+        notebook_name = (
+            str(target.get("notebook_text") or "").strip()
+            or (
+                str(node.get("name") or "").strip()
+                if str(node.get("type") or "").strip() == "notebook"
+                else ""
+            )
+        )
+        key = _normalize_notebook_name_key(notebook_name)
+        if not key or key in records:
+            continue
+        records[key] = {
+            "name": notebook_name,
+            "url": "",
+            "last_accessed_at": 0,
+            "source": "SETTINGS_BUFFER",
+        }
+    return list(records.values())
+
+
 # ----------------- 0.1 pywinauto 지연 로딩 -----------------
 Desktop = None
 WindowNotFoundError = None
@@ -3941,9 +3967,19 @@ class OpenAllNotebooksWorker(QThread):
     progress = pyqtSignal(str)
     done = pyqtSignal(dict)
 
-    def __init__(self, sig: Dict[str, Any], parent=None):
+    def __init__(
+        self,
+        sig: Dict[str, Any],
+        notebook_candidates: Optional[List[Dict[str, Any]]] = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.sig = copy.deepcopy(sig or {})
+        self.notebook_candidates = [
+            dict(record)
+            for record in (notebook_candidates or [])
+            if str((record or {}).get("name") or "").strip()
+        ]
 
     def run(self):
         result = {
@@ -4047,25 +4083,6 @@ class OpenAllNotebooksWorker(QThread):
                 ]
                 print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
                 if not recent_records:
-                    if not accessibility_trusted:
-                        result["error"] = (
-                            "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
-                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
-                            "다시 추가/허용해야 합니다."
-                        )
-                        result["refresh_open_notebooks"] = False
-                        self.done.emit(result)
-                        return
-
-                    if sidebar_error and not open_sidebar_names:
-                        result["error"] = (
-                            f"{sidebar_error} "
-                            "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
-                        )
-                        result["refresh_open_notebooks"] = False
-                        self.done.emit(result)
-                        return
-
                     if len(open_sidebar_names) > 1:
                         result["ok"] = True
                         result["verified_open_count"] = len(open_sidebar_names)
@@ -4075,7 +4092,7 @@ class OpenAllNotebooksWorker(QThread):
                         self.done.emit(result)
                         return
 
-                    recent_records = [
+                    fallback_records = [
                         dict(record)
                         for record in _collect_onenote_notebook_shortcuts()
                         if str((record or {}).get("name") or "").strip()
@@ -4083,8 +4100,38 @@ class OpenAllNotebooksWorker(QThread):
                     ]
                     print(
                         "[DBG][OPEN_ALL][MAC]",
-                        f"shortcut-records={len(recent_records)}",
+                        f"shortcut-records={len(fallback_records)}",
                     )
+                    if not fallback_records:
+                        fallback_records = [
+                            dict(record)
+                            for record in self.notebook_candidates
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                        print(
+                            "[DBG][OPEN_ALL][MAC]",
+                            f"settings-records={len(fallback_records)}",
+                        )
+                    if not fallback_records:
+                        if not accessibility_trusted:
+                            result["error"] = (
+                                "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
+                                "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
+                                "다시 추가/허용해야 합니다."
+                            )
+                            result["refresh_open_notebooks"] = False
+                            self.done.emit(result)
+                            return
+
+                        if sidebar_error and not open_sidebar_names:
+                            result["error"] = (
+                                f"{sidebar_error} "
+                                "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
+                            )
+                            result["refresh_open_notebooks"] = False
+                            self.done.emit(result)
+                            return
+                    recent_records = fallback_records
                 if not recent_records:
                     result["error"] = (
                         "최근 전자필기장 목록을 읽지 못했습니다. "
@@ -13600,6 +13647,31 @@ __CODEX_SKILL_TAGS__
         self.center_button.setEnabled(False)
         actions_layout.addWidget(self.center_button)
 
+        if IS_MACOS:
+            mac_bulk_actions_layout = QHBoxLayout()
+
+            self.open_all_notebooks_button = QPushButton("전자필기장 모두 열기")
+            self.open_all_notebooks_button.setToolTip(
+                "현재 연결된 OneNote 기준으로 아직 안 열린 전자필기장을 순서대로 엽니다."
+            )
+            self.open_all_notebooks_button.clicked.connect(
+                self._open_all_notebooks_from_connected_onenote
+            )
+            self.open_all_notebooks_button.setEnabled(False)
+            mac_bulk_actions_layout.addWidget(self.open_all_notebooks_button)
+
+            self.refresh_open_notebooks_button = QPushButton("열린 전자필기장 새로고침")
+            self.refresh_open_notebooks_button.setToolTip(
+                "현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼에 반영합니다."
+            )
+            self.refresh_open_notebooks_button.clicked.connect(
+                lambda: self._register_all_notebooks_from_current_onenote(force=True)
+            )
+            self.refresh_open_notebooks_button.setEnabled(False)
+            mac_bulk_actions_layout.addWidget(self.refresh_open_notebooks_button)
+
+            actions_layout.addLayout(mac_bulk_actions_layout)
+
         other_buttons_layout = QHBoxLayout()
         connect_other_button = QPushButton("다른 앱에 연결...")
         connect_other_button.clicked.connect(self.select_other_window)
@@ -13825,20 +13897,27 @@ __CODEX_SKILL_TAGS__
         search_button = getattr(self, "search_button", None)
         if search_button is not None:
             search_button.setEnabled(is_connected)
+        self._sync_connected_onenote_special_actions(is_connected)
+
+    def _sync_connected_onenote_special_actions(self, is_connected: bool) -> None:
         open_all_busy = bool(
             self._open_all_notebooks_worker
-            and self._open_all_notebooks_worker.isRunning()
+            and not self._open_all_notebooks_worker.isFinished()
         )
         refresh_open_busy = bool(
             self._open_notebooks_refresh_worker
-            and self._open_notebooks_refresh_worker.isRunning()
+            and not self._open_notebooks_refresh_worker.isFinished()
         )
+        open_all_enabled = is_connected and not open_all_busy
+        refresh_enabled = is_connected and not refresh_open_busy
         if hasattr(self, "open_all_notebooks_action"):
-            self.open_all_notebooks_action.setEnabled(is_connected and not open_all_busy)
+            self.open_all_notebooks_action.setEnabled(open_all_enabled)
+        if hasattr(self, "open_all_notebooks_button"):
+            self.open_all_notebooks_button.setEnabled(open_all_enabled)
         if hasattr(self, "refresh_open_notebooks_action"):
-            self.refresh_open_notebooks_action.setEnabled(
-                is_connected and not refresh_open_busy
-            )
+            self.refresh_open_notebooks_action.setEnabled(refresh_enabled)
+        if hasattr(self, "refresh_open_notebooks_button"):
+            self.refresh_open_notebooks_button.setEnabled(refresh_enabled)
 
     def _capture_onenote_list_selection_key(self):
         item = None
@@ -15042,7 +15121,11 @@ __CODEX_SKILL_TAGS__
             self.update_status_and_ui("오류: OneNote 창 정보를 읽지 못했습니다.", True)
             return
 
-        worker = OpenAllNotebooksWorker(sig, self)
+        worker = OpenAllNotebooksWorker(
+            sig,
+            notebook_candidates=_collect_known_notebook_name_records(self.settings),
+            parent=self,
+        )
         self._open_all_notebooks_worker = worker
         self.update_status_and_ui("실제 OneNote 전체 열기 준비 중...", True)
 
