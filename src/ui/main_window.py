@@ -13608,10 +13608,19 @@ __CODEX_SKILL_TAGS__
 
         special_menu = menubar.addMenu("&특수 기능")
         self.open_all_notebooks_action = QAction(
-            "실제 OneNote 전자필기장 모두 열기", self
+            (
+                "미분류 전자필기장 열기"
+                if IS_MACOS
+                else "실제 OneNote 전자필기장 모두 열기"
+            ),
+            self,
         )
         self.open_all_notebooks_action.setStatusTip(
-            "OneNote의 '전자 필기장 열기' 화면에서 아직 안 열린 전자필기장을 순서대로 엽니다."
+            (
+                "미분류 카테고리의 전자필기장 중 아직 안 열린 항목만 확인해서 엽니다."
+                if IS_MACOS
+                else "OneNote의 '전자 필기장 열기' 화면에서 아직 안 열린 전자필기장을 순서대로 엽니다."
+            )
         )
         self.open_all_notebooks_action.triggered.connect(
             self._open_all_notebooks_from_connected_onenote
@@ -14144,9 +14153,9 @@ __CODEX_SKILL_TAGS__
         if IS_MACOS:
             mac_bulk_actions_layout = QHBoxLayout()
 
-            self.open_all_notebooks_button = QPushButton("전자필기장 모두 열기")
+            self.open_all_notebooks_button = QPushButton("미분류 전자필기장 열기")
             self.open_all_notebooks_button.setToolTip(
-                "현재 연결된 OneNote 기준으로 아직 안 열린 전자필기장을 순서대로 엽니다."
+                "미분류 카테고리의 전자필기장 중 아직 안 열린 항목만 확인해서 엽니다."
             )
             self.open_all_notebooks_button.clicked.connect(
                 self._open_all_notebooks_from_connected_onenote
