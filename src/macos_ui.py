@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -139,6 +140,7 @@ _MAC_DEBUG_LOG_PATH = Path(
     os.path.expanduser("~/Library/Logs/OneNote_Remocon/macos_ui_debug.log")
 )
 _MAC_RECENT_CACHE_TIMED_OUT = False
+_MAC_RECENT_CACHE_READER_PATHS = ("/usr/bin/python3", sys.executable)
 _MAC_LAST_AX_NOTEBOOK_DEBUG: Dict[str, Any] = {}
 _MAC_RECENT_NOTEBOOK_DIALOG_TOKENS = (
     "최근 전자 필기장",
@@ -2568,28 +2570,114 @@ def _recent_notebook_records_from_cache_with_timeout(
     if _MAC_RECENT_CACHE_TIMED_OUT:
         return None
 
-    box: Dict[str, Any] = {}
-    done = threading.Event()
+    if not _MAC_ONENOTE_RESOURCEINFOCACHE_JSON.is_file():
+        return []
 
-    def _runner() -> None:
+    reader_script = r'''
+import json
+import os
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+path = Path(os.path.expanduser("""__CACHE_PATH__"""))
+if not path.is_file():
+    print("[]")
+    raise SystemExit(0)
+
+payload = json.loads(path.read_text(encoding="utf-8"))
+entries = payload.get("ResourceInfoCache") if isinstance(payload, dict) else []
+if not isinstance(entries, list):
+    print("[]")
+    raise SystemExit(0)
+
+def clean_field(value):
+    return " ".join(str(value or "").strip().split())
+
+def normalize_text(value):
+    return " ".join(str(value or "").strip().split()).casefold()
+
+def supported_recent_netloc(netloc):
+    host = str(netloc or "").strip().lower()
+    if not host:
+        return False
+    if host in {"d.docs.live.net", "onedrive.live.com", "1drv.ms"}:
+        return True
+    return host.endswith(".sharepoint.com") or host.endswith(".sharepoint-df.com")
+
+records = []
+seen = set()
+for item in sorted(
+    (entry for entry in entries if isinstance(entry, dict)),
+    key=lambda entry: int(entry.get("LastAccessedAt") or 0),
+    reverse=True,
+):
+    raw_url = str(item.get("Url") or "").strip()
+    if not raw_url:
+        continue
+    parsed = urlparse(raw_url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        continue
+    if not supported_recent_netloc(parsed.netloc):
+        continue
+    notebook_name = clean_field(item.get("Title") or item.get("title") or "")
+    if not notebook_name:
+        notebook_name = clean_field(unquote(parsed.path.rstrip("/").split("/")[-1]))
+    key = normalize_text(notebook_name)
+    if not key or key in seen:
+        continue
+    seen.add(key)
+    records.append({
+        "name": notebook_name,
+        "url": raw_url,
+        "last_accessed_at": int(item.get("LastAccessedAt") or 0),
+        "source": "MAC_RECENT_CACHE",
+    })
+print(json.dumps(records, ensure_ascii=False))
+'''.replace("__CACHE_PATH__", str(_MAC_ONENOTE_RESOURCEINFOCACHE_JSON).replace("\\", "\\\\").replace('"', '\\"'))
+
+    last_error = ""
+    for executable in _MAC_RECENT_CACHE_READER_PATHS:
+        if not executable or not os.path.exists(executable):
+            continue
         try:
-            box["value"] = _recent_notebook_records_from_cache()
+            completed = subprocess.run(
+                [executable, "-c", reader_script],
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=max(0.25, float(timeout_sec)),
+            )
+        except subprocess.TimeoutExpired:
+            _MAC_RECENT_CACHE_TIMED_OUT = True
+            _append_macos_debug_log(
+                "[DBG][MAC][RECENT_CACHE] subprocess-timeout "
+                f"timeout={timeout_sec:.2f}s"
+            )
+            return None
         except Exception as exc:
-            box["error"] = exc
-        finally:
-            done.set()
+            last_error = str(exc)
+            continue
+        if completed.returncode != 0:
+            last_error = (completed.stderr or completed.stdout or "").strip()
+            continue
+        try:
+            data = json.loads(completed.stdout or "[]")
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+        if not isinstance(data, list):
+            return []
+        return [
+            dict(record)
+            for record in data
+            if isinstance(record, dict)
+            and str(record.get("name") or "").strip()
+        ]
 
-    threading.Thread(
-        target=_runner,
-        name="onenote-mac-recent-cache",
-        daemon=True,
-    ).start()
-    if not done.wait(timeout_sec):
-        _MAC_RECENT_CACHE_TIMED_OUT = True
-        return None
-    if "error" in box:
-        raise box["error"]
-    return list(box.get("value") or [])
+    if last_error:
+        raise MacAutomationError(last_error)
+    return []
 
 
 def _onenote_protocol_url_from_web_url(web_url: str) -> str:
@@ -2602,7 +2690,11 @@ def _onenote_protocol_url_from_web_url(web_url: str) -> str:
     return f"onenote:{parsed.scheme}://{parsed.netloc}{path}{query}{fragment}"
 
 
-def recent_notebook_records(window: Optional[MacWindow] = None) -> List[Dict[str, Any]]:
+def recent_notebook_records(
+    window: Optional[MacWindow] = None,
+    *,
+    fast: bool = False,
+) -> List[Dict[str, Any]]:
     try:
         records = _recent_notebook_records_from_cache_with_timeout()
     except Exception:
@@ -2616,9 +2708,14 @@ def recent_notebook_records(window: Optional[MacWindow] = None) -> List[Dict[str
     if window is None:
         return []
 
-    names = recent_notebook_names(window)
+    names = recent_notebook_names(window, fast=fast)
     return [
-        {"name": name, "url": "", "last_accessed_at": 0}
+        {
+            "name": name,
+            "url": "",
+            "last_accessed_at": 0,
+            "source": "MAC_RECENT_DIALOG",
+        }
         for name in names
         if str(name or "").strip()
     ]
@@ -2628,6 +2725,7 @@ def open_recent_notebook_record(
     window: Optional[MacWindow],
     record: Dict[str, Any],
     wait_for_visible: bool = True,
+    fast: bool = False,
 ) -> bool:
     name = _clean_field(str((record or {}).get("name") or ""))
     web_url = str((record or {}).get("url") or "").strip()
@@ -2646,6 +2744,7 @@ def open_recent_notebook_record(
         window,
         name,
         wait_for_visible=wait_for_visible,
+        fast=fast,
     )
 
 
@@ -3036,8 +3135,16 @@ def _is_recent_notebooks_dialog_open(window: MacWindow) -> bool:
         return False
 
 
-def _open_recent_notebooks_dialog_with_state(window: MacWindow) -> Tuple[bool, bool]:
-    if _recent_notebook_dialog_row_count(window) > 0:
+def _open_recent_notebooks_dialog_with_state(
+    window: MacWindow,
+    *,
+    fast: bool = False,
+) -> Tuple[bool, bool]:
+    row_count_timeout = 2 if fast else 15
+    press_timeout = 4 if fast else 15
+    locator_timeout = 2 if fast else 5
+    open_wait_sec = 2.0 if fast else 4.0
+    if _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) > 0:
         return True, False
     sidebar_ready, opened_sidebar = _ensure_notebook_sidebar(window)
     if not sidebar_ready:
@@ -3047,17 +3154,17 @@ def _open_recent_notebooks_dialog_with_state(window: MacWindow) -> Tuple[bool, b
             window,
             help_contains=["전자 필기장 만들기 또는 열기"],
             value_equals=["전자 필기장 추가"],
-            timeout=15,
+            timeout=press_timeout,
         ):
             _restore_notebook_sidebar(window, opened_sidebar)
             return False, False
-        deadline = time.monotonic() + 4.0
+        deadline = time.monotonic() + open_wait_sec
         while time.monotonic() < deadline:
             time.sleep(0.12)
             try:
                 _run_osascript(
                     _recent_notebook_dialog_locator(window) + '\nreturn "OK"\nend tell\n',
-                    timeout=5,
+                    timeout=locator_timeout,
                 )
                 return True, opened_sidebar
             except Exception:
@@ -3142,6 +3249,7 @@ def _clear_recent_notebooks_dialog_search(
     window: MacWindow,
     *,
     settle_sec: float = 0.25,
+    timeout: int = 10,
 ) -> bool:
     settle_delay = max(0.05, float(settle_sec))
     script = _recent_notebook_dialog_locator(window) + r'''
@@ -3222,7 +3330,7 @@ on replaceText(findText, replaceText, sourceText)
 end replaceText
 '''
     try:
-        ok = _run_osascript(script, timeout=10).strip() == "OK"
+        ok = _run_osascript(script, timeout=timeout).strip() == "OK"
     except Exception:
         return False
     if ok:
@@ -3235,10 +3343,15 @@ def _set_recent_notebooks_dialog_search(
     search_text: str,
     *,
     settle_sec: float = 0.25,
+    timeout: int = 10,
 ) -> bool:
     wanted_text = _clean_field(search_text)
     if not wanted_text:
-        return _clear_recent_notebooks_dialog_search(window, settle_sec=settle_sec)
+        return _clear_recent_notebooks_dialog_search(
+            window,
+            settle_sec=settle_sec,
+            timeout=timeout,
+        )
     settle_delay = max(0.08, float(settle_sec))
     focus_delay = max(0.04, min(0.12, settle_delay / 2.0))
     key_delay = max(0.03, min(0.06, settle_delay / 3.0))
@@ -3299,7 +3412,7 @@ def _set_recent_notebooks_dialog_search(
 end tell
 '''
     try:
-        ok = _run_osascript(script, timeout=10).strip() == "OK"
+        ok = _run_osascript(script, timeout=timeout).strip() == "OK"
     except Exception:
         ok = False
     finally:
@@ -3310,7 +3423,11 @@ end tell
     return ok
 
 
-def _recent_notebook_dialog_names(window: MacWindow) -> List[str]:
+def _recent_notebook_dialog_names(
+    window: MacWindow,
+    *,
+    timeout: int = 35,
+) -> List[str]:
     script = _recent_notebook_dialog_locator(window) + r'''
     set resultItems to {}
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
@@ -3362,7 +3479,7 @@ on replaceText(findText, replaceText, sourceText)
     return newText
 end replaceText
 '''
-    raw = _run_osascript(script, timeout=35)
+    raw = _run_osascript(script, timeout=timeout)
     names: List[str] = []
     seen = set()
     for line in (raw or "").splitlines():
@@ -3375,7 +3492,11 @@ end replaceText
     return names
 
 
-def _recent_notebook_dialog_row_count(window: MacWindow) -> int:
+def _recent_notebook_dialog_row_count(
+    window: MacWindow,
+    *,
+    timeout: int = 15,
+) -> int:
     script = _recent_notebook_dialog_locator(window) + r'''
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
@@ -3406,7 +3527,7 @@ on replaceText(findText, replaceText, sourceText)
 end replaceText
 '''
     try:
-        raw = _run_osascript(script, timeout=15)
+        raw = _run_osascript(script, timeout=timeout)
     except Exception:
         return 0
     try:
@@ -3415,13 +3536,18 @@ end replaceText
         return 0
 
 
-def _wait_for_recent_notebook_rows(window: MacWindow, timeout_sec: float = 4.0) -> bool:
+def _wait_for_recent_notebook_rows(
+    window: MacWindow,
+    timeout_sec: float = 4.0,
+    *,
+    row_count_timeout: int = 15,
+) -> bool:
     deadline = time.monotonic() + max(0.5, timeout_sec)
     while time.monotonic() < deadline:
-        if _recent_notebook_dialog_row_count(window) > 0:
+        if _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) > 0:
             return True
         time.sleep(0.15)
-    return _recent_notebook_dialog_row_count(window) > 0
+    return _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) > 0
 
 
 def _recent_notebook_dialog_rows(window: MacWindow) -> List[Dict[str, Any]]:
@@ -3578,7 +3704,12 @@ def _drain_onenote_open_warning_dialogs(
     return dismissed
 
 
-def _press_recent_notebook_open(window: MacWindow, notebook_name: str) -> bool:
+def _press_recent_notebook_open(
+    window: MacWindow,
+    notebook_name: str,
+    *,
+    timeout: int = 15,
+) -> bool:
     script = _recent_notebook_dialog_locator(window) + f'''
     set wantedText to {_quote_applescript_text(notebook_name)}
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
@@ -3687,19 +3818,33 @@ on replaceText(findText, replaceText, sourceText)
     return newText
 end replaceText
 '''
-    return _run_osascript(script, timeout=15).strip() == "OK"
+    return _run_osascript(script, timeout=timeout).strip() == "OK"
 
 
-def recent_notebook_names(window: MacWindow) -> List[str]:
+def recent_notebook_names(window: MacWindow, *, fast: bool = False) -> List[str]:
     opened_sidebar = False
-    if _recent_notebook_dialog_row_count(window) <= 0:
-        ready, opened_sidebar = _open_recent_notebooks_dialog_with_state(window)
-        if not ready and _recent_notebook_dialog_row_count(window) <= 0:
+    row_count_timeout = 2 if fast else 15
+    clear_timeout = 3 if fast else 10
+    rows_timeout = 1.2 if fast else 6.0
+    names_timeout = 6 if fast else 35
+    if _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) <= 0:
+        ready, opened_sidebar = _open_recent_notebooks_dialog_with_state(
+            window,
+            fast=fast,
+        )
+        if (
+            not ready
+            and _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) <= 0
+        ):
             return []
     try:
-        _clear_recent_notebooks_dialog_search(window)
-        _wait_for_recent_notebook_rows(window, timeout_sec=6.0)
-        names = _recent_notebook_dialog_names(window)
+        _clear_recent_notebooks_dialog_search(window, timeout=clear_timeout)
+        _wait_for_recent_notebook_rows(
+            window,
+            timeout_sec=rows_timeout,
+            row_count_timeout=row_count_timeout,
+        )
+        names = _recent_notebook_dialog_names(window, timeout=names_timeout)
     except Exception:
         names = []
     finally:
@@ -4038,6 +4183,7 @@ def open_recent_notebook_by_name(
     notebook_name: str,
     *,
     wait_for_visible: bool = True,
+    fast: bool = False,
 ) -> bool:
     wanted_name = _clean_field(notebook_name)
     if not wanted_name:
@@ -4047,16 +4193,38 @@ def open_recent_notebook_by_name(
     except Exception:
         pass
     opened_sidebar = False
-    if _recent_notebook_dialog_row_count(window) <= 0:
-        ready, opened_sidebar = _open_recent_notebooks_dialog_with_state(window)
-        if not ready and _recent_notebook_dialog_row_count(window) <= 0:
+    row_count_timeout = 2 if fast else 15
+    clear_timeout = 3 if fast else 10
+    search_timeout = 4 if fast else 10
+    press_timeout = 5 if fast else 15
+    if _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) <= 0:
+        ready, opened_sidebar = _open_recent_notebooks_dialog_with_state(
+            window,
+            fast=fast,
+        )
+        if (
+            not ready
+            and _recent_notebook_dialog_row_count(window, timeout=row_count_timeout) <= 0
+        ):
             return False
     try:
-        initial_rows_timeout = 6.0 if wait_for_visible else 1.2
-        search_rows_timeout = 2.5 if wait_for_visible else 0.55
-        search_settle_sec = 0.25 if wait_for_visible else 0.09
-        _clear_recent_notebooks_dialog_search(window, settle_sec=search_settle_sec)
-        _wait_for_recent_notebook_rows(window, timeout_sec=initial_rows_timeout)
+        initial_rows_timeout = (
+            1.2 if fast else (6.0 if wait_for_visible else 1.2)
+        )
+        search_rows_timeout = (
+            0.5 if fast else (2.5 if wait_for_visible else 0.55)
+        )
+        search_settle_sec = 0.08 if fast else (0.25 if wait_for_visible else 0.09)
+        _clear_recent_notebooks_dialog_search(
+            window,
+            settle_sec=search_settle_sec,
+            timeout=clear_timeout,
+        )
+        _wait_for_recent_notebook_rows(
+            window,
+            timeout_sec=initial_rows_timeout,
+            row_count_timeout=row_count_timeout,
+        )
         opened = False
         dismissed_warning = False
 
@@ -4068,14 +4236,35 @@ def open_recent_notebook_by_name(
             window,
             wanted_name,
             settle_sec=search_settle_sec,
+            timeout=search_timeout,
         ):
-            _wait_for_recent_notebook_rows(window, timeout_sec=search_rows_timeout)
-            opened = _press_recent_notebook_open(window, wanted_name)
+            _wait_for_recent_notebook_rows(
+                window,
+                timeout_sec=search_rows_timeout,
+                row_count_timeout=row_count_timeout,
+            )
+            opened = _press_recent_notebook_open(
+                window,
+                wanted_name,
+                timeout=press_timeout,
+            )
 
         if not opened:
-            _clear_recent_notebooks_dialog_search(window, settle_sec=search_settle_sec)
-            _wait_for_recent_notebook_rows(window, timeout_sec=search_rows_timeout)
-            opened = _press_recent_notebook_open(window, wanted_name)
+            _clear_recent_notebooks_dialog_search(
+                window,
+                settle_sec=search_settle_sec,
+                timeout=clear_timeout,
+            )
+            _wait_for_recent_notebook_rows(
+                window,
+                timeout_sec=search_rows_timeout,
+                row_count_timeout=row_count_timeout,
+            )
+            opened = _press_recent_notebook_open(
+                window,
+                wanted_name,
+                timeout=press_timeout,
+            )
         if opened and not wait_for_visible:
             dismissed_warning = _drain_onenote_open_warning_dialogs(
                 window,

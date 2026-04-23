@@ -4544,6 +4544,59 @@ class OpenAllNotebooksWorker(QThread):
                     f"settings-records={len(settings_records)}",
                     f"settings-sample={[str((record or {}).get('name') or '').strip() for record in settings_records[:8]]!r}",
                 )
+                if (
+                    candidate_limited_mode
+                    and settings_records
+                    and not recent_records
+                    and accessibility_trusted
+                ):
+                    self.progress.emit(
+                        f"{mac_open_action_label} 준비 중... 최근 목록 UI 빠른 스냅샷"
+                    )
+                    dialog_recent_box: Dict[str, Any] = {}
+                    dialog_recent_done = threading.Event()
+
+                    def _read_dialog_recent_records() -> None:
+                        try:
+                            dialog_recent_box["records"] = [
+                                dict(record)
+                                for record in mac_recent_notebook_records(win, fast=True)
+                                if str((record or {}).get("name") or "").strip()
+                            ]
+                        except Exception as exc:
+                            dialog_recent_box["error"] = exc
+                        finally:
+                            dialog_recent_done.set()
+
+                    threading.Thread(
+                        target=_read_dialog_recent_records,
+                        name="onenote-recent-dialog-fast-scan",
+                        daemon=True,
+                    ).start()
+                    if dialog_recent_done.wait(10.0):
+                        if "error" in dialog_recent_box:
+                            _mac_open_all_debug(
+                                "[WARN][OPEN_ALL_NOTEBOOKS][MAC][RECENT_DIALOG]",
+                                str(dialog_recent_box["error"]),
+                            )
+                        else:
+                            recent_records = [
+                                dict(record)
+                                for record in (dialog_recent_box.get("records") or [])
+                                if str((record or {}).get("name") or "").strip()
+                            ]
+                            for record in recent_records:
+                                if not str(record.get("source") or "").strip():
+                                    record["source"] = "MAC_RECENT_DIALOG"
+                    else:
+                        _mac_open_all_debug(
+                            "[WARN][OPEN_ALL_NOTEBOOKS][MAC][RECENT_DIALOG] timed out after 10s"
+                        )
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"recent-dialog-records={len(recent_records)}",
+                        f"recent-dialog-sample={[str((record or {}).get('name') or '').strip() for record in recent_records[:8]]!r}",
+                    )
 
                 merged_records_by_key: Dict[str, Dict[str, Any]] = {}
 
@@ -4836,6 +4889,7 @@ class OpenAllNotebooksWorker(QThread):
                             win,
                             record,
                             wait_for_visible=False,
+                            fast=candidate_limited_mode,
                         )
                     except Exception as e:
                         opened = False
@@ -4922,6 +4976,7 @@ class OpenAllNotebooksWorker(QThread):
                                 win,
                                 record,
                                 wait_for_visible=False,
+                                fast=candidate_limited_mode,
                             )
                         except Exception as e:
                             opened = False
