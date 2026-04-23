@@ -258,11 +258,11 @@ def _remocon_workspace_tab_title() -> str:
 
 
 def _current_add_button_label() -> str:
-    return "현재 보기 추가" if IS_MACOS else "현재 전자필기장 추가"
+    return "현재 전자필기장 보기 추가" if IS_MACOS else "현재 전자필기장 추가"
 
 
 def _favorite_activate_button_label() -> str:
-    return "선택 보기 복구" if IS_MACOS else "선택 항목 실행"
+    return "선택 전자필기장 보기" if IS_MACOS else "선택 항목 실행"
 
 
 def _connection_group_title() -> str:
@@ -290,7 +290,7 @@ def _rename_button_label() -> str:
 
 
 def _favorites_group_title() -> str:
-    return "보기 바로가기" if IS_MACOS else "모듈영역"
+    return "전자필기장 보기" if IS_MACOS else "모듈영역"
 
 
 def _register_all_notebooks_button_label() -> str:
@@ -299,7 +299,7 @@ def _register_all_notebooks_button_label() -> str:
 
 def _onenote_list_hint_text() -> str:
     if IS_MACOS:
-        return "더블클릭 또는 Enter로 연결 후 섹션/페이지 보기 복구"
+        return "더블클릭 또는 Enter로 연결 후 현재 전자필기장 보기 열기"
     return "더블클릭 또는 Enter로 연결 및 중앙 정렬"
 
 
@@ -338,7 +338,7 @@ def _project_search_status_text(
 
 def _primary_restore_button_text() -> str:
     if IS_MACOS:
-        return "현재 선택 위치 보기 복구"
+        return "현재 전자필기장 보기"
     return f"현재 선택된 {_center_target_ui_name()} 중앙으로 정렬"
 
 
@@ -4187,6 +4187,7 @@ class OpenAllNotebooksWorker(QThread):
 
             if IS_MACOS:
                 print("[DBG][OPEN_ALL][MAC] branch-start")
+                self.progress.emit("실제 OneNote 전체 열기 준비 중... 현재 열린 목록 확인")
                 initial_notebook_name = _preferred_connected_window_title_quick(
                     win,
                     self.sig,
@@ -4250,15 +4251,47 @@ class OpenAllNotebooksWorker(QThread):
                 else:
                     print("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
 
-                try:
-                    recent_records = [
-                        dict(record)
-                        for record in mac_recent_notebook_records_from_cache()
-                        if str((record or {}).get("name") or "").strip()
-                    ]
-                except Exception:
+                self.progress.emit("실제 OneNote 전체 열기 준비 중... 최근 전자필기장 캐시 확인")
+                recent_box: Dict[str, Any] = {}
+                recent_done = threading.Event()
+
+                def _read_recent_records() -> None:
+                    try:
+                        recent_box["records"] = [
+                            dict(record)
+                            for record in mac_recent_notebook_records_from_cache()
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                    except Exception as exc:
+                        recent_box["error"] = exc
+                    finally:
+                        recent_done.set()
+
+                threading.Thread(
+                    target=_read_recent_records,
+                    name="onenote-recent-cache-scan",
+                    daemon=True,
+                ).start()
+                if recent_done.wait(1.5):
+                    if "error" in recent_box:
+                        print(
+                            "[WARN][OPEN_ALL_NOTEBOOKS][MAC][RECENT_CACHE]",
+                            str(recent_box["error"]),
+                        )
+                        recent_records = []
+                    else:
+                        recent_records = [
+                            dict(record)
+                            for record in (recent_box.get("records") or [])
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                else:
+                    print(
+                        "[WARN][OPEN_ALL_NOTEBOOKS][MAC][RECENT_CACHE] timed out after 1.5s"
+                    )
                     recent_records = []
                 print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
+                self.progress.emit("실제 OneNote 전체 열기 준비 중... OneDrive 바로가기 확인")
                 shortcut_box: Dict[str, Any] = {}
                 shortcut_done = threading.Event()
 
@@ -4301,6 +4334,7 @@ class OpenAllNotebooksWorker(QThread):
                     "[DBG][OPEN_ALL][MAC]",
                     f"shortcut-records={len(shortcut_records)}",
                 )
+                self.progress.emit("실제 OneNote 전체 열기 준비 중... 저장된 후보 병합")
                 settings_records = [
                     dict(record)
                     for record in self.notebook_candidates
@@ -15292,7 +15326,7 @@ __CODEX_SKILL_TAGS__
                     fallback=str(item_name or ""),
                 )
                 success_message = (
-                    f"성공: OneNote 보기 복구 완료."
+                    f"성공: 현재 전자필기장 보기 열기 완료."
                     + (f" {summary}" if summary else "")
                 )
             else:
@@ -15317,7 +15351,7 @@ __CODEX_SKILL_TAGS__
                         fallback=str(item_name or ""),
                     )
                     success_message = (
-                        f"성공: OneNote 보기 복구 완료."
+                        f"성공: 현재 전자필기장 보기 열기 완료."
                         + (f" {summary}" if summary else "")
                     )
                 else:
@@ -15337,7 +15371,7 @@ __CODEX_SKILL_TAGS__
             )
             self.update_status_and_ui(
                 (
-                    "실패: 현재 섹션/페이지 보기 복구를 완료하지 못했습니다."
+                    "실패: 현재 전자필기장 보기 열기를 완료하지 못했습니다."
                     if IS_MACOS
                     else "실패: 선택 항목을 찾거나 정렬하지 못했습니다."
                 ),
