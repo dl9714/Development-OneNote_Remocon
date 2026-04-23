@@ -305,8 +305,15 @@ def _register_all_notebooks_button_label() -> str:
     return "열린 전자필기장 새로고침" if IS_MACOS else "종합 새로고침"
 
 
-def _open_unchecked_notebooks_button_label() -> str:
-    return "체크 없는 전자필기장 열기"
+def _open_unchecked_notebooks_button_label(candidate_count: Optional[int] = None) -> str:
+    base = "체크 없는 전자필기장 열기"
+    if candidate_count is None:
+        return base
+    try:
+        count = max(0, int(candidate_count))
+    except Exception:
+        return base
+    return f"{base} ({count}개)"
 
 
 def _open_unchecked_notebooks_tip() -> str:
@@ -5311,6 +5318,9 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_classified_keys_cache_valid = False
         self._aggregate_classified_keys_cache: Set[str] = set()
         self._aggregate_reclassify_in_progress = False
+        self._open_all_candidate_count: Optional[int] = None
+        self._open_all_candidate_scope: str = ""
+        self._open_all_candidate_count_dirty = True
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
         self._settings_save_timer.timeout.connect(self._flush_pending_settings_save)
@@ -14483,6 +14493,10 @@ __CODEX_SKILL_TAGS__
         )
         open_all_enabled = is_connected and not open_all_busy
         refresh_enabled = is_connected and not refresh_open_busy
+        self._sync_open_all_notebooks_action_label(
+            recalculate=open_all_enabled,
+            busy=open_all_busy,
+        )
         if hasattr(self, "open_all_notebooks_action"):
             self.open_all_notebooks_action.setEnabled(open_all_enabled)
         if hasattr(self, "open_all_notebooks_button"):
@@ -14491,6 +14505,43 @@ __CODEX_SKILL_TAGS__
             self.refresh_open_notebooks_action.setEnabled(refresh_enabled)
         if hasattr(self, "refresh_open_notebooks_button"):
             self.refresh_open_notebooks_button.setEnabled(refresh_enabled)
+
+    def _sync_open_all_notebooks_action_label(
+        self,
+        *,
+        recalculate: bool = False,
+        busy: bool = False,
+    ) -> None:
+        if busy:
+            label = "체크 없는 전자필기장 여는 중..."
+            tip = _open_unchecked_notebooks_tip()
+        else:
+            if recalculate and getattr(self, "_open_all_candidate_count_dirty", True):
+                try:
+                    candidates = self._collect_open_all_notebook_candidates()
+                    scope = str(
+                        getattr(self, "_last_open_all_candidate_scope", "") or ""
+                    )
+                    self._open_all_candidate_scope = scope
+                    self._open_all_candidate_count = (
+                        len(candidates) if scope == "AGG_UNCHECKED" else None
+                    )
+                except Exception as exc:
+                    print(f"[WARN][OPEN_ALL][COUNT] {exc}")
+                    self._open_all_candidate_scope = ""
+                    self._open_all_candidate_count = None
+                self._open_all_candidate_count_dirty = False
+            count = getattr(self, "_open_all_candidate_count", None)
+            label = _open_unchecked_notebooks_button_label(count)
+            tip = _open_unchecked_notebooks_tip()
+            if isinstance(count, int):
+                tip += f"\n현재 체크 없는 후보: {count}개"
+        if hasattr(self, "open_all_notebooks_action"):
+            self.open_all_notebooks_action.setText(label)
+            self.open_all_notebooks_action.setStatusTip(tip)
+        if hasattr(self, "open_all_notebooks_button"):
+            self.open_all_notebooks_button.setText(label)
+            self.open_all_notebooks_button.setToolTip(tip)
 
     def _capture_onenote_list_selection_key(self):
         item = None
@@ -15707,9 +15758,14 @@ __CODEX_SKILL_TAGS__
             f"count={len(notebook_candidates)}",
             f"sample={[str((record or {}).get('name') or '').strip() for record in notebook_candidates[:8]]!r}",
         )
+        self._open_all_candidate_scope = candidate_scope
+        self._open_all_candidate_count = (
+            len(notebook_candidates) if candidate_scope == "AGG_UNCHECKED" else None
+        )
+        self._open_all_candidate_count_dirty = False
         if candidate_scope == "AGG_UNCHECKED" and not notebook_candidates:
             self.update_status_and_ui(
-                "체크 안 된 전자필기장 열 대상이 없습니다.",
+                "체크 없는 전자필기장 열 대상이 없습니다.",
                 False,
             )
             return
@@ -15737,6 +15793,7 @@ __CODEX_SKILL_TAGS__
                 return
 
             self._open_all_notebooks_worker = None
+            self._open_all_candidate_count_dirty = True
             try:
                 worker.deleteLater()
             except Exception:
@@ -15779,7 +15836,7 @@ __CODEX_SKILL_TAGS__
                 ):
                     already = already_open_count or verified_open_count
                     status = (
-                        "체크 안 된 전자필기장 확인 완료: "
+                        "체크 없는 전자필기장 확인 완료: "
                         f"후보 {candidate_total}개 중 열 대상 0개"
                     )
                     if already > 0:
@@ -15886,6 +15943,7 @@ __CODEX_SKILL_TAGS__
         if invalidate_classified_keys:
             self._aggregate_classified_keys_cache_valid = False
             self._aggregate_classified_keys_cache = set()
+        self._open_all_candidate_count_dirty = True
 
     def _get_sorted_aggregate_display_nodes(self, nodes, *, kind: str):
         """
@@ -16187,6 +16245,7 @@ __CODEX_SKILL_TAGS__
             settings_node["data"] = data
             self._active_buffer_settings_node = settings_node
             if not new_sig or new_sig != old_sig:
+                self._open_all_candidate_count_dirty = True
                 self._save_settings_to_file()
 
     def _refresh_active_aggregate_classification_from_saved_data(
@@ -16235,7 +16294,7 @@ __CODEX_SKILL_TAGS__
                     classified_count = len(categorized[1].get("children") or [])
                     self.connection_status_label.setText(
                         "종합 분류 새로고침 완료: "
-                        f"미분류 {unclassified_count}개, 분류됨 {classified_count}개"
+                        f"분류 안 됨 {unclassified_count}개, 분류됨 {classified_count}개"
                     )
                 except Exception:
                     pass
@@ -18849,7 +18908,7 @@ __CODEX_SKILL_TAGS__
                     f"{prefix}: "
                     f"전체 {len(notebook_nodes)}개, "
                     f"열림 체크 {open_checked_count}개, "
-                    f"미분류 {unclassified_count}개, "
+                    f"분류 안 됨 {unclassified_count}개, "
                     f"분류됨 {classified_count}개 "
                     f"(known+{known_records_added}) "
                     f"({source}, {elapsed_ms:.0f}ms)"
