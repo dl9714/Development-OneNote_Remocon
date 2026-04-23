@@ -4627,6 +4627,16 @@ class OpenAllNotebooksWorker(QThread):
                     except Exception as e:
                         opened = False
                         failed_details.append(f"{name}: {e}")
+                    if not opened:
+                        try:
+                            notebook_result = _mac_ensure_notebook_context_for_section(
+                                win,
+                                name,
+                            )
+                            opened = bool(notebook_result.get("ok"))
+                        except Exception as e:
+                            if not any(detail.startswith(f"{name}:") for detail in failed_details):
+                                failed_details.append(f"{name}: {e}")
                     print(f"[DBG][OPEN_ALL][MAC] launched={opened} name={name}")
 
                     if not opened:
@@ -4680,6 +4690,16 @@ class OpenAllNotebooksWorker(QThread):
                         except Exception as e:
                             opened = False
                             retry_details.append(f"{name}: {e}")
+                        if not opened:
+                            try:
+                                notebook_result = _mac_ensure_notebook_context_for_section(
+                                    win,
+                                    name,
+                                )
+                                opened = bool(notebook_result.get("ok"))
+                            except Exception as e:
+                                if not any(detail.startswith(f"{name}:") for detail in retry_details):
+                                    retry_details.append(f"{name}: {e}")
 
                         if opened:
                             result["opened_names"].append(name)
