@@ -2879,7 +2879,7 @@ def _get_open_notebook_records_via_com(
             try:
                 cache_records = [
                     dict(record)
-                    for record in mac_recent_notebook_records_from_cache()
+                    for record in mac_recent_notebook_records(None)
                     if str((record or {}).get("name") or "").strip()
                 ]
             except Exception:
@@ -4402,7 +4402,7 @@ class OpenAllNotebooksWorker(QThread):
                     try:
                         recent_box["records"] = [
                             dict(record)
-                            for record in mac_recent_notebook_records_from_cache()
+                            for record in mac_recent_notebook_records(None)
                             if str((record or {}).get("name") or "").strip()
                         ]
                     except Exception as exc:
@@ -4637,6 +4637,16 @@ class OpenAllNotebooksWorker(QThread):
                     for record in pending_records
                     if not str((record or {}).get("url") or "").strip()
                 ]
+                if candidate_limited_mode:
+                    self.progress.emit(
+                        f"{mac_open_action_label} 실행 방식 확정... "
+                        f"URL 일괄 {len(bulk_records)}개, UI 보조 {len(ui_pending_records)}개"
+                    )
+                    if not bulk_records and ui_pending_records:
+                        self.progress.emit(
+                            f"{mac_open_action_label} URL 후보 없음... "
+                            "최근 목록 UI 보조 자동화로 진행"
+                        )
                 if bulk_records:
                     bulk_total = len(bulk_records)
                     self.progress.emit(
@@ -5320,6 +5330,7 @@ class OneNoteScrollRemoconApp(QMainWindow):
         self._aggregate_reclassify_in_progress = False
         self._open_all_candidate_count: Optional[int] = None
         self._open_all_candidate_scope: str = ""
+        self._open_all_candidate_stats: Dict[str, int] = {}
         self._open_all_candidate_count_dirty = True
         self._settings_save_timer = QTimer(self)
         self._settings_save_timer.setSingleShot(True)
@@ -14526,22 +14537,72 @@ __CODEX_SKILL_TAGS__
                     self._open_all_candidate_count = (
                         len(candidates) if scope == "AGG_UNCHECKED" else None
                     )
+                    self._open_all_candidate_stats = (
+                        self._summarize_open_all_notebook_candidates(candidates)
+                        if scope == "AGG_UNCHECKED"
+                        else {}
+                    )
                 except Exception as exc:
                     print(f"[WARN][OPEN_ALL][COUNT] {exc}")
                     self._open_all_candidate_scope = ""
                     self._open_all_candidate_count = None
+                    self._open_all_candidate_stats = {}
                 self._open_all_candidate_count_dirty = False
             count = getattr(self, "_open_all_candidate_count", None)
             label = _open_unchecked_notebooks_button_label(count)
             tip = _open_unchecked_notebooks_tip()
             if isinstance(count, int):
                 tip += f"\n현재 체크 없는 후보: {count}개"
+                stats_text = self._format_open_all_candidate_stats_for_tip(
+                    getattr(self, "_open_all_candidate_stats", {})
+                )
+                if stats_text:
+                    tip += f"\n자동화 방식: {stats_text}"
         if hasattr(self, "open_all_notebooks_action"):
             self.open_all_notebooks_action.setText(label)
             self.open_all_notebooks_action.setStatusTip(tip)
         if hasattr(self, "open_all_notebooks_button"):
             self.open_all_notebooks_button.setText(label)
             self.open_all_notebooks_button.setToolTip(tip)
+
+    def _summarize_open_all_notebook_candidates(
+        self, candidates: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
+        stats = {
+            "total": 0,
+            "url": 0,
+            "path": 0,
+            "direct": 0,
+            "ui": 0,
+        }
+        for record in candidates or []:
+            if not str((record or {}).get("name") or "").strip():
+                continue
+            stats["total"] += 1
+            has_url = bool(str((record or {}).get("url") or "").strip())
+            has_path = bool(str((record or {}).get("path") or "").strip())
+            if has_url:
+                stats["url"] += 1
+                stats["direct"] += 1
+            elif has_path and not IS_MACOS:
+                stats["path"] += 1
+                stats["direct"] += 1
+            else:
+                stats["ui"] += 1
+        return stats
+
+    def _format_open_all_candidate_stats_for_tip(self, stats: Dict[str, int]) -> str:
+        if not isinstance(stats, dict) or int(stats.get("total") or 0) <= 0:
+            return ""
+        if IS_MACOS:
+            return (
+                f"URL 일괄 {int(stats.get('url') or 0)}개, "
+                f"UI 보조 {int(stats.get('ui') or 0)}개"
+            )
+        return (
+            f"바로가기/URL 자동 {int(stats.get('direct') or 0)}개, "
+            f"UI 보조 {int(stats.get('ui') or 0)}개"
+        )
 
     def _capture_onenote_list_selection_key(self):
         item = None
@@ -15762,6 +15823,11 @@ __CODEX_SKILL_TAGS__
         self._open_all_candidate_count = (
             len(notebook_candidates) if candidate_scope == "AGG_UNCHECKED" else None
         )
+        self._open_all_candidate_stats = (
+            self._summarize_open_all_notebook_candidates(notebook_candidates)
+            if candidate_scope == "AGG_UNCHECKED"
+            else {}
+        )
         self._open_all_candidate_count_dirty = False
         if candidate_scope == "AGG_UNCHECKED" and not notebook_candidates:
             self.update_status_and_ui(
@@ -15777,8 +15843,12 @@ __CODEX_SKILL_TAGS__
         )
         self._open_all_notebooks_worker = worker
         if candidate_scope == "AGG_UNCHECKED":
+            stats_text = self._format_open_all_candidate_stats_for_tip(
+                getattr(self, "_open_all_candidate_stats", {})
+            )
+            suffix = f" ({stats_text})" if stats_text else ""
             self.update_status_and_ui(
-                f"{_open_unchecked_notebooks_button_label()} 준비 중...",
+                f"{_open_unchecked_notebooks_button_label(len(notebook_candidates))} 준비 중...{suffix}",
                 True,
             )
         else:
