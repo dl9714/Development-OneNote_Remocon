@@ -3825,27 +3825,12 @@ class OpenAllNotebooksWorker(QThread):
                     win,
                     self.sig,
                 )
-                open_names = set()
-                print("[DBG][OPEN_ALL][MAC] open-name precheck skipped for bulk launch")
+                open_names: Set[str] = set()
+                open_sidebar_names: List[str] = []
+                sidebar_error = ""
+                accessibility_trusted = macos_accessibility_is_trusted()
 
-                recent_records = [
-                    dict(record)
-                    for record in mac_recent_notebook_records(None)
-                    if str((record or {}).get("name") or "").strip()
-                ]
-                print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
-                if not recent_records:
-                    if not macos_accessibility_is_trusted():
-                        result["error"] = (
-                            "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
-                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
-                            "다시 추가/허용해야 합니다."
-                        )
-                        result["refresh_open_notebooks"] = False
-                        self.done.emit(result)
-                        return
-
-                    open_sidebar_names: List[str] = []
+                if accessibility_trusted:
                     sidebar_box: Dict[str, Any] = {}
                     sidebar_done = threading.Event()
 
@@ -3868,15 +3853,54 @@ class OpenAllNotebooksWorker(QThread):
                     sidebar_thread.start()
                     if sidebar_done.wait(8.0):
                         if "error" in sidebar_box:
+                            sidebar_error = str(sidebar_box["error"])
                             print(
                                 "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SIDEBAR]",
-                                sidebar_box["error"],
+                                sidebar_error,
                             )
                         else:
-                            open_sidebar_names = list(sidebar_box.get("names") or [])
+                            open_sidebar_names = [
+                                str(name or "").strip()
+                                for name in (sidebar_box.get("names") or [])
+                                if str(name or "").strip()
+                            ]
+                            open_names = {
+                                _normalize_notebook_name_key(name)
+                                for name in open_sidebar_names
+                                if _normalize_notebook_name_key(name)
+                            }
                     else:
+                        sidebar_error = (
+                            "OneNote 열린 전자필기장 목록 읽기가 8초를 넘어 중단되었습니다."
+                        )
+                    print(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"open-sidebar={len(open_sidebar_names)}",
+                        f"sidebar-error={sidebar_error!r}",
+                    )
+                else:
+                    print("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
+
+                recent_records = [
+                    dict(record)
+                    for record in mac_recent_notebook_records(win)
+                    if str((record or {}).get("name") or "").strip()
+                ]
+                print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
+                if not recent_records:
+                    if not accessibility_trusted:
                         result["error"] = (
-                            "OneNote 열린 전자필기장 목록 읽기가 8초를 넘어 중단되었습니다. "
+                            "macOS 손쉬운 사용 권한이 현재 앱 빌드에 적용되지 않았습니다. "
+                            "개인정보 보호 및 보안 > 손쉬운 사용에서 OneNote_Remocon.app을 "
+                            "다시 추가/허용해야 합니다."
+                        )
+                        result["refresh_open_notebooks"] = False
+                        self.done.emit(result)
+                        return
+
+                    if sidebar_error and not open_sidebar_names:
+                        result["error"] = (
+                            f"{sidebar_error} "
                             "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
                         )
                         result["refresh_open_notebooks"] = False
@@ -3905,7 +3929,7 @@ class OpenAllNotebooksWorker(QThread):
                 if not recent_records:
                     result["error"] = (
                         "최근 전자필기장 목록을 읽지 못했습니다. "
-                        "OneNote가 캐시 접근을 막는 상태라 앱이 멈추지 않도록 "
+                        "OneNote 최근 목록/캐시/바로가기 후보가 모두 비어 있어 "
                         "전체 열기 요청을 건너뜁니다."
                     )
                     result["refresh_open_notebooks"] = False
@@ -3930,6 +3954,10 @@ class OpenAllNotebooksWorker(QThread):
 
                 if not pending_records:
                     result["ok"] = True
+                    if open_sidebar_names:
+                        result["verified_open_count"] = len(open_sidebar_names)
+                        result["opened_names"] = list(open_sidebar_names)
+                        result["refresh_open_notebooks"] = True
                     result["remaining_names"] = []
                     self.done.emit(result)
                     return
@@ -3986,29 +4014,34 @@ class OpenAllNotebooksWorker(QThread):
                         f" URL {result['opened_count']}개 요청"
                     )
                     time.sleep(1.5)
-                    pending_records = []
-                    total_targets = 0
-
                 if ui_pending_records:
+                    deduped_ui_records = []
+                    seen_ui_keys = set()
                     for record in ui_pending_records:
                         name = str(record.get("name") or "").strip()
-                        if not name:
+                        key = _normalize_notebook_name_key(name)
+                        if not key or key in seen_ui_keys:
                             continue
-                        failed_names.append(name)
-                        failed_details.append(
-                            f"{name}: macOS 일괄 열기에 사용할 URL을 찾지 못했습니다."
-                        )
+                        seen_ui_keys.add(key)
+                        deduped_ui_records.append(dict(record))
+                    ui_pending_records = deduped_ui_records
 
-                for index, record in enumerate(pending_records, start=1):
+                ui_total = len(ui_pending_records)
+                if ui_pending_records:
+                    self.progress.emit(
+                        f"실제 OneNote 전체 열기 최근 목록 UI 실행 중... {ui_total}개"
+                    )
+
+                for index, record in enumerate(ui_pending_records, start=1):
                     name = str(record.get("name") or "").strip()
-                    print(f"[DBG][OPEN_ALL][MAC] try-open {index}/{total_targets}: {name}")
+                    print(f"[DBG][OPEN_ALL][MAC] try-open-ui {index}/{ui_total}: {name}")
                     if self.isInterruptionRequested():
                         result["error"] = "사용자 중단"
                         self.done.emit(result)
                         return
 
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 시도 - {name}"
+                        f"실제 OneNote 전체 열기 진행 중... {index}/{ui_total} 시도 - {name}"
                     )
                     try:
                         opened = mac_open_recent_notebook_record(
@@ -4031,7 +4064,7 @@ class OpenAllNotebooksWorker(QThread):
                     result["opened_names"].append(name)
                     result["opened_count"] += 1
                     self.progress.emit(
-                        f"실제 OneNote 전체 열기 진행 중... {index}/{total_targets} 요청 완료 - {name}"
+                        f"실제 OneNote 전체 열기 진행 중... {index}/{ui_total} 요청 완료 - {name}"
                     )
 
                 if failed_records:
