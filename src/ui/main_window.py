@@ -18531,6 +18531,26 @@ __CODEX_SKILL_TAGS__
                 except Exception as e:
                     print(f"[WARN][AGG_REFRESH][UI_FALLBACK] {e}")
 
+            known_records_added = 0
+            try:
+                known_records = _collect_known_notebook_name_records(self.settings)
+            except Exception as e:
+                known_records = []
+                print(f"[WARN][AGG_REFRESH][KNOWN] {e}")
+            before_known_merge = len(notebook_nodes)
+            for record in known_records:
+                _append_notebook_node(
+                    record.get("name", ""),
+                    notebook_id=record.get("id", ""),
+                    notebook_path=record.get("path", ""),
+                    notebook_url=record.get("url", ""),
+                    last_accessed_at=record.get("last_accessed_at", 0),
+                    notebook_source=record.get("source", ""),
+                )
+            known_records_added = max(0, len(notebook_nodes) - before_known_merge)
+            if known_records_added:
+                source = f"{source}+KNOWN"
+
             if not notebook_nodes:
                 message = "등록할 전자필기장을 찾지 못했습니다."
                 if com_error:
@@ -18568,6 +18588,7 @@ __CODEX_SKILL_TAGS__
                     f"전체 {len(notebook_nodes)}개, "
                     f"미분류 {unclassified_count}개, "
                     f"분류됨 {classified_count}개 "
+                    f"(known+{known_records_added}) "
                     f"({source}, {elapsed_ms:.0f}ms)"
                 ),
                 True,
