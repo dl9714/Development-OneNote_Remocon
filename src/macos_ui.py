@@ -28,7 +28,7 @@ from ctypes import (
 from ctypes.util import find_library
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import quote, unquote, urlparse
 
 from src.platform_support import (
@@ -1747,6 +1747,31 @@ def _read_open_notebook_names_from_plist_with_timeout(
     return value if isinstance(value, list) else []
 
 
+def _read_notebook_names_with_timeout(
+    reader: Callable[[], List[str]],
+    timeout_sec: float,
+) -> Tuple[Optional[List[str]], str, bool]:
+    box: Dict[str, Any] = {}
+    done = threading.Event()
+
+    def _runner() -> None:
+        try:
+            box["value"] = reader()
+        except Exception as exc:
+            box["error"] = exc
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    if not done.wait(max(0.2, float(timeout_sec or 0.0))):
+        return None, "", True
+    if "error" in box:
+        return [], str(box["error"]), False
+    value = box.get("value")
+    return (value if isinstance(value, list) else []), "", False
+
+
 def _ax_window_roots_for_onenote(window: Optional[MacWindow]) -> List[c_void_p]:
     if not (IS_MACOS and _APP_SERVICES and window is not None):
         return []
@@ -2006,6 +2031,10 @@ def _read_open_notebook_names_from_ax(window: Optional[MacWindow]) -> List[str]:
     best_names = [str(name or "").strip() for name in best.get("names") or []]
     debug["best_count"] = len(best_names)
     if current_key and current_key not in {_normalize_text(name) for name in best_names}:
+        if len(best_names) >= 10:
+            debug["reason"] = "best_group_missing_current_title_fallback_large_group"
+            _MAC_LAST_AX_NOTEBOOK_DEBUG = debug
+            return best_names
         debug["reason"] = "best_group_missing_current_title"
         _MAC_LAST_AX_NOTEBOOK_DEBUG = debug
         return []
@@ -3616,21 +3645,25 @@ def current_open_notebook_names(window: Optional[MacWindow]) -> List[str]:
     if ax_names:
         for ax_name in ax_names:
             _append_name(ax_name)
-        if names:
-            return names
 
     plist_names = _read_open_notebook_names_from_plist_with_timeout(timeout_sec=1.5)
     if plist_names:
         for plist_name in plist_names:
             _append_name(plist_name)
-        return names
-
-    sidebar_names = _read_open_notebook_names_from_sidebar(window)
-    if sidebar_names:
-        for sidebar_name in sidebar_names:
-            _append_name(sidebar_name)
-        if names:
+        if len(names) >= 12:
             return names
+
+    # AX/plist sources are fast but sometimes incomplete on macOS.
+    # When they return only a small subset, merge the live sidebar too so
+    # callers such as "open all notebooks" can skip notebooks that are
+    # already open instead of reprocessing them.
+    if len(names) < 8:
+        sidebar_names = _read_open_notebook_names_from_sidebar(window)
+        if sidebar_names:
+            for sidebar_name in sidebar_names:
+                _append_name(sidebar_name)
+            if names:
+                return names
 
     if names:
         return names
@@ -3666,6 +3699,87 @@ def current_open_notebook_names(window: Optional[MacWindow]) -> List[str]:
         return names
     finally:
         _restore_notebook_sidebar(window, opened_sidebar)
+
+
+def current_open_notebook_names_quick(
+    window: Optional[MacWindow],
+    *,
+    ax_timeout_sec: float = 0.8,
+    plist_timeout_sec: float = 1.2,
+    sidebar_timeout_sec: float = 0.6,
+    min_names_before_sidebar: int = 8,
+) -> Dict[str, Any]:
+    names: List[str] = []
+    seen = set()
+    debug: Dict[str, Any] = {
+        "title_count": 0,
+        "ax_count": 0,
+        "ax_error": "",
+        "ax_timed_out": False,
+        "plist_count": 0,
+        "plist_timed_out": False,
+        "sidebar_count": 0,
+        "sidebar_error": "",
+        "sidebar_timed_out": False,
+    }
+
+    def _append_name(raw_name: str) -> None:
+        name = _clean_field(str(raw_name or ""))
+        key = _normalize_text(name)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        names.append(name)
+
+    if window is not None:
+        try:
+            current_title = _clean_field(window.window_text())
+        except Exception:
+            current_title = ""
+        if current_title:
+            _append_name(current_title)
+            debug["title_count"] = 1
+
+        ax_names, ax_error, ax_timed_out = _read_notebook_names_with_timeout(
+            lambda: _read_open_notebook_names_from_ax(window),
+            ax_timeout_sec,
+        )
+        debug["ax_timed_out"] = ax_timed_out
+        debug["ax_error"] = ax_error
+        for ax_name in ax_names or []:
+            _append_name(ax_name)
+        debug["ax_count"] = len(ax_names or [])
+
+    plist_names = _read_open_notebook_names_from_plist_with_timeout(
+        timeout_sec=plist_timeout_sec
+    )
+    if plist_names is None:
+        debug["plist_timed_out"] = True
+        plist_names = []
+    for plist_name in plist_names:
+        _append_name(plist_name)
+    debug["plist_count"] = len(plist_names)
+
+    should_probe_sidebar = (
+        window is not None
+        and float(sidebar_timeout_sec or 0.0) > 0.0
+        and len(names) < max(0, int(min_names_before_sidebar))
+    )
+    if should_probe_sidebar:
+        sidebar_names, sidebar_error, sidebar_timed_out = _read_notebook_names_with_timeout(
+            lambda: _read_open_notebook_names_from_sidebar(window),
+            sidebar_timeout_sec,
+        )
+        debug["sidebar_timed_out"] = sidebar_timed_out
+        debug["sidebar_error"] = sidebar_error
+        for sidebar_name in sidebar_names or []:
+            _append_name(sidebar_name)
+        debug["sidebar_count"] = len(sidebar_names or [])
+
+    return {
+        "names": names,
+        "debug": debug,
+    }
 
 
 def macos_lookup_targets_json(window: MacWindow) -> str:

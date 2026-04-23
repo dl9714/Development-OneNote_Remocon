@@ -77,6 +77,7 @@ from src.macos_ui import (
     _recent_notebook_records_from_cache as mac_recent_notebook_records_from_cache,
     current_notebook_name as mac_current_notebook_name,
     current_open_notebook_names as mac_current_open_notebook_names,
+    current_open_notebook_names_quick as mac_current_open_notebook_names_quick,
     macos_accessibility_is_trusted,
     macos_last_ax_notebook_debug,
     open_recent_notebook_record as mac_open_recent_notebook_record,
@@ -590,6 +591,9 @@ _OPEN_NOTEBOOK_RECORDS_CACHE: Dict[str, Any] = {
     "records": [],
 }
 _OPEN_NOTEBOOK_RECORDS_CACHE_TTL_SEC = 10.0
+_OPEN_ALL_DEBUG_LOG_PATH = os.path.expanduser(
+    "~/Library/Logs/OneNote_Remocon/open_all_debug.log"
+)
 
 
 def _get_file_signature(path: str) -> Optional[tuple]:
@@ -622,6 +626,17 @@ def _update_settings_object_cache(path: str, data: Dict[str, Any]) -> None:
 def _clear_open_notebook_records_cache() -> None:
     _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = 0.0
     _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = []
+
+
+def _append_open_all_debug_log(line: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(_OPEN_ALL_DEBUG_LOG_PATH), exist_ok=True)
+        with open(_OPEN_ALL_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} {str(line or '').rstrip()}\n"
+            )
+    except Exception:
+        pass
 
 
 def _dump_json_text(obj: Dict[str, Any]) -> str:
@@ -4186,7 +4201,12 @@ class OpenAllNotebooksWorker(QThread):
                 result["window_info"] = None
 
             if IS_MACOS:
-                print("[DBG][OPEN_ALL][MAC] branch-start")
+                def _mac_open_all_debug(*parts: Any) -> None:
+                    line = " ".join(str(part) for part in parts)
+                    print(line)
+                    _append_open_all_debug_log(line)
+
+                _mac_open_all_debug("[DBG][OPEN_ALL][MAC] branch-start")
                 self.progress.emit("실제 OneNote 전체 열기 준비 중... 현재 열린 목록 확인")
                 initial_notebook_name = _preferred_connected_window_title_quick(
                     win,
@@ -4196,60 +4216,52 @@ class OpenAllNotebooksWorker(QThread):
                 initial_notebook_key = _normalize_notebook_name_key(initial_notebook_name)
                 if initial_notebook_key:
                     open_names.add(initial_notebook_key)
-                open_sidebar_names: List[str] = []
+                open_detected_names: List[str] = []
+                open_detect_debug: Dict[str, Any] = {}
                 sidebar_error = ""
                 accessibility_trusted = macos_accessibility_is_trusted()
 
                 if accessibility_trusted:
-                    sidebar_box: Dict[str, Any] = {}
-                    sidebar_done = threading.Event()
-
-                    def _read_sidebar_names() -> None:
-                        try:
-                            sidebar_box["names"] = [
-                                name
-                                for name in mac_current_open_notebook_names(win)
-                                if str(name or "").strip()
-                            ]
-                        except Exception as exc:
-                            sidebar_box["error"] = exc
-                        finally:
-                            sidebar_done.set()
-
-                    sidebar_thread = threading.Thread(
-                        target=_read_sidebar_names,
-                        daemon=True,
+                    quick_open_snapshot = mac_current_open_notebook_names_quick(
+                        win,
+                        ax_timeout_sec=2.2,
+                        plist_timeout_sec=1.2,
+                        sidebar_timeout_sec=0.6,
+                        min_names_before_sidebar=8,
                     )
-                    sidebar_thread.start()
-                    if sidebar_done.wait(4.0):
-                        if "error" in sidebar_box:
-                            sidebar_error = str(sidebar_box["error"])
-                            print(
-                                "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SIDEBAR]",
-                                sidebar_error,
-                            )
-                        else:
-                            open_sidebar_names = [
-                                str(name or "").strip()
-                                for name in (sidebar_box.get("names") or [])
-                                if str(name or "").strip()
-                            ]
-                            open_names = {
-                                _normalize_notebook_name_key(name)
-                                for name in open_sidebar_names
-                                if _normalize_notebook_name_key(name)
-                            }
-                    else:
-                        sidebar_error = (
-                            "OneNote 열린 전자필기장 목록 읽기가 4초를 넘어 중단되었습니다."
-                        )
-                    print(
+                    open_detected_names = [
+                        str(name or "").strip()
+                        for name in (quick_open_snapshot.get("names") or [])
+                        if str(name or "").strip()
+                    ]
+                    open_detect_debug = dict(quick_open_snapshot.get("debug") or {})
+                    sidebar_error = str(open_detect_debug.get("sidebar_error") or "")
+                    open_names.update(
+                        _normalize_notebook_name_key(name)
+                        for name in open_detected_names
+                        if _normalize_notebook_name_key(name)
+                    )
+                    _mac_open_all_debug(
                         "[DBG][OPEN_ALL][MAC]",
-                        f"open-sidebar={len(open_sidebar_names)}",
+                        f"open-detected={len(open_detected_names)}",
+                        f"title={int(open_detect_debug.get('title_count') or 0)}",
+                        f"ax={int(open_detect_debug.get('ax_count') or 0)}",
+                        f"plist={int(open_detect_debug.get('plist_count') or 0)}",
+                        f"sidebar={int(open_detect_debug.get('sidebar_count') or 0)}",
+                        "timeouts="
+                        f"ax:{int(bool(open_detect_debug.get('ax_timed_out')))}"
+                        f"/plist:{int(bool(open_detect_debug.get('plist_timed_out')))}"
+                        f"/sidebar:{int(bool(open_detect_debug.get('sidebar_timed_out')))}",
                         f"sidebar-error={sidebar_error!r}",
+                        f"open-sample={open_detected_names[:8]!r}",
                     )
+                    if int(open_detect_debug.get("ax_count") or 0) <= 0:
+                        _mac_open_all_debug(
+                            "[DBG][OPEN_ALL][MAC]",
+                            f"ax-debug={macos_last_ax_notebook_debug()!r}",
+                        )
                 else:
-                    print("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
+                    _mac_open_all_debug("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
 
                 self.progress.emit("실제 OneNote 전체 열기 준비 중... 최근 전자필기장 캐시 확인")
                 recent_box: Dict[str, Any] = {}
@@ -4290,7 +4302,9 @@ class OpenAllNotebooksWorker(QThread):
                         "[WARN][OPEN_ALL_NOTEBOOKS][MAC][RECENT_CACHE] timed out after 1.5s"
                     )
                     recent_records = []
-                print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
+                _mac_open_all_debug(
+                    f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}"
+                )
                 self.progress.emit("실제 OneNote 전체 열기 준비 중... OneDrive 바로가기 확인")
                 shortcut_box: Dict[str, Any] = {}
                 shortcut_done = threading.Event()
@@ -4330,7 +4344,7 @@ class OpenAllNotebooksWorker(QThread):
                         "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SHORTCUTS] timed out after 2s"
                     )
                     shortcut_records = []
-                print(
+                _mac_open_all_debug(
                     "[DBG][OPEN_ALL][MAC]",
                     f"shortcut-records={len(shortcut_records)}",
                 )
@@ -4340,9 +4354,10 @@ class OpenAllNotebooksWorker(QThread):
                     for record in self.notebook_candidates
                     if str((record or {}).get("name") or "").strip()
                 ]
-                print(
+                _mac_open_all_debug(
                     "[DBG][OPEN_ALL][MAC]",
                     f"settings-records={len(settings_records)}",
+                    f"settings-sample={[str((record or {}).get('name') or '').strip() for record in settings_records[:8]]!r}",
                 )
 
                 merged_records_by_key: Dict[str, Dict[str, Any]] = {}
@@ -4367,12 +4382,14 @@ class OpenAllNotebooksWorker(QThread):
                             existing["url"] = str(record.get("url") or "").strip()
 
                 recent_records = list(merged_records_by_key.values())
-                print(f"[DBG][OPEN_ALL][MAC] merged-records={len(recent_records)}")
+                _mac_open_all_debug(
+                    f"[DBG][OPEN_ALL][MAC] merged-records={len(recent_records)}"
+                )
                 if not recent_records:
-                    if len(open_sidebar_names) > 1:
+                    if len(open_detected_names) > 1:
                         result["ok"] = True
-                        result["verified_open_count"] = len(open_sidebar_names)
-                        result["opened_names"] = list(open_sidebar_names)
+                        result["verified_open_count"] = len(open_detected_names)
+                        result["opened_names"] = list(open_detected_names)
                         result["remaining_names"] = []
                         result["refresh_open_notebooks"] = True
                         self.done.emit(result)
@@ -4388,7 +4405,7 @@ class OpenAllNotebooksWorker(QThread):
                         self.done.emit(result)
                         return
 
-                    if sidebar_error and not open_sidebar_names:
+                    if sidebar_error and not open_detected_names:
                         result["error"] = (
                             f"{sidebar_error} "
                             "앱이 멈추지 않도록 전체 열기 확인을 건너뜁니다."
@@ -4415,7 +4432,14 @@ class OpenAllNotebooksWorker(QThread):
                     records_by_key[key] = dict(record)
                     if key not in open_names:
                         pending_records.append(dict(record))
-                print(f"[DBG][OPEN_ALL][MAC] pending-records={len(pending_records)}")
+                overlap_keys = [key for key in records_by_key if key in open_names]
+                _mac_open_all_debug(
+                    f"[DBG][OPEN_ALL][MAC] overlap={len(overlap_keys)}",
+                    f"overlap-sample={[str((records_by_key.get(key) or {}).get('name') or '').strip() for key in overlap_keys[:8]]!r}",
+                )
+                _mac_open_all_debug(
+                    f"[DBG][OPEN_ALL][MAC] pending-records={len(pending_records)}"
+                )
 
                 total_targets = len(pending_records)
                 self.progress.emit(
@@ -4424,9 +4448,9 @@ class OpenAllNotebooksWorker(QThread):
 
                 if not pending_records:
                     result["ok"] = True
-                    if open_sidebar_names:
-                        result["verified_open_count"] = len(open_sidebar_names)
-                        result["opened_names"] = list(open_sidebar_names)
+                    if open_detected_names:
+                        result["verified_open_count"] = len(open_detected_names)
+                        result["opened_names"] = list(open_detected_names)
                         result["refresh_open_notebooks"] = True
                     result["remaining_names"] = []
                     self.done.emit(result)
