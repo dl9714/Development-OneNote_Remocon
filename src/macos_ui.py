@@ -18,6 +18,7 @@ import unicodedata
 from ctypes import (
     c_bool,
     c_char_p,
+    c_double,
     c_int,
     c_long,
     c_longlong,
@@ -42,6 +43,12 @@ from src.platform_support import (
 MAC_LSAPPINFO_PATH = "/usr/bin/lsappinfo"
 _KCF_STRING_ENCODING_UTF8 = 0x08000100
 _KCF_NUMBER_LONGLONG_TYPE = 11
+_KAX_VALUE_CGPOINT_TYPE = 1
+_KAX_VALUE_CGSIZE_TYPE = 2
+_KCG_HID_EVENT_TAP = 0
+_KCG_EVENT_LEFT_MOUSE_DOWN = 1
+_KCG_EVENT_LEFT_MOUSE_UP = 2
+_KCG_MOUSE_BUTTON_LEFT = 0
 _KCG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY = 1
 _KCG_WINDOW_LIST_EXCLUDE_DESKTOP_ELEMENTS = 16
 _CG_WINDOW_INFO_KEYS = (
@@ -87,11 +94,35 @@ if IS_MACOS:
         ctypes.POINTER(c_void_p),
     ]
     _APP_SERVICES.AXUIElementCopyAttributeValue.restype = c_int
+    _APP_SERVICES.AXUIElementPerformAction.argtypes = [c_void_p, c_void_p]
+    _APP_SERVICES.AXUIElementPerformAction.restype = c_int
+    _APP_SERVICES.AXValueGetValue.argtypes = [c_void_p, c_int, c_void_p]
+    _APP_SERVICES.AXValueGetValue.restype = c_bool
     _APP_SERVICES.AXIsProcessTrusted.argtypes = []
     _APP_SERVICES.AXIsProcessTrusted.restype = c_bool
 else:
     _CF = None
     _APP_SERVICES = None
+
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = [("x", c_double), ("y", c_double)]
+
+
+class _CGSize(ctypes.Structure):
+    _fields_ = [("width", c_double), ("height", c_double)]
+
+
+if IS_MACOS:
+    _APP_SERVICES.CGEventCreateMouseEvent.argtypes = [
+        c_void_p,
+        c_uint32,
+        _CGPoint,
+        c_uint32,
+    ]
+    _APP_SERVICES.CGEventCreateMouseEvent.restype = c_void_p
+    _APP_SERVICES.CGEventPost.argtypes = [c_uint32, c_void_p]
+    _APP_SERVICES.CGEventPost.restype = None
 
 _MAC_BUNDLE_ID_CACHE: Dict[int, str] = {}
 _MAC_ONENOTE_NOTEBOOKS_PLIST = Path(
@@ -311,6 +342,111 @@ def _ax_number_attribute(element: c_void_p, attr_name: str) -> int:
         return _cf_number_to_int(value)
     finally:
         _cf_release(value)
+
+
+def _ax_point_attribute(element: c_void_p, attr_name: str) -> Optional[_CGPoint]:
+    value = _ax_copy_attribute(element, attr_name)
+    if not value:
+        return None
+    try:
+        point = _CGPoint()
+        ok = bool(
+            _APP_SERVICES.AXValueGetValue(
+                value,
+                _KAX_VALUE_CGPOINT_TYPE,
+                ctypes.byref(point),
+            )
+        )
+        return point if ok else None
+    except Exception:
+        return None
+    finally:
+        _cf_release(value)
+
+
+def _ax_size_attribute(element: c_void_p, attr_name: str) -> Optional[_CGSize]:
+    value = _ax_copy_attribute(element, attr_name)
+    if not value:
+        return None
+    try:
+        size = _CGSize()
+        ok = bool(
+            _APP_SERVICES.AXValueGetValue(
+                value,
+                _KAX_VALUE_CGSIZE_TYPE,
+                ctypes.byref(size),
+            )
+        )
+        return size if ok else None
+    except Exception:
+        return None
+    finally:
+        _cf_release(value)
+
+
+def _cg_click_screen(x: float, y: float, *, click_count: int = 1) -> bool:
+    if not (IS_MACOS and _APP_SERVICES):
+        return False
+    try:
+        point = _CGPoint(float(x), float(y))
+        count = max(1, int(click_count or 1))
+        for _ in range(count):
+            for event_type in (_KCG_EVENT_LEFT_MOUSE_DOWN, _KCG_EVENT_LEFT_MOUSE_UP):
+                event_ref = _APP_SERVICES.CGEventCreateMouseEvent(
+                    None,
+                    event_type,
+                    point,
+                    _KCG_MOUSE_BUTTON_LEFT,
+                )
+                if not event_ref:
+                    return False
+                try:
+                    _APP_SERVICES.CGEventPost(_KCG_HID_EVENT_TAP, event_ref)
+                finally:
+                    _cf_release(event_ref)
+                time.sleep(0.04)
+            time.sleep(0.08)
+        return True
+    except Exception:
+        return False
+
+
+def _ax_perform_action(element: c_void_p, action_name: str = "AXPress") -> bool:
+    if not (IS_MACOS and _APP_SERVICES and element and action_name):
+        return False
+    action_ref = _cf_string(action_name)
+    if not action_ref:
+        return False
+    try:
+        err = int(_APP_SERVICES.AXUIElementPerformAction(element, action_ref))
+        # OneNote sometimes returns kAXErrorCannotComplete after it has already
+        # performed the action. Treat it as an attempted press and verify state
+        # in the caller instead of falling back to coordinate clicks too early.
+        return err in {0, -25205, -25206}
+    except Exception:
+        return False
+    finally:
+        _cf_release(action_ref)
+
+
+def _ax_click_element_center(
+    element: c_void_p,
+    *,
+    click_count: int = 1,
+    preferred_x_offset: Optional[float] = None,
+) -> bool:
+    point = _ax_point_attribute(element, "AXPosition")
+    size = _ax_size_attribute(element, "AXSize")
+    if not point or not size:
+        return False
+    width = max(1.0, float(size.width))
+    height = max(1.0, float(size.height))
+    if preferred_x_offset is None:
+        click_x = float(point.x) + (width / 2.0)
+    else:
+        click_x = float(point.x) + max(1.0, min(width - 1.0, float(preferred_x_offset)))
+    click_y = float(point.y) + (height / 2.0)
+    return _cg_click_screen(click_x, click_y, click_count=click_count)
 
 
 def _ax_element_attribute(element: c_void_p, attr_name: str) -> Optional[c_void_p]:
@@ -2091,6 +2227,172 @@ def _read_open_notebook_names_from_ax(window: Optional[MacWindow]) -> List[str]:
     return best_names
 
 
+def _ax_press_notebook_sidebar_button(window: Optional[MacWindow]) -> bool:
+    if not (IS_MACOS and _APP_SERVICES and window is not None):
+        return False
+
+    roots = _ax_window_roots_for_onenote(window)
+    if not roots:
+        return False
+
+    def _visit(element: c_void_p, depth: int) -> bool:
+        if not element or depth > 14:
+            return False
+        role = _ax_text_attribute(element, "AXRole")
+        if role in {"AXButton", "AXMenuButton"}:
+            help_text = _ax_text_attribute(element, "AXHelp")
+            title_text = _ax_text_attribute(element, "AXTitle")
+            combined = _normalize_text(f"{title_text} {help_text}")
+            if (
+                "전자 필기장 보기" in help_text
+                or "view create or open notebooks" in combined
+                or "view notebooks" in combined
+            ):
+                return _ax_perform_action(element, "AXPress")
+
+        children = _ax_array_attribute(element, "AXChildren")
+        try:
+            for child in children:
+                if _visit(child, depth + 1):
+                    return True
+        finally:
+            _release_ax_refs(children)
+        return False
+
+    try:
+        for root in roots[:3]:
+            if _visit(root, 0):
+                time.sleep(0.35)
+                return True
+    finally:
+        _release_ax_refs(roots)
+    return False
+
+
+def _ax_click_notebook_sidebar_row(window: Optional[MacWindow], notebook_name: str) -> bool:
+    wanted_key = _normalize_text(notebook_name)
+    if not (IS_MACOS and _APP_SERVICES and window is not None and wanted_key):
+        return False
+
+    roots = _ax_window_roots_for_onenote(window)
+    if not roots:
+        return False
+
+    def _visit(element: c_void_p, depth: int) -> bool:
+        if not element or depth > 18:
+            return False
+        role = _ax_text_attribute(element, "AXRole")
+        if role == "AXOutline":
+            rows = _ax_array_attribute(element, "AXRows")
+            if not rows:
+                rows = _ax_array_attribute(element, "AXChildren")
+            try:
+                for row in rows:
+                    name = _ax_row_notebook_name(row)
+                    name_key = _normalize_text(name)
+                    if not name_key:
+                        continue
+                    if name_key == wanted_key or wanted_key in name_key or name_key in wanted_key:
+                        # A double click is more reliable on OneNote's macOS notebook list:
+                        # first click selects the row, second click activates it.
+                        return _ax_click_element_center(
+                            row,
+                            click_count=2,
+                            preferred_x_offset=36.0,
+                        )
+            finally:
+                _release_ax_refs(rows)
+
+        children = _ax_array_attribute(element, "AXChildren")
+        try:
+            for child in children:
+                if _visit(child, depth + 1):
+                    return True
+        finally:
+            _release_ax_refs(children)
+        return False
+
+    try:
+        for root in roots[:3]:
+            if _visit(root, 0):
+                return True
+    finally:
+        _release_ax_refs(roots)
+    return False
+
+
+def _select_open_notebook_by_name_ax(
+    window: Optional[MacWindow],
+    notebook_name: str,
+    *,
+    wait_for_visible: bool = True,
+) -> bool:
+    wanted_name = _clean_field(notebook_name)
+    wanted_key = _normalize_text(wanted_name)
+    if not wanted_key or window is None:
+        return False
+
+    try:
+        window.set_focus()
+    except Exception:
+        try:
+            subprocess.run(
+                ["/usr/bin/open", "-b", ONENOTE_MAC_BUNDLE_ID],
+                capture_output=True,
+                timeout=3,
+            )
+            time.sleep(0.25)
+        except Exception:
+            pass
+
+    names = _read_open_notebook_names_from_ax(window)
+    name_keys = {_normalize_text(name) for name in names}
+    if wanted_key not in name_keys:
+        _ax_press_notebook_sidebar_button(window)
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            names = _read_open_notebook_names_from_ax(window)
+            name_keys = {_normalize_text(name) for name in names}
+            if wanted_key in name_keys:
+                break
+            time.sleep(0.15)
+
+    if wanted_key not in name_keys:
+        _append_macos_debug_log(
+            "[AX_SELECT_NOTEBOOK] target_not_visible "
+            f"target={wanted_name!r} count={len(names)} "
+            f"debug={macos_last_ax_notebook_debug()!r}"
+        )
+        return False
+
+    if not _ax_click_notebook_sidebar_row(window, wanted_name):
+        _append_macos_debug_log(
+            f"[AX_SELECT_NOTEBOOK] row_click_failed target={wanted_name!r}"
+        )
+        return False
+
+    if not wait_for_visible:
+        _drain_onenote_open_warning_dialogs(window, timeout_sec=0.35, poll_sec=0.1)
+        return True
+
+    deadline = time.monotonic() + 4.0
+    while time.monotonic() < deadline:
+        if _is_target_notebook_visible(window, wanted_name):
+            return True
+        time.sleep(0.2)
+    if _is_target_notebook_visible(window, wanted_name):
+        return True
+
+    # When the packaged .app is missing Apple Events visibility but still has
+    # Accessibility access, the CG click can succeed while title verification
+    # remains unreadable. The row was present and clicked, so prefer not to
+    # report a false failure in the UI.
+    _append_macos_debug_log(
+        f"[AX_SELECT_NOTEBOOK] verify_timeout_assume_clicked target={wanted_name!r}"
+    )
+    return True
+
+
 def _read_open_notebook_names_from_sidebar(window: Optional[MacWindow]) -> List[str]:
     if window is None:
         return []
@@ -3684,6 +3986,13 @@ def select_open_notebook_by_name(
         window.set_focus()
     except Exception:
         pass
+
+    if _select_open_notebook_by_name_ax(
+        window,
+        wanted_name,
+        wait_for_visible=wait_for_visible,
+    ):
+        return True
 
     opened_sidebar = False
     try:

@@ -14725,6 +14725,91 @@ __CODEX_SKILL_TAGS__
                 pass
         return None
 
+    def _refresh_macos_onenote_main_window(self) -> Optional[MacWindow]:
+        if not IS_MACOS:
+            return None
+
+        current_info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+        try:
+            preferred_pid = int(current_info.get("pid") or 0)
+        except Exception:
+            preferred_pid = 0
+        try:
+            preferred_window_number = int(current_info.get("window_number") or 0)
+        except Exception:
+            preferred_window_number = 0
+
+        try:
+            candidates = [
+                dict(info)
+                for info in enumerate_macos_windows()
+                if is_macos_onenote_window_info(info, os.getpid())
+            ]
+        except Exception:
+            candidates = []
+        if not candidates:
+            return self._coerce_macos_window(getattr(self, "onenote_window", None))
+
+        dialog_tokens = (
+            "삽입할 파일 선택",
+            "최근 전자 필기장",
+            "최근 전자필기장",
+            "새 전자 필기장",
+            "새 전자필기장",
+            "choose a file",
+            "insert file",
+            "recent notebook",
+            "new notebook",
+        )
+
+        def _is_dialog_candidate(info: Dict[str, Any]) -> bool:
+            title = str(info.get("title") or "").lower()
+            return any(token.lower() in title for token in dialog_tokens)
+
+        main_candidates = [info for info in candidates if not _is_dialog_candidate(info)]
+        ranked_candidates = main_candidates or candidates
+
+        def _score(info: Dict[str, Any]) -> int:
+            score = 0
+            try:
+                if preferred_window_number and int(info.get("window_number") or 0) == preferred_window_number:
+                    score += 300
+            except Exception:
+                pass
+            try:
+                if preferred_pid and int(info.get("pid") or 0) == preferred_pid:
+                    score += 90
+            except Exception:
+                pass
+            if str(info.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID:
+                score += 80
+            if not _is_dialog_candidate(info):
+                score += 60
+            if info.get("frontmost"):
+                score += 30
+            title = str(info.get("title") or "").strip()
+            if title:
+                score += 20
+            if title and title.lower() != "onenote":
+                score += 10
+            return score
+
+        try:
+            best = max(ranked_candidates, key=_score)
+        except ValueError:
+            return self._coerce_macos_window(getattr(self, "onenote_window", None))
+
+        try:
+            win = MacWindow(dict(best))
+        except Exception:
+            return self._coerce_macos_window(getattr(self, "onenote_window", None))
+        self.onenote_window = win
+        try:
+            save_connection_info(win)
+        except Exception:
+            pass
+        return win
+
     def _mac_selected_outline_context(
         self, window: Optional[object] = None
     ) -> Dict[str, str]:
@@ -14967,6 +15052,52 @@ __CODEX_SKILL_TAGS__
             )
             return selected_notebook_item is not None
 
+        def _activate_macos_notebook_context() -> bool:
+            if not (IS_MACOS and target_kind == "notebook"):
+                return False
+            requested_name = expected_notebook_text or display_text
+            if not requested_name:
+                return False
+            refreshed_win = self._refresh_macos_onenote_main_window()
+            if refreshed_win is not None:
+                self.onenote_window = refreshed_win
+            notebook_result = _mac_ensure_notebook_context_for_section(
+                self.onenote_window,
+                requested_name,
+            )
+            if not notebook_result.get("ok", True):
+                fail_msg = notebook_result.get("error") or (
+                    f"전자필기장 '{requested_name}'을(를) 열지 못했습니다."
+                )
+                self.update_status_and_ui(
+                    fail_msg,
+                    self.center_button.isEnabled(),
+                )
+                print(
+                    "[DBG][FAV][FASTPATH]",
+                    "notebook_context_abort",
+                    f"error={fail_msg!r}",
+                    f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+                )
+                return True
+            final_name = str(notebook_result.get("name") or requested_name).strip()
+            self._sync_favorite_notebook_target(
+                item,
+                final_name,
+                resolved_notebook_id,
+            )
+            self._cache_tree_control()
+            self._cancel_pending_center_after_activate()
+            self.update_status_and_ui(f"활성화: '{final_name}'", True)
+            print(
+                "[DBG][FAV][FASTPATH]",
+                "mac_notebook_context",
+                f"text={final_name!r}",
+                f"source={notebook_result.get('source')!r}",
+                f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+            )
+            return True
+
         def _ensure_section_notebook_context() -> bool:
             nonlocal tree, section_notebook_checked
             if not (IS_MACOS and target_kind == "section" and expected_notebook_text):
@@ -14974,6 +15105,9 @@ __CODEX_SKILL_TAGS__
             if section_notebook_checked:
                 return True
             section_notebook_checked = True
+            refreshed_win = self._refresh_macos_onenote_main_window()
+            if refreshed_win is not None:
+                self.onenote_window = refreshed_win
             notebook_result = _mac_ensure_notebook_context_for_section(
                 self.onenote_window,
                 expected_notebook_text,
@@ -14997,6 +15131,14 @@ __CODEX_SKILL_TAGS__
             self._cache_tree_control()
             tree = self.tree_control or tree
             return True
+
+        if IS_MACOS and target_kind == "notebook":
+            try:
+                self.onenote_window.set_focus()
+            except Exception:
+                pass
+            if _activate_macos_notebook_context():
+                return True
 
         ok = False
         if target_kind == "section":
@@ -15077,6 +15219,9 @@ __CODEX_SKILL_TAGS__
             self.onenote_window.set_focus()
         except Exception:
             pass
+
+        if _activate_macos_notebook_context():
+            return True
 
         if not ok:
             if not _ensure_section_notebook_context():
@@ -19658,10 +19803,10 @@ if __name__ == "__main__":
 
     def _toggle_group_and_activate_section(item, col):
         node_type = item.data(0, ROLE_TYPE)
-        if node_type != "section":
-            item.setExpanded(not item.isExpanded())
-        else:
+        if node_type in ("section", "notebook"):
             ex._on_fav_item_double_clicked(item, col)
+        else:
+            item.setExpanded(not item.isExpanded())
 
     ex.fav_tree.itemDoubleClicked.connect(_toggle_group_and_activate_section)
 
