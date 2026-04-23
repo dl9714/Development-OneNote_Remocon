@@ -74,6 +74,7 @@ from src.macos_ui import (
     MacAutomationError,
     MacDesktop,
     MacWindow,
+    current_notebook_name as mac_current_notebook_name,
     current_open_notebook_names as mac_current_open_notebook_names,
     macos_accessibility_is_trusted,
     macos_last_ax_notebook_debug,
@@ -86,6 +87,7 @@ from src.macos_ui import (
     pick_selected_row as mac_pick_selected_row,
     recent_notebook_records as mac_recent_notebook_records,
     select_page_row_by_text as mac_select_page_row_by_text,
+    select_open_notebook_by_name as mac_select_open_notebook_by_name,
     select_row_by_text as mac_select_row_by_text,
     center_selected_row as mac_center_selected_row,
 )
@@ -1740,6 +1742,132 @@ def select_notebook_by_text(
     )
 
 
+def _mac_outline_notebook_matches(onenote_window, notebook_name: str) -> bool:
+    if not IS_MACOS:
+        return False
+    expected_key = _normalize_notebook_name_key(notebook_name)
+    if not expected_key:
+        return False
+    current_name = mac_current_notebook_name(onenote_window)
+    if current_name:
+        return _normalize_notebook_name_key(current_name) == expected_key
+    for current_name in (
+        _get_macos_primary_notebook_title(),
+        str(getattr(onenote_window, "info", {}).get("title") or "").strip(),
+    ):
+        if _normalize_notebook_name_key(current_name) == expected_key:
+            return True
+    return False
+
+
+def _mac_wait_for_notebook_context(
+    onenote_window,
+    notebook_name: str,
+    *,
+    timeout_sec: float = 4.0,
+) -> bool:
+    if not IS_MACOS:
+        return True
+    expected_key = _normalize_notebook_name_key(notebook_name)
+    if not expected_key:
+        return True
+    deadline = time.monotonic() + max(0.1, float(timeout_sec or 0.0))
+    while time.monotonic() < deadline:
+        if _mac_outline_notebook_matches(onenote_window, notebook_name):
+            return True
+        time.sleep(0.2)
+    return _mac_outline_notebook_matches(onenote_window, notebook_name)
+
+
+def _mac_find_recent_notebook_record(
+    onenote_window,
+    notebook_name: str,
+) -> Optional[Dict[str, Any]]:
+    expected_key = _normalize_notebook_name_key(notebook_name)
+    if not expected_key:
+        return None
+    try:
+        records = mac_recent_notebook_records(onenote_window)
+    except Exception as e:
+        print(f"[WARN][MAC][RECENT_MATCH] {e}")
+        return None
+    best = None
+    for record in records or []:
+        name = str((record or {}).get("name") or "").strip()
+        key = _normalize_notebook_name_key(name)
+        if not key:
+            continue
+        if key == expected_key:
+            return dict(record)
+        if best is None and (expected_key in key or key in expected_key):
+            best = dict(record)
+    return best
+
+
+def _mac_ensure_notebook_context_for_section(
+    onenote_window,
+    notebook_name: str,
+) -> Dict[str, Any]:
+    requested_name = _strip_stale_favorite_prefix(str(notebook_name or "").strip())
+    result = {
+        "ok": True,
+        "name": requested_name,
+        "source": "",
+        "error": "",
+    }
+    if not IS_MACOS or not requested_name:
+        return result
+
+    try:
+        onenote_window.set_focus()
+    except Exception:
+        pass
+
+    if _mac_outline_notebook_matches(onenote_window, requested_name):
+        result["source"] = "current"
+        return result
+
+    try:
+        if mac_select_open_notebook_by_name(
+            onenote_window,
+            requested_name,
+            wait_for_visible=True,
+        ):
+            _clear_open_notebook_records_cache()
+            _mac_wait_for_notebook_context(onenote_window, requested_name)
+            result["source"] = "open_sidebar"
+            return result
+    except Exception as e:
+        print(f"[WARN][MAC][SECTION_NOTEBOOK][SIDEBAR] {e}")
+
+    record = _mac_find_recent_notebook_record(onenote_window, requested_name)
+    if record:
+        try:
+            if mac_open_recent_notebook_record(
+                onenote_window,
+                record,
+                wait_for_visible=True,
+            ):
+                _clear_open_notebook_records_cache()
+                _mac_wait_for_notebook_context(onenote_window, requested_name)
+                result["source"] = "recent"
+                return result
+        except Exception as e:
+            print(f"[WARN][MAC][SECTION_NOTEBOOK][RECENT] {e}")
+
+    candidate_names: List[str] = []
+    try:
+        candidate_names = _get_open_notebook_names_via_com(refresh=True)
+    except Exception:
+        candidate_names = []
+    result["ok"] = False
+    result["error"] = (
+        _build_notebook_not_found_error(requested_name, candidate_names)
+        + " 섹션 복구를 중단했습니다."
+    )
+    return result
+
+
 def _safe_window_text(ctrl) -> str:
     try:
         return ctrl.window_text() or ""
@@ -2801,10 +2929,17 @@ def _resolve_favorite_activation_target(
         "ok": True,
         "target_kind": None,
         "expected_center_text": "",
+        "expected_notebook_text": "",
         "resolved_name": "",
         "resolved_notebook_id": "",
         "error": "",
     }
+
+    if IS_MACOS and section_text:
+        result["target_kind"] = "section"
+        result["expected_center_text"] = section_text
+        result["expected_notebook_text"] = _strip_stale_favorite_prefix(notebook_text)
+        return result
 
     if notebook_text:
         notebook_info = _resolve_notebook_target_for_activation(target, display_name)
@@ -3081,13 +3216,18 @@ def scroll_selected_item_to_center(
     tree_control: Optional[object] = None,
     *,
     selected_item=None,
+    expected_text: str = "",
 ):
     ensure_pywinauto()
     if not _pwa_ready:
         return False, None
     if IS_MACOS:
         try:
-            return mac_center_selected_row(onenote_window, prefer_leftmost=True)
+            return mac_center_selected_row(
+                onenote_window,
+                prefer_leftmost=True,
+                target_text=expected_text,
+            )
         except Exception as e:
             print(f"[WARN] 중앙 정렬 중 오류(macOS): {e}")
             return False, None
@@ -3604,7 +3744,11 @@ class CenterAfterActivateWorker(QThread):
                 return
 
             if IS_MACOS:
-                ok, item_name = mac_center_selected_row(win, prefer_leftmost=True)
+                ok, item_name = mac_center_selected_row(
+                    win,
+                    prefer_leftmost=True,
+                    target_text=self.expected_text,
+                )
                 self.done.emit(bool(ok), item_name or self.expected_text or "")
                 return
 
@@ -3724,7 +3868,7 @@ class FavoriteActivationWorker(QThread):
                 self.done.emit(result)
                 return
             tree = _find_tree_or_list(win)
-            if not tree:
+            if not tree and not IS_MACOS:
                 result["error"] = "OneNote 트리를 찾지 못했습니다."
                 self.done.emit(result)
                 return
@@ -3743,6 +3887,21 @@ class FavoriteActivationWorker(QThread):
                 result["error"] = target_info.get("error") or ""
                 self.done.emit(result)
                 return
+            if IS_MACOS and result["target_kind"] == "section":
+                notebook_text = str(
+                    target_info.get("expected_notebook_text")
+                    or (self.target or {}).get("notebook_text")
+                    or ""
+                ).strip()
+                if notebook_text:
+                    notebook_result = _mac_ensure_notebook_context_for_section(
+                        win,
+                        notebook_text,
+                    )
+                    if not notebook_result.get("ok", True):
+                        result["error"] = notebook_result.get("error") or ""
+                        self.done.emit(result)
+                        return
             ok = False
             if result["target_kind"] == "notebook":
                 ok = select_notebook_by_text(
@@ -13744,6 +13903,14 @@ __CODEX_SKILL_TAGS__
         if candidate is None:
             return None
         if isinstance(candidate, MacWindow):
+            info = dict(getattr(candidate, "info", {}) or {})
+            if info:
+                try:
+                    resolved = resolve_window_target(info)
+                    if isinstance(resolved, MacWindow):
+                        return resolved
+                except Exception:
+                    pass
             return candidate
         try:
             info = getattr(candidate, "info", None)
@@ -14005,7 +14172,7 @@ __CODEX_SKILL_TAGS__
 
         tree = self.tree_control or _find_tree_or_list(self.onenote_window)
         self.tree_control = tree
-        if not tree:
+        if not tree and not IS_MACOS:
             return False
 
         notebook_text = _strip_stale_favorite_prefix(
@@ -14015,10 +14182,12 @@ __CODEX_SKILL_TAGS__
         display_text = _strip_stale_favorite_prefix(display_name)
         target_kind = "section" if section_text else "notebook"
         expected_text = section_text
+        expected_notebook_text = notebook_text
         resolved_name = ""
         resolved_notebook_id = ""
         resolution_mode = "quick"
         selected_notebook_item = None
+        section_notebook_checked = False
 
         def _attempt_select(kind: str, text: str) -> bool:
             nonlocal selected_notebook_item
@@ -14034,8 +14203,41 @@ __CODEX_SKILL_TAGS__
             )
             return selected_notebook_item is not None
 
+        def _ensure_section_notebook_context() -> bool:
+            nonlocal tree, section_notebook_checked
+            if not (IS_MACOS and target_kind == "section" and expected_notebook_text):
+                return True
+            if section_notebook_checked:
+                return True
+            section_notebook_checked = True
+            notebook_result = _mac_ensure_notebook_context_for_section(
+                self.onenote_window,
+                expected_notebook_text,
+            )
+            if not notebook_result.get("ok", True):
+                fail_msg = notebook_result.get("error") or (
+                    f"전자필기장 '{expected_notebook_text}'을(를) 열지 못해 "
+                    f"섹션 '{expected_text}' 복구를 중단했습니다."
+                )
+                self.update_status_and_ui(
+                    fail_msg,
+                    self.center_button.isEnabled(),
+                )
+                print(
+                    "[DBG][FAV][FASTPATH]",
+                    "section_notebook_abort",
+                    f"error={fail_msg!r}",
+                    f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
+                )
+                return False
+            self._cache_tree_control()
+            tree = self.tree_control or tree
+            return True
+
         ok = False
         if target_kind == "section":
+            if not _ensure_section_notebook_context():
+                return True
             ok = _attempt_select("section", expected_text)
         else:
             quick_candidates = []
@@ -14090,6 +14292,10 @@ __CODEX_SKILL_TAGS__
                 return True
             target_kind = target_info.get("target_kind") or target_kind
             expected_text = target_info.get("expected_center_text") or expected_text
+            expected_notebook_text = (
+                target_info.get("expected_notebook_text")
+                or expected_notebook_text
+            )
             resolved_name = target_info.get("resolved_name") or ""
             resolved_notebook_id = target_info.get("resolved_notebook_id") or ""
             resolution_mode = "resolved"
@@ -14109,12 +14315,14 @@ __CODEX_SKILL_TAGS__
             pass
 
         if not ok:
+            if not _ensure_section_notebook_context():
+                return True
             ok = _attempt_select(target_kind, expected_text)
 
         if not ok:
             self._cache_tree_control()
-            tree = self.tree_control
-            if tree:
+            tree = self.tree_control or tree
+            if tree or IS_MACOS:
                 ok = _attempt_select(target_kind, expected_text)
 
         if not ok:
@@ -14145,6 +14353,7 @@ __CODEX_SKILL_TAGS__
             allow_retry=(target_kind != "notebook"),
             preselected_item=selected_notebook_item if target_kind == "notebook" else None,
             preselected_tree_control=tree if target_kind == "notebook" else None,
+            expected_text=expected_text,
         )
         return True
 
@@ -14610,6 +14819,11 @@ __CODEX_SKILL_TAGS__
         print("[DBG][PRECHECK] ENTER")
         try:
             w = getattr(self, "onenote_window", None)
+            if IS_MACOS:
+                refreshed = self._coerce_macos_window(w)
+                if refreshed is not None:
+                    self.onenote_window = refreshed
+                    w = refreshed
             print(f"[DBG][PRECHECK] onenote_window={w}")
         except Exception as e:
             print(f"[DBG][PRECHECK] onenote_window read EXC: {e}")
@@ -14686,6 +14900,7 @@ __CODEX_SKILL_TAGS__
         allow_retry: bool = True,
         preselected_item=None,
         preselected_tree_control=None,
+        expected_text: str = "",
     ):
         op_started_at = started_at or time.perf_counter()
         print(
@@ -14700,6 +14915,11 @@ __CODEX_SKILL_TAGS__
             )
             return
 
+        if IS_MACOS:
+            refreshed = self._coerce_macos_window(getattr(self, "onenote_window", None))
+            if refreshed is not None:
+                self.onenote_window = refreshed
+
         if preselected_tree_control is not None:
             self.tree_control = preselected_tree_control
         elif not self.tree_control:
@@ -14709,6 +14929,7 @@ __CODEX_SKILL_TAGS__
             self.onenote_window,
             self.tree_control,
             selected_item=preselected_item,
+            expected_text=expected_text,
         )
 
         if success:
@@ -14732,7 +14953,9 @@ __CODEX_SKILL_TAGS__
         elif allow_retry:
             self.tree_control = _find_tree_or_list(self.onenote_window)
             success, item_name = scroll_selected_item_to_center(
-                self.onenote_window, self.tree_control
+                self.onenote_window,
+                self.tree_control,
+                expected_text=expected_text,
             )
             if success:
                 print(

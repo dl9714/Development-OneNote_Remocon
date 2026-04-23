@@ -539,18 +539,18 @@ def _read_onenote_current_notebook_name(pid: int, title_hint: str = "") -> str:
                     try
                         set candidateText to description of e as text
                     end try
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to value of e as text
                         end try
                     end if
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to title of e as text
                         end try
                     end if
                     set candidateText to my cleanText(candidateText)
-                    if candidateText contains "(현재 전자필기장)" then
+                    if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then
                         set currentNotebook to candidateText
                         exit repeat
                     end if
@@ -836,8 +836,10 @@ class MacTreeControl:
 
 def _extract_current_notebook_name(raw_text: str) -> str:
     text = _clean_field(raw_text)
-    if "(현재 전자필기장)" in text:
-        text = text.split("(현재 전자필기장)", 1)[0].strip()
+    for marker in ("(현재 전자필기장)", "(현재 전자 필기장)"):
+        if marker in text:
+            text = text.split(marker, 1)[0].strip()
+            break
     if "," in text:
         text = text.split(",", 1)[0].strip()
     return text
@@ -857,18 +859,18 @@ def collect_onenote_snapshot(window: MacWindow, timeout: int = 20) -> Dict[str, 
                     try
                         set candidateText to description of e as text
                     end try
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to value of e as text
                         end try
                     end if
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to title of e as text
                         end try
                     end if
                     set candidateText to my cleanText(candidateText)
-                    if candidateText contains "(현재 전자필기장)" then
+                    if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then
                         set currentNotebook to candidateText
                     end if
                 end if
@@ -1134,54 +1136,206 @@ def select_row_by_text(
     text: str,
     preferred_scroll_left: Optional[int] = None,
 ) -> bool:
-    candidates = [
-        row for row in collect_onenote_rows(window)
-        if _normalize_text(row.text) == _normalize_text(text)
-    ]
-    if not candidates:
+    return _select_outline_row_by_text(
+        window,
+        text,
+        preferred_scroll_left=preferred_scroll_left,
+    )
+
+
+def _select_outline_row_by_text(
+    window: MacWindow,
+    text: str,
+    preferred_scroll_left: Optional[int] = None,
+    *,
+    prefer_rightmost: bool = False,
+) -> bool:
+    wanted_text_nfc = _clean_field(text)
+    wanted_text = unicodedata.normalize("NFD", wanted_text_nfc)
+    if not wanted_text:
         return False
 
-    if preferred_scroll_left is None:
-        target = sorted(candidates, key=lambda row: (row.scroll_rect.left, row.order))[0]
-    else:
-        target = sorted(
-            candidates,
-            key=lambda row: (
-                abs(row.scroll_rect.left - int(preferred_scroll_left)),
-                row.order,
-            ),
-        )[0]
-
     locator = _applescript_window_locator(window.process_id(), window.window_text())
+    wanted_left = -1 if preferred_scroll_left is None else int(preferred_scroll_left)
+    rightmost_flag = "true" if prefer_rightmost else "false"
     script = locator + f'''
-        set wantedText to {_quote_applescript_text(target.text)}
-        set wantedScrollLeft to {target.scroll_rect.left}
-        set allElems to entire contents of targetWindow
-        repeat with e in allElems
+        set wantedText to {_quote_applescript_text(wanted_text)}
+        set wantedTextNFC to {_quote_applescript_text(wanted_text_nfc)}
+        set wantedScrollLeft to {wanted_left}
+        set preferRightmost to {rightmost_flag}
+        set bestRow to missing value
+        set bestScore to 999999
+        if preferRightmost then set bestScore to -999999
+
+        try
+            set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
+            set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
+            set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
+            set groupsToScan to UI elements of nestedSplitGroup
+        on error
+            set groupsToScan to UI elements of targetWindow
+        end try
+
+        repeat with g in groupsToScan
             try
-                if role of e is "AXRow" then
-                    set labelText to ""
-                    set rowPosition to position of e
-                    set childElems to entire contents of e
-                    repeat with c in childElems
+                set gRole to (role of g) as text
+                set shouldScanGroup to false
+                if gRole is "AXGroup" then
+                    set shouldScanGroup to true
+                end if
+                if gRole is "AXScrollArea" then
+                    set shouldScanGroup to true
+                end if
+                if shouldScanGroup then
+                    set scrollAreas to {{}}
+                    if gRole is "AXScrollArea" then
+                        set end of scrollAreas to g
+                    else
+                        repeat with maybeScrollArea in (UI elements of g)
+                            try
+                                if ((role of maybeScrollArea) as text) is "AXScrollArea" then
+                                    set end of scrollAreas to maybeScrollArea
+                                end if
+                            end try
+                        end repeat
+                    end if
+
+                    repeat with sa in scrollAreas
                         try
-                            if role of c is "AXStaticText" then
-                                set labelText to my cleanText(value of c as text)
-                                exit repeat
-                            end if
+                            set sp to position of sa
+                            repeat with outlineElem in (UI elements of sa)
+                                try
+                                    set outlineRole to (role of outlineElem) as text
+                                    set shouldScanOutline to false
+                                    if outlineRole is "AXOutline" then
+                                        set shouldScanOutline to true
+                                    end if
+                                    if outlineRole is "AXTable" then
+                                        set shouldScanOutline to true
+                                    end if
+                                    if shouldScanOutline then
+                                        set rowCount to count of rows of outlineElem
+                                        repeat with rowIndex from 1 to rowCount
+                                            try
+                                                set targetRow to row rowIndex of outlineElem
+                                                set labelText to my rowLabel(targetRow)
+                                                set labelMatches to false
+                                                if labelText is wantedText then
+                                                    set labelMatches to true
+                                                end if
+                                                if labelText is wantedTextNFC then
+                                                    set labelMatches to true
+                                                end if
+                                                if labelText contains wantedText then
+                                                    set labelMatches to true
+                                                end if
+                                                if labelText contains wantedTextNFC then
+                                                    set labelMatches to true
+                                                end if
+                                                if wantedText contains labelText then
+                                                    set labelMatches to true
+                                                end if
+                                                if wantedTextNFC contains labelText then
+                                                    set labelMatches to true
+                                                end if
+                                                if labelMatches then
+                                                    if wantedScrollLeft is -1 then
+                                                        if preferRightmost then
+                                                            set rowLeft to item 1 of sp
+                                                            if rowLeft > bestScore then
+                                                                set bestScore to rowLeft
+                                                                set bestRow to targetRow
+                                                            end if
+                                                        else
+                                                            if my selectRow(targetRow) then return "OK"
+                                                        end if
+                                                    else
+                                                        set rowLeft to item 1 of sp
+                                                        set distanceValue to rowLeft - wantedScrollLeft
+                                                        if distanceValue < 0 then set distanceValue to -distanceValue
+                                                        if distanceValue < bestScore then
+                                                            set bestScore to distanceValue
+                                                            set bestRow to targetRow
+                                                        end if
+                                                    end if
+                                                end if
+                                            end try
+                                        end repeat
+                                    end if
+                                end try
+                            end repeat
                         end try
                     end repeat
-                    if labelText is wantedText then
-                        if (item 1 of rowPosition) is wantedScrollLeft then
-                            set value of attribute "AXSelected" of e to true
-                            return "OK"
-                        end if
-                    end if
                 end if
             end try
         end repeat
+
+        if bestRow is not missing value then
+            if my selectRow(bestRow) then return "OK"
+        end if
         return ""
 end tell
+
+on selectRow(targetRow)
+    try
+        set value of attribute "AXSelected" of targetRow to true
+        return true
+    end try
+    try
+        perform action "AXPress" of targetRow
+        return true
+    end try
+    try
+        click targetRow
+        return true
+    end try
+    try
+        set rowPosition to position of targetRow
+        set rowSize to size of targetRow
+        set clickX to (item 1 of rowPosition) + 20
+        set clickY to (item 2 of rowPosition) + ((item 2 of rowSize) / 2)
+        click at {{clickX, clickY}}
+        return true
+    end try
+    return false
+end selectRow
+
+on rowLabel(targetRow)
+    set labelText to ""
+    try
+        set firstCell to UI element 1 of targetRow
+        try
+            set labelText to my cleanText(value of attribute "AXDescription" of firstCell as text)
+        end try
+        if labelText is "" then
+            try
+                set labelText to my cleanText(name of firstCell as text)
+            end try
+        end if
+        if labelText is "" then
+            try
+                set labelText to my cleanText(value of firstCell as text)
+            end try
+        end if
+    end try
+    if labelText is "" then
+        repeat with c in (UI elements of targetRow)
+            try
+                if role of c is "AXStaticText" then
+                    set labelText to my cleanText(value of c as text)
+                    if labelText is not "" then exit repeat
+                end if
+            end try
+            try
+                if labelText is "" then
+                    set labelText to my cleanText(value of attribute "AXDescription" of c as text)
+                    if labelText is not "" then exit repeat
+                end if
+            end try
+        end repeat
+    end if
+    return labelText
+end rowLabel
 
 on cleanText(v)
     if v is missing value then return ""
@@ -1201,17 +1355,15 @@ on replaceText(findText, replaceText, sourceText)
     return newText
 end replaceText
 '''
-    return _run_osascript(script, timeout=15).strip() == "OK"
+    return _run_osascript(script, timeout=8).strip() == "OK"
 
 
 def select_page_row_by_text(window: MacWindow, text: str) -> bool:
-    rows = collect_onenote_rows(window)
-    if not rows:
-        return False
-    scroll_lefts = sorted({row.scroll_rect.left for row in rows})
-    if len(scroll_lefts) < 2:
-        return False
-    return select_row_by_text(window, text, preferred_scroll_left=scroll_lefts[-1])
+    return _select_outline_row_by_text(
+        window,
+        text,
+        prefer_rightmost=True,
+    )
 
 
 def current_outline_context(window: MacWindow) -> Dict[str, str]:
@@ -1228,18 +1380,18 @@ def current_outline_context(window: MacWindow) -> Dict[str, str]:
                     try
                         set candidateText to description of e as text
                     end try
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to value of e as text
                         end try
                     end if
-                    if candidateText does not contain "(현재 전자필기장)" then
+                    if candidateText does not contain "(현재 전자필기장)" and candidateText does not contain "(현재 전자 필기장)" then
                         try
                             set candidateText to title of e as text
                         end try
                     end if
                     set candidateText to my cleanText(candidateText)
-                    if candidateText contains "(현재 전자필기장)" then
+                    if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then
                         set notebookName to candidateText
                     end if
                 end if
@@ -1347,13 +1499,27 @@ end replaceText
     }
 
 
-def center_selected_row(window: MacWindow, prefer_leftmost: bool = True) -> Tuple[bool, Optional[str]]:
+def center_selected_row(
+    window: MacWindow,
+    prefer_leftmost: bool = True,
+    target_text: str = "",
+) -> Tuple[bool, Optional[str]]:
     for _ in range(3):
         snapshot = collect_onenote_snapshot(window)
         rows = snapshot.get("rows", [])
         selected_rows = [row for row in rows if row.get("selected")]
         if not selected_rows:
             return False, None
+
+        wanted_key = _normalize_text(target_text)
+        if wanted_key:
+            target_rows = [
+                row
+                for row in selected_rows
+                if _normalize_text(row.get("text") or "") == wanted_key
+            ]
+            if target_rows:
+                selected_rows = target_rows
 
         target = sorted(
             selected_rows,
@@ -2778,9 +2944,83 @@ def recent_notebook_names(window: MacWindow) -> List[str]:
     return names
 
 
+def _read_onenote_current_notebook_name_quick(window: MacWindow) -> str:
+    """Read the visible current-notebook button without scanning the whole window."""
+    if window is None or not window.process_id():
+        return ""
+    script = _applescript_window_locator(window.process_id(), window.window_text()) + r'''
+        try
+            set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
+            set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
+            set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
+            repeat with targetButton in (buttons of nestedSplitGroup)
+                set candidateText to ""
+                try
+                    set candidateText to my cleanText(description of targetButton as text)
+                end try
+                if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then return candidateText
+                try
+                    set candidateText to my cleanText(title of targetButton as text)
+                end try
+                if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then return candidateText
+                try
+                    set candidateText to my cleanText(value of targetButton as text)
+                end try
+                if candidateText contains "(현재 전자필기장)" or candidateText contains "(현재 전자 필기장)" then return candidateText
+            end repeat
+        end try
+        return ""
+end tell
+
+on cleanText(v)
+    if v is missing value then return ""
+    set t to v as text
+    set t to my replaceText(tab, " ", t)
+    set t to my replaceText(return, " ", t)
+    set t to my replaceText(linefeed, " ", t)
+    return t
+end cleanText
+
+on replaceText(findText, replaceText, sourceText)
+    set AppleScript's text item delimiters to findText
+    set parts to every text item of sourceText
+    set AppleScript's text item delimiters to replaceText
+    set newText to parts as text
+    set AppleScript's text item delimiters to ""
+    return newText
+end replaceText
+'''
+    try:
+        return _extract_current_notebook_name(_run_osascript(script, timeout=4))
+    except Exception:
+        return ""
+
+
+def current_notebook_name(window: Optional[MacWindow]) -> str:
+    if window is None:
+        return ""
+    quick_name = _read_onenote_current_notebook_name_quick(window)
+    if quick_name:
+        return quick_name
+    try:
+        return _extract_current_notebook_name(
+            _read_onenote_current_notebook_name(
+                window.process_id(),
+                window.window_text(),
+            )
+        )
+    except Exception:
+        return ""
+
+
 def _is_target_notebook_visible(window: MacWindow, notebook_name: str) -> bool:
     wanted_key = _normalize_text(notebook_name)
     if not wanted_key:
+        return False
+    quick_name = _read_onenote_current_notebook_name_quick(window)
+    if _normalize_text(quick_name) == wanted_key:
+        return True
+    if quick_name:
         return False
     try:
         current_name = _read_onenote_current_notebook_name(
@@ -2799,6 +3039,226 @@ def _is_target_notebook_visible(window: MacWindow, notebook_name: str) -> bool:
     except Exception:
         return False
     return False
+
+
+def _select_notebook_sidebar_row_by_name(window: MacWindow, notebook_name: str) -> bool:
+    wanted_name_nfc = _clean_field(notebook_name)
+    wanted_name = unicodedata.normalize("NFD", wanted_name_nfc)
+    if not wanted_name:
+        return False
+
+    script = _applescript_window_locator(window.process_id(), window.window_text()) + f'''
+        set wantedText to {_quote_applescript_text(wanted_name)}
+        set wantedTextNFC to {_quote_applescript_text(wanted_name_nfc)}
+        set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
+        set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
+        set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
+        set notebookGroup to first UI element of nestedSplitGroup whose role is "AXGroup"
+        set notebookScrollArea to first UI element of notebookGroup whose role is "AXScrollArea"
+        set targetOutline to first UI element of notebookScrollArea whose role is "AXOutline"
+
+        set rowCount to count of rows of targetOutline
+        repeat with rowIndex from 1 to rowCount
+            try
+                set targetRow to row rowIndex of targetOutline
+                set firstCell to UI element 1 of targetRow
+                set labelText to ""
+                try
+                    set labelText to my cleanText(value of attribute "AXDescription" of firstCell as text)
+                end try
+                if labelText is "" then
+                    try
+                        set labelText to my cleanText(name of firstCell as text)
+                    end try
+                end if
+                if labelText is "" then
+                    try
+                        set labelText to my cleanText(value of firstCell as text)
+                    end try
+                end if
+                set labelMatches to false
+                if labelText is wantedText then
+                    set labelMatches to true
+                end if
+                if labelText is wantedTextNFC then
+                    set labelMatches to true
+                end if
+                if labelText contains wantedText then
+                    set labelMatches to true
+                end if
+                if labelText contains wantedTextNFC then
+                    set labelMatches to true
+                end if
+                if wantedText contains labelText then
+                    set labelMatches to true
+                end if
+                if wantedTextNFC contains labelText then
+                    set labelMatches to true
+                end if
+                if labelMatches then
+                    try
+                        set value of attribute "AXSelected" of targetRow to true
+                        return "OK"
+                    end try
+                    try
+                        perform action "AXPress" of targetRow
+                        return "OK"
+                    end try
+                    try
+                        perform action "AXPress" of firstCell
+                        return "OK"
+                    end try
+                    try
+                        click targetRow
+                        return "OK"
+                    end try
+                    try
+                        click firstCell
+                        return "OK"
+                    end try
+                    try
+                        set rowPosition to position of targetRow
+                        set rowSize to size of targetRow
+                        set clickX to (item 1 of rowPosition) + 20
+                        set clickY to (item 2 of rowPosition) + ((item 2 of rowSize) / 2)
+                        click at {{clickX, clickY}}
+                        return "OK"
+                    end try
+                end if
+            end try
+        end repeat
+        return ""
+end tell
+
+on cleanText(v)
+    if v is missing value then return ""
+    set t to v as text
+    set t to my replaceText(tab, " ", t)
+    set t to my replaceText(return, " ", t)
+    set t to my replaceText(linefeed, " ", t)
+    return t
+end cleanText
+
+on replaceText(findText, replaceText, sourceText)
+    set AppleScript's text item delimiters to findText
+    set parts to every text item of sourceText
+    set AppleScript's text item delimiters to replaceText
+    set newText to parts as text
+    set AppleScript's text item delimiters to ""
+    return newText
+end replaceText
+'''
+    return _run_osascript(script, timeout=6).strip() == "OK"
+
+
+def _select_notebook_sidebar_row_by_index(window: MacWindow, row_index: int) -> bool:
+    try:
+        target_index = max(1, int(row_index))
+    except Exception:
+        return False
+
+    script = _applescript_window_locator(window.process_id(), window.window_text()) + f'''
+        set targetRowIndex to {target_index}
+        set targetSplitGroup to first UI element of targetWindow whose role is "AXSplitGroup"
+        set leftGroup to first UI element of targetSplitGroup whose role is "AXGroup"
+        set nestedSplitGroup to first UI element of leftGroup whose role is "AXSplitGroup"
+        set notebookGroup to first UI element of nestedSplitGroup whose role is "AXGroup"
+        set notebookScrollArea to first UI element of notebookGroup whose role is "AXScrollArea"
+        set targetOutline to first UI element of notebookScrollArea whose role is "AXOutline"
+        set targetRow to row targetRowIndex of targetOutline
+        try
+            set value of attribute "AXSelected" of targetRow to true
+            return "OK"
+        end try
+        try
+            perform action "AXPress" of targetRow
+            return "OK"
+        end try
+        try
+            click targetRow
+            return "OK"
+        end try
+        try
+            set firstCell to UI element 1 of targetRow
+            click firstCell
+            return "OK"
+        end try
+        try
+            set rowPosition to position of targetRow
+            set rowSize to size of targetRow
+            set clickX to (item 1 of rowPosition) + 20
+            set clickY to (item 2 of rowPosition) + ((item 2 of rowSize) / 2)
+            click at {{clickX, clickY}}
+            return "OK"
+        end try
+        return ""
+end tell
+'''
+    return _run_osascript(script, timeout=6).strip() == "OK"
+
+
+def _activate_selected_notebook_sidebar_row(window: MacWindow) -> bool:
+    script = _applescript_window_locator(window.process_id(), window.window_text()) + r'''
+        key code 49
+        return "OK"
+end tell
+'''
+    try:
+        return _run_osascript(script, timeout=4).strip() == "OK"
+    except Exception:
+        return False
+
+
+def select_open_notebook_by_name(
+    window: MacWindow,
+    notebook_name: str,
+    *,
+    wait_for_visible: bool = True,
+) -> bool:
+    wanted_name = _clean_field(notebook_name)
+    if not wanted_name:
+        return False
+    try:
+        window.set_focus()
+    except Exception:
+        pass
+
+    opened_sidebar = False
+    try:
+        ready, opened_sidebar = _ensure_notebook_sidebar(window)
+        if not ready:
+            return False
+
+        sidebar_names = _read_open_notebook_names_from_sidebar(window)
+        wanted_key = _normalize_text(wanted_name)
+        row_index = 0
+        for index, name in enumerate(sidebar_names, start=1):
+            name_key = _normalize_text(name)
+            if name_key == wanted_key or wanted_key in name_key or name_key in wanted_key:
+                row_index = index
+                break
+        if not row_index:
+            return False
+
+        if not _select_notebook_sidebar_row_by_index(window, row_index):
+            return False
+        _activate_selected_notebook_sidebar_row(window)
+
+        if not wait_for_visible:
+            return True
+
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline:
+            if _is_target_notebook_visible(window, wanted_name):
+                return True
+            time.sleep(0.2)
+        return _is_target_notebook_visible(window, wanted_name)
+    finally:
+        if opened_sidebar:
+            try:
+                _restore_notebook_sidebar(window, opened_sidebar)
+            except Exception:
+                pass
 
 
 def open_recent_notebook_by_name(
