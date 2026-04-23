@@ -4610,6 +4610,11 @@ class OpenAllNotebooksWorker(QThread):
                 for index, record in enumerate(ui_pending_records, start=1):
                     name = str(record.get("name") or "").strip()
                     print(f"[DBG][OPEN_ALL][MAC] try-open-ui {index}/{ui_total}: {name}")
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"try-open-ui={index}/{ui_total}",
+                        f"name={name!r}",
+                    )
                     if self.isInterruptionRequested():
                         result["error"] = "사용자 중단"
                         self.done.emit(result)
@@ -4634,10 +4639,28 @@ class OpenAllNotebooksWorker(QThread):
                                 name,
                             )
                             opened = bool(notebook_result.get("ok"))
+                            _mac_open_all_debug(
+                                "[DBG][OPEN_ALL][MAC]",
+                                "fallback-context",
+                                f"ok={opened}",
+                                f"source={str(notebook_result.get('source') or '')!r}",
+                                f"name={name!r}",
+                            )
                         except Exception as e:
+                            _mac_open_all_debug(
+                                "[DBG][OPEN_ALL][MAC]",
+                                "fallback-context-error",
+                                f"name={name!r}",
+                                f"error={e!r}",
+                            )
                             if not any(detail.startswith(f"{name}:") for detail in failed_details):
                                 failed_details.append(f"{name}: {e}")
                     print(f"[DBG][OPEN_ALL][MAC] launched={opened} name={name}")
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"launched={opened}",
+                        f"name={name!r}",
+                    )
 
                     if not opened:
                         failed_names.append(name)
@@ -4677,6 +4700,11 @@ class OpenAllNotebooksWorker(QThread):
                             f"{retry_index}/{len(retry_records)} - {name}"
                         )
                         if _is_macos_notebook_visible(name):
+                            _mac_open_all_debug(
+                                "[DBG][OPEN_ALL][MAC]",
+                                "retry-visible",
+                                f"name={name!r}",
+                            )
                             result["opened_names"].append(name)
                             result["opened_count"] += 1
                             continue
@@ -4697,11 +4725,29 @@ class OpenAllNotebooksWorker(QThread):
                                     name,
                                 )
                                 opened = bool(notebook_result.get("ok"))
+                                _mac_open_all_debug(
+                                    "[DBG][OPEN_ALL][MAC]",
+                                    "retry-fallback-context",
+                                    f"ok={opened}",
+                                    f"source={str(notebook_result.get('source') or '')!r}",
+                                    f"name={name!r}",
+                                )
                             except Exception as e:
+                                _mac_open_all_debug(
+                                    "[DBG][OPEN_ALL][MAC]",
+                                    "retry-fallback-context-error",
+                                    f"name={name!r}",
+                                    f"error={e!r}",
+                                )
                                 if not any(detail.startswith(f"{name}:") for detail in retry_details):
                                     retry_details.append(f"{name}: {e}")
 
                         if opened:
+                            _mac_open_all_debug(
+                                "[DBG][OPEN_ALL][MAC]",
+                                "retry-opened",
+                                f"name={name!r}",
+                            )
                             result["opened_names"].append(name)
                             result["opened_count"] += 1
                         else:
