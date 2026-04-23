@@ -15182,18 +15182,18 @@ __CODEX_SKILL_TAGS__
             should_refresh_open_notebooks = opened_count > 0 or bool(
                 result.get("refresh_open_notebooks")
             )
-            if IS_MACOS and should_refresh_open_notebooks:
-                # macOS OneNote can block while reading sidebar/cache data. Keep the
-                # "open all" command responsive; aggregate refresh remains available
-                # from the dedicated aggregate refresh action.
-                should_refresh_open_notebooks = False
+            refresh_delay_ms = 1800 if IS_MACOS else 400
 
             if result.get("ok"):
                 if opened_count > 0:
-                    self.update_status_and_ui(
-                        f"실제 OneNote 전체 열기 완료: {opened_count}개",
-                        is_connected,
-                    )
+                    status = f"실제 OneNote 전체 열기 완료: {opened_count}개"
+                    if should_refresh_open_notebooks:
+                        status += (
+                            ", 종합 새로고침 예약"
+                            if IS_MACOS
+                            else ", 종합 새로고침"
+                        )
+                    self.update_status_and_ui(status, is_connected)
                 elif verified_open_count > 0:
                     self.update_status_and_ui(
                         (
@@ -15209,7 +15209,7 @@ __CODEX_SKILL_TAGS__
                     )
                 if should_refresh_open_notebooks:
                     QTimer.singleShot(
-                        400,
+                        refresh_delay_ms,
                         lambda: self._register_all_notebooks_from_current_onenote(
                             force=True
                         ),
@@ -15230,7 +15230,7 @@ __CODEX_SKILL_TAGS__
             )
             if should_refresh_open_notebooks:
                 QTimer.singleShot(
-                    400,
+                    refresh_delay_ms,
                     lambda: self._register_all_notebooks_from_current_onenote(force=True),
                 )
 
