@@ -14502,7 +14502,7 @@ __CODEX_SKILL_TAGS__
             self._open_notebooks_refresh_worker
             and not self._open_notebooks_refresh_worker.isFinished()
         )
-        open_all_enabled = is_connected and not open_all_busy
+        open_all_enabled = is_connected
         refresh_enabled = is_connected and not refresh_open_busy
         self._sync_open_all_notebooks_action_label(
             recalculate=open_all_enabled,
@@ -14524,8 +14524,8 @@ __CODEX_SKILL_TAGS__
         busy: bool = False,
     ) -> None:
         if busy:
-            label = "체크 없는 전자필기장 여는 중..."
-            tip = _open_unchecked_notebooks_tip()
+            label = "체크 없는 전자필기장 열기 중지"
+            tip = "실행 중인 체크 없는 전자필기장 일괄 열기 작업을 중지합니다."
         else:
             if recalculate and getattr(self, "_open_all_candidate_count_dirty", True):
                 try:
@@ -15765,8 +15765,12 @@ __CODEX_SKILL_TAGS__
             self._open_all_notebooks_worker is not None
             and self._open_all_notebooks_worker.isRunning()
         ):
+            try:
+                self._open_all_notebooks_worker.requestInterruption()
+            except Exception:
+                pass
             self.update_status_and_ui(
-                f"이미 {_open_unchecked_notebooks_button_label()} 작업이 실행 중입니다.",
+                f"{_open_unchecked_notebooks_button_label()} 중지 요청됨...",
                 True,
             )
             return
