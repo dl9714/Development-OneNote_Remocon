@@ -74,6 +74,7 @@ from src.macos_ui import (
     MacAutomationError,
     MacDesktop,
     MacWindow,
+    _recent_notebook_records_from_cache as mac_recent_notebook_records_from_cache,
     current_notebook_name as mac_current_notebook_name,
     current_open_notebook_names as mac_current_open_notebook_names,
     macos_accessibility_is_trusted,
@@ -1096,6 +1097,36 @@ def _collect_all_sections_dedup(settings: Dict[str, Any]) -> List[Dict[str, Any]
 
 
 def _collect_known_notebook_name_records(settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _coerce_last_accessed_at(value: Any) -> int:
+        try:
+            return max(0, int(value or 0))
+        except Exception:
+            return 0
+
+    def _merge_record(existing: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+        incoming_id = str(incoming.get("id") or incoming.get("notebook_id") or "").strip()
+        incoming_path = str(incoming.get("path") or "").strip()
+        incoming_url = str(
+            incoming.get("url") or incoming.get("notebook_url") or ""
+        ).strip()
+        incoming_source = str(incoming.get("source") or "").strip()
+        incoming_last_accessed_at = _coerce_last_accessed_at(
+            incoming.get("last_accessed_at")
+        )
+
+        if not str(existing.get("id") or "").strip() and incoming_id:
+            existing["id"] = incoming_id
+        if not str(existing.get("path") or "").strip() and incoming_path:
+            existing["path"] = incoming_path
+        if not str(existing.get("url") or "").strip() and incoming_url:
+            existing["url"] = incoming_url
+        if not str(existing.get("source") or "").strip() and incoming_source:
+            existing["source"] = incoming_source
+        if incoming_last_accessed_at > _coerce_last_accessed_at(
+            existing.get("last_accessed_at")
+        ):
+            existing["last_accessed_at"] = incoming_last_accessed_at
+
     records: Dict[str, Dict[str, Any]] = {}
     for node in _collect_all_sections_dedup(settings):
         if not isinstance(node, dict):
@@ -1110,14 +1141,23 @@ def _collect_known_notebook_name_records(settings: Dict[str, Any]) -> List[Dict[
             )
         )
         key = _normalize_notebook_name_key(notebook_name)
-        if not key or key in records:
+        if not key:
             continue
-        records[key] = {
+        candidate = {
             "name": notebook_name,
-            "url": "",
-            "last_accessed_at": 0,
+            "id": str(target.get("notebook_id") or "").strip(),
+            "path": str(target.get("path") or "").strip(),
+            "url": str(target.get("url") or target.get("notebook_url") or "").strip(),
+            "last_accessed_at": _coerce_last_accessed_at(
+                target.get("last_accessed_at")
+            ),
             "source": "SETTINGS_BUFFER",
         }
+        existing = records.get(key)
+        if existing is None:
+            records[key] = candidate
+            continue
+        _merge_record(existing, candidate)
     return list(records.values())
 
 
@@ -2735,26 +2775,157 @@ def _get_open_notebook_records_via_com(
         return [dict(record) for record in cache_records]
 
     if IS_MACOS:
-        records: List[Dict[str, str]] = []
-        try:
-            wins = [
-                info
-                for info in enumerate_macos_windows(filter_title_substr=None)
-                if is_macos_onenote_window_info(info, os.getpid())
-            ]
-            wins.sort(key=lambda item: (not bool(item.get("frontmost")), item.get("title", "")))
-            for info in wins:
-                win = MacWindow(dict(info))
-                records = [
-                    {"id": "", "name": name, "path": name}
-                    for name in mac_current_open_notebook_names(win)
-                    if str(name).strip()
+        def _coerce_last_accessed_at(value: Any) -> int:
+            try:
+                return max(0, int(value or 0))
+            except Exception:
+                return 0
+
+        def _merge_record(existing: Dict[str, Any], incoming: Dict[str, Any]) -> None:
+            incoming_url = str(incoming.get("url") or "").strip()
+            incoming_path = str(incoming.get("path") or "").strip()
+            incoming_source = str(incoming.get("source") or "").strip()
+            incoming_last_accessed_at = _coerce_last_accessed_at(
+                incoming.get("last_accessed_at")
+            )
+            if not str(existing.get("url") or "").strip() and incoming_url:
+                existing["url"] = incoming_url
+            if not str(existing.get("path") or "").strip() and incoming_path:
+                existing["path"] = incoming_path
+            if not str(existing.get("source") or "").strip() and incoming_source:
+                existing["source"] = incoming_source
+            if incoming_last_accessed_at > _coerce_last_accessed_at(
+                existing.get("last_accessed_at")
+            ):
+                existing["last_accessed_at"] = incoming_last_accessed_at
+
+        def _enrich_mac_records(base_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            ordered_records: List[Dict[str, Any]] = []
+            records_by_key: Dict[str, Dict[str, Any]] = {}
+            for raw_record in base_records:
+                name = str((raw_record or {}).get("name") or "").strip()
+                key = _normalize_notebook_name_key(name)
+                if not key:
+                    continue
+                existing = records_by_key.get(key)
+                if existing is None:
+                    existing = dict(raw_record)
+                    existing["name"] = name
+                    existing["url"] = str(existing.get("url") or "").strip()
+                    existing["last_accessed_at"] = _coerce_last_accessed_at(
+                        existing.get("last_accessed_at")
+                    )
+                    records_by_key[key] = existing
+                    ordered_records.append(existing)
+                    continue
+                _merge_record(existing, raw_record)
+
+            known_sources: List[List[Dict[str, Any]]] = []
+            try:
+                cache_records = [
+                    dict(record)
+                    for record in mac_recent_notebook_records_from_cache()
+                    if str((record or {}).get("name") or "").strip()
                 ]
-                if records:
-                    break
+            except Exception:
+                cache_records = []
+            if not cache_records:
+                try:
+                    cache_records = [
+                        dict(record)
+                        for record in mac_recent_notebook_records(None)
+                        if str((record or {}).get("name") or "").strip()
+                    ]
+                except Exception:
+                    cache_records = []
+            if cache_records:
+                known_sources.append(cache_records)
+
+            try:
+                shortcut_records = [
+                    dict(record)
+                    for record in _collect_onenote_notebook_shortcuts()
+                    if str((record or {}).get("name") or "").strip()
+                ]
+            except Exception:
+                shortcut_records = []
+            if shortcut_records:
+                known_sources.append(shortcut_records)
+
+            for source_records in known_sources:
+                source_by_key = {}
+                for source_record in source_records:
+                    source_name = str((source_record or {}).get("name") or "").strip()
+                    source_key = _normalize_notebook_name_key(source_name)
+                    if source_key and source_key not in source_by_key:
+                        source_by_key[source_key] = dict(source_record)
+                for record in ordered_records:
+                    record_key = _normalize_notebook_name_key(record.get("name"))
+                    matched = source_by_key.get(record_key)
+                    if matched is not None:
+                        _merge_record(record, matched)
+
+            return ordered_records
+
+        records: List[Dict[str, Any]] = []
+        try:
+            ax_box: Dict[str, Any] = {}
+            ax_done = threading.Event()
+
+            def _read_ax_records() -> None:
+                try:
+                    wins = [
+                        info
+                        for info in enumerate_macos_windows(filter_title_substr=None)
+                        if is_macos_onenote_window_info(info, os.getpid())
+                    ]
+                    wins.sort(
+                        key=lambda item: (
+                            not bool(item.get("frontmost")),
+                            item.get("title", ""),
+                        )
+                    )
+                    ax_records: List[Dict[str, Any]] = []
+                    for info in wins:
+                        win = MacWindow(dict(info))
+                        ax_records = [
+                            {
+                                "id": "",
+                                "name": name,
+                                "path": name,
+                                "url": "",
+                                "last_accessed_at": 0,
+                                "source": "MAC_AX_OPEN_NOTEBOOKS",
+                            }
+                            for name in mac_current_open_notebook_names(win)
+                            if str(name).strip()
+                        ]
+                        if ax_records:
+                            break
+                    ax_box["records"] = ax_records
+                except Exception as exc:
+                    ax_box["error"] = exc
+                finally:
+                    ax_done.set()
+
+            threading.Thread(
+                target=_read_ax_records,
+                name="onenote-mac-open-notebooks-cache",
+                daemon=True,
+            ).start()
+            if ax_done.wait(8.0):
+                if "error" in ax_box:
+                    raise ax_box["error"]
+                records = [dict(record) for record in (ax_box.get("records") or [])]
+            else:
+                print("[WARN][MAC][NOTEBOOKS] AX open notebook read timed out")
+                records = []
         except Exception as e:
             print(f"[WARN][MAC][NOTEBOOKS] {e}")
             records = []
+
+        if records:
+            records = _enrich_mac_records(records)
 
         _OPEN_NOTEBOOK_RECORDS_CACHE["records"] = [dict(record) for record in records]
         _OPEN_NOTEBOOK_RECORDS_CACHE["expires_at"] = now + max(0.0, max_age_sec)
@@ -4049,7 +4220,7 @@ class OpenAllNotebooksWorker(QThread):
                         daemon=True,
                     )
                     sidebar_thread.start()
-                    if sidebar_done.wait(8.0):
+                    if sidebar_done.wait(4.0):
                         if "error" in sidebar_box:
                             sidebar_error = str(sidebar_box["error"])
                             print(
@@ -4069,7 +4240,7 @@ class OpenAllNotebooksWorker(QThread):
                             }
                     else:
                         sidebar_error = (
-                            "OneNote 열린 전자필기장 목록 읽기가 8초를 넘어 중단되었습니다."
+                            "OneNote 열린 전자필기장 목록 읽기가 4초를 넘어 중단되었습니다."
                         )
                     print(
                         "[DBG][OPEN_ALL][MAC]",
@@ -4079,17 +4250,53 @@ class OpenAllNotebooksWorker(QThread):
                 else:
                     print("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
 
-                recent_records = [
-                    dict(record)
-                    for record in mac_recent_notebook_records(win)
-                    if str((record or {}).get("name") or "").strip()
-                ]
+                try:
+                    recent_records = [
+                        dict(record)
+                        for record in mac_recent_notebook_records_from_cache()
+                        if str((record or {}).get("name") or "").strip()
+                    ]
+                except Exception:
+                    recent_records = []
                 print(f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}")
-                shortcut_records = [
-                    dict(record)
-                    for record in _collect_onenote_notebook_shortcuts()
-                    if str((record or {}).get("name") or "").strip()
-                ]
+                shortcut_box: Dict[str, Any] = {}
+                shortcut_done = threading.Event()
+
+                def _read_shortcut_records() -> None:
+                    try:
+                        shortcut_box["records"] = [
+                            dict(record)
+                            for record in _collect_onenote_notebook_shortcuts()
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                    except Exception as exc:
+                        shortcut_box["error"] = exc
+                    finally:
+                        shortcut_done.set()
+
+                threading.Thread(
+                    target=_read_shortcut_records,
+                    name="onenote-shortcut-scan",
+                    daemon=True,
+                ).start()
+                if shortcut_done.wait(2.0):
+                    if "error" in shortcut_box:
+                        print(
+                            "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SHORTCUTS]",
+                            str(shortcut_box["error"]),
+                        )
+                        shortcut_records = []
+                    else:
+                        shortcut_records = [
+                            dict(record)
+                            for record in (shortcut_box.get("records") or [])
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                else:
+                    print(
+                        "[WARN][OPEN_ALL_NOTEBOOKS][MAC][SHORTCUTS] timed out after 2s"
+                    )
+                    shortcut_records = []
                 print(
                     "[DBG][OPEN_ALL][MAC]",
                     f"shortcut-records={len(shortcut_records)}",
@@ -4540,12 +4747,43 @@ class OpenNotebookRecordsWorker(QThread):
                 self.done.emit(result)
                 return
             if IS_MACOS and self.sig:
-                win = MacWindow(dict(self.sig))
-                records = [
-                    {"id": "", "name": name, "path": name}
-                    for name in mac_current_open_notebook_names(win)
-                    if str(name or "").strip()
-                ]
+                ax_box: Dict[str, Any] = {}
+                ax_done = threading.Event()
+
+                def _read_ax_records() -> None:
+                    try:
+                        win = MacWindow(dict(self.sig))
+                        ax_box["records"] = [
+                            {
+                                "id": "",
+                                "name": name,
+                                "path": name,
+                                "url": "",
+                                "last_accessed_at": 0,
+                                "source": "MAC_AX_OPEN_NOTEBOOKS",
+                            }
+                            for name in mac_current_open_notebook_names(win)
+                            if str(name or "").strip()
+                        ]
+                    except Exception as exc:
+                        ax_box["error"] = exc
+                    finally:
+                        ax_done.set()
+
+                threading.Thread(
+                    target=_read_ax_records,
+                    name="onenote-mac-open-notebooks-worker",
+                    daemon=True,
+                ).start()
+                if ax_done.wait(8.0):
+                    if "error" in ax_box:
+                        raise ax_box["error"]
+                    records = [dict(record) for record in (ax_box.get("records") or [])]
+                else:
+                    records = []
+                    result["error"] = (
+                        "macOS 열린 전자필기장 AX 조회가 8초를 넘어 중단되었습니다."
+                    )
                 ax_debug = macos_last_ax_notebook_debug()
                 if (
                     records
@@ -4580,6 +4818,8 @@ class OpenNotebookRecordsWorker(QThread):
                             f"reason={ax_debug.get('reason')})."
                         )
                 if not records:
+                    records = _get_open_notebook_records_via_com(refresh=True)
+                elif any(not str(record.get("url") or "").strip() for record in records):
                     records = _get_open_notebook_records_via_com(refresh=True)
             else:
                 records = _get_open_notebook_records_via_com(refresh=True)
@@ -17979,6 +18219,9 @@ __CODEX_SKILL_TAGS__
                 *,
                 notebook_id: str = "",
                 notebook_path: str = "",
+                notebook_url: str = "",
+                last_accessed_at: int = 0,
+                notebook_source: str = "",
             ) -> None:
                 nb_name_clean = _strip_stale_favorite_prefix(str(nb_name or "").strip())
                 name_key = _normalize_notebook_name_key(nb_name_clean)
@@ -17992,6 +18235,16 @@ __CODEX_SKILL_TAGS__
                     target["notebook_id"] = str(notebook_id).strip()
                 if notebook_path:
                     target["path"] = str(notebook_path).strip()
+                if notebook_url:
+                    target["url"] = str(notebook_url).strip()
+                try:
+                    notebook_last_accessed_at = max(0, int(last_accessed_at or 0))
+                except Exception:
+                    notebook_last_accessed_at = 0
+                if notebook_last_accessed_at:
+                    target["last_accessed_at"] = notebook_last_accessed_at
+                if notebook_source:
+                    target["source"] = str(notebook_source).strip()
                 notebook_nodes.append(
                     {
                         "type": "notebook",
@@ -18013,6 +18266,9 @@ __CODEX_SKILL_TAGS__
                         record.get("name", ""),
                         notebook_id=record.get("id", ""),
                         notebook_path=record.get("path", ""),
+                        notebook_url=record.get("url", ""),
+                        last_accessed_at=record.get("last_accessed_at", 0),
+                        notebook_source=record.get("source", ""),
                     )
             except Exception as e:
                 com_error = str(e)
