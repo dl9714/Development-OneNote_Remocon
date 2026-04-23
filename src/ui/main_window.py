@@ -320,6 +320,54 @@ def _open_unchecked_notebooks_tip() -> str:
     return "종합 목록에서 연두색 체크가 없는 전자필기장만 현재 열린 목록과 대조해서 엽니다."
 
 
+_MAC_UI_OPEN_SOURCE_HINTS = {
+    "MAC_RECENT",
+    "MAC_RECENT_CACHE",
+    "MAC_RECENT_DIALOG",
+    "MAC_SHORTCUT",
+    "RECENT",
+    "RECENT_CACHE",
+    "RECENT_DIALOG",
+}
+_APP_ONLY_NOTEBOOK_SOURCES = {
+    "AGG_UNCHECKED",
+    "AGG_UNCLASSIFIED",
+    "SETTINGS_BUFFER",
+}
+
+
+def _notebook_record_source_hints(record: Dict[str, Any]) -> Set[str]:
+    hints: Set[str] = set()
+    raw_hints = (record or {}).get("_candidate_sources")
+    if isinstance(raw_hints, (list, tuple, set)):
+        for value in raw_hints:
+            token = str(value or "").strip()
+            if token:
+                hints.add(token)
+    raw_source = str((record or {}).get("source") or "").strip()
+    if raw_source:
+        for token in re.split(r"[+,/|]", raw_source):
+            token = token.strip()
+            if token:
+                hints.add(token)
+    return hints
+
+
+def _mac_record_has_ui_open_hint(record: Dict[str, Any]) -> bool:
+    return bool(_notebook_record_source_hints(record) & _MAC_UI_OPEN_SOURCE_HINTS)
+
+
+def _mac_record_is_app_only_without_launch_info(record: Dict[str, Any]) -> bool:
+    if not IS_MACOS:
+        return False
+    if str((record or {}).get("url") or "").strip():
+        return False
+    if _mac_record_has_ui_open_hint(record):
+        return False
+    hints = _notebook_record_source_hints(record)
+    return not hints or bool(hints & _APP_ONLY_NOTEBOOK_SOURCES)
+
+
 def _make_open_notebook_check_icon(size: int = 18) -> QIcon:
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -4436,6 +4484,9 @@ class OpenAllNotebooksWorker(QThread):
                 _mac_open_all_debug(
                     f"[DBG][OPEN_ALL][MAC] recent-records={len(recent_records)}"
                 )
+                for record in recent_records:
+                    if not str(record.get("source") or "").strip():
+                        record["source"] = "MAC_RECENT_CACHE"
                 self.progress.emit(f"{mac_open_action_label} 준비 중... OneDrive 바로가기 확인")
                 shortcut_box: Dict[str, Any] = {}
                 shortcut_done = threading.Event()
@@ -4479,6 +4530,9 @@ class OpenAllNotebooksWorker(QThread):
                     "[DBG][OPEN_ALL][MAC]",
                     f"shortcut-records={len(shortcut_records)}",
                 )
+                for record in shortcut_records:
+                    if not str(record.get("source") or "").strip():
+                        record["source"] = "MAC_SHORTCUT"
                 self.progress.emit(f"{mac_open_action_label} 준비 중... 저장된 후보 병합")
                 settings_records = [
                     dict(record)
@@ -4493,6 +4547,27 @@ class OpenAllNotebooksWorker(QThread):
 
                 merged_records_by_key: Dict[str, Dict[str, Any]] = {}
 
+                def _track_open_candidate_sources(
+                    existing: Dict[str, Any],
+                    incoming: Dict[str, Any],
+                ) -> None:
+                    ordered_sources: List[str] = []
+                    for candidate in (
+                        list(existing.get("_candidate_sources") or [])
+                        if isinstance(existing.get("_candidate_sources"), list)
+                        else []
+                    ):
+                        token = str(candidate or "").strip()
+                        if token and token not in ordered_sources:
+                            ordered_sources.append(token)
+                    for token in sorted(_notebook_record_source_hints(existing)):
+                        if token and token not in ordered_sources:
+                            ordered_sources.append(token)
+                    for token in sorted(_notebook_record_source_hints(incoming)):
+                        if token and token not in ordered_sources:
+                            ordered_sources.append(token)
+                    existing["_candidate_sources"] = ordered_sources
+
                 def _merge_open_candidate(record: Dict[str, Any], *, allow_new: bool) -> None:
                     name = str((record or {}).get("name") or "").strip()
                     key = _normalize_notebook_name_key(name)
@@ -4501,8 +4576,11 @@ class OpenAllNotebooksWorker(QThread):
                     existing = merged_records_by_key.get(key)
                     if existing is None:
                         if allow_new:
-                            merged_records_by_key[key] = dict(record)
+                            merged = dict(record)
+                            _track_open_candidate_sources(merged, record)
+                            merged_records_by_key[key] = merged
                         return
+                    _track_open_candidate_sources(existing, record)
                     for field in ("url", "path", "id", "source"):
                         if (
                             not str(existing.get(field) or "").strip()
@@ -4627,26 +4705,52 @@ class OpenAllNotebooksWorker(QThread):
                 failed_details = []
                 failed_records = []
 
-                bulk_records = [
-                    dict(record)
-                    for record in pending_records
-                    if str((record or {}).get("url") or "").strip()
-                ]
-                ui_pending_records = [
-                    dict(record)
-                    for record in pending_records
-                    if not str((record or {}).get("url") or "").strip()
-                ]
+                bulk_records = []
+                ui_pending_records = []
+                missing_launch_records = []
+                for record in pending_records:
+                    record_copy = dict(record)
+                    if str((record or {}).get("url") or "").strip():
+                        bulk_records.append(record_copy)
+                    elif candidate_limited_mode and _mac_record_is_app_only_without_launch_info(
+                        record
+                    ):
+                        missing_launch_records.append(record_copy)
+                    else:
+                        ui_pending_records.append(record_copy)
                 if candidate_limited_mode:
                     self.progress.emit(
                         f"{mac_open_action_label} 실행 방식 확정... "
-                        f"URL 일괄 {len(bulk_records)}개, UI 보조 {len(ui_pending_records)}개"
+                        f"URL 일괄 {len(bulk_records)}개, "
+                        f"UI 보조 {len(ui_pending_records)}개, "
+                        f"정보 부족 {len(missing_launch_records)}개"
+                    )
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        f"bulk-records={len(bulk_records)}",
+                        f"ui-records={len(ui_pending_records)}",
+                        f"missing-launch-records={len(missing_launch_records)}",
+                        f"missing-sample={[str((record or {}).get('name') or '').strip() for record in missing_launch_records[:8]]!r}",
                     )
                     if not bulk_records and ui_pending_records:
                         self.progress.emit(
                             f"{mac_open_action_label} URL 후보 없음... "
                             "최근 목록 UI 보조 자동화로 진행"
                         )
+                    if not bulk_records and not ui_pending_records and missing_launch_records:
+                        missing_names = [
+                            str((record or {}).get("name") or "").strip()
+                            for record in missing_launch_records
+                            if str((record or {}).get("name") or "").strip()
+                        ]
+                        result["error"] = (
+                            f"자동으로 열 URL/최근 목록 정보가 없는 후보 {len(missing_names)}개는 "
+                            "앱이 멈추지 않도록 건너뜁니다. "
+                            "OneNote에서 해당 전자필기장을 한 번 열거나 열린 전자필기장 새로고침 후 다시 시도하세요."
+                        )
+                        result["remaining_names"] = missing_names
+                        self.done.emit(result)
+                        return
                 if bulk_records:
                     bulk_total = len(bulk_records)
                     self.progress.emit(
@@ -4674,7 +4778,15 @@ class OpenAllNotebooksWorker(QThread):
                             result["opened_names"].append(name)
                             result["opened_count"] += 1
                         else:
-                            ui_pending_records.append(dict(record))
+                            if (
+                                not candidate_limited_mode
+                                or _mac_record_has_ui_open_hint(record)
+                            ):
+                                ui_pending_records.append(dict(record))
+                            else:
+                                failed_names.append(name)
+                                failed_records.append(dict(record))
+                                failed_details.append(f"{name}: URL 실행 실패")
 
                         # Avoid overwhelming OneNote/macOS URL dispatch, while still
                         # keeping this path bulk-oriented instead of per-item UI waits.
@@ -4854,9 +4966,21 @@ class OpenAllNotebooksWorker(QThread):
                     failed_names = retry_names
                     failed_details = retry_details
 
+                if missing_launch_records:
+                    missing_names = []
+                    for record in missing_launch_records:
+                        name = str(record.get("name") or "").strip()
+                        if not name or name in missing_names:
+                            continue
+                        missing_names.append(name)
+                    failed_names.extend(missing_names)
+                    failed_details.extend(
+                        f"{name}: URL/최근 목록 정보 없음" for name in missing_names
+                    )
+
                 if failed_names:
                     result["error"] = (
-                        f"최근 전자필기장 기반 열기 실패 {len(failed_names)}개 - "
+                        f"자동 열기 미완료 {len(failed_names)}개 - "
                         + "; ".join(failed_details[:3])
                     )
                     result["remaining_names"] = failed_names
@@ -14574,6 +14698,7 @@ __CODEX_SKILL_TAGS__
             "path": 0,
             "direct": 0,
             "ui": 0,
+            "missing": 0,
         }
         for record in candidates or []:
             if not str((record or {}).get("name") or "").strip():
@@ -14587,6 +14712,8 @@ __CODEX_SKILL_TAGS__
             elif has_path and not IS_MACOS:
                 stats["path"] += 1
                 stats["direct"] += 1
+            elif IS_MACOS and _mac_record_is_app_only_without_launch_info(record):
+                stats["missing"] += 1
             else:
                 stats["ui"] += 1
         return stats
@@ -14597,7 +14724,8 @@ __CODEX_SKILL_TAGS__
         if IS_MACOS:
             return (
                 f"URL 일괄 {int(stats.get('url') or 0)}개, "
-                f"UI 보조 {int(stats.get('ui') or 0)}개"
+                f"UI 보조 {int(stats.get('ui') or 0)}개, "
+                f"정보 부족 {int(stats.get('missing') or 0)}개"
             )
         return (
             f"바로가기/URL 자동 {int(stats.get('direct') or 0)}개, "
