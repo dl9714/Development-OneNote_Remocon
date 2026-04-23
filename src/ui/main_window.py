@@ -141,6 +141,12 @@ MACOS_GENERIC_ONENOTE_TITLES = {
     "onenote",
     ONENOTE_MAC_BUNDLE_ID.casefold(),
 }
+MACOS_RECENT_NOTEBOOK_DIALOG_TITLE_TOKENS = (
+    "최근 전자 필기장",
+    "새 전자 필기장",
+    "recent notebook",
+    "new notebook",
+)
 CODEX_PLATFORM_WINDOWS = "windows"
 CODEX_PLATFORM_MACOS = "macos"
 
@@ -3581,6 +3587,11 @@ def _merge_connection_signature(
         and int(previous_sig.get("handle") or 0)
     ):
         merged["handle"] = int(previous_sig.get("handle") or 0)
+    if (
+        not int(merged.get("window_number") or 0)
+        and int(previous_sig.get("window_number") or 0)
+    ):
+        merged["window_number"] = int(previous_sig.get("window_number") or 0)
     return merged
 
 
@@ -3613,6 +3624,57 @@ def _preferred_connected_window_title_quick(
     return ""
 
 
+def _is_macos_recent_notebooks_dialog_title(title: Optional[str]) -> bool:
+    text = str(title or "").strip().casefold()
+    if not text:
+        return False
+    return any(token.casefold() in text for token in MACOS_RECENT_NOTEBOOK_DIALOG_TITLE_TOKENS)
+
+
+def _resolve_macos_primary_notebook_window(
+    win: Optional[object],
+    fallback_sig: Optional[Dict[str, Any]] = None,
+) -> Optional[MacWindow]:
+    if not IS_MACOS or win is None:
+        return win if isinstance(win, MacWindow) else None
+
+    current_info = dict(getattr(win, "info", {}) or {})
+    current_title = _preferred_connected_window_title_quick(win, fallback_sig)
+    if current_title and not _is_macos_recent_notebooks_dialog_title(current_title):
+        return win if isinstance(win, MacWindow) else MacWindow(current_info or dict(fallback_sig or {}))
+
+    current_pid = int(current_info.get("pid") or (fallback_sig or {}).get("pid") or 0)
+    candidates = [
+        info
+        for info in enumerate_macos_windows_quick(filter_title_substr=None)
+        if is_macos_onenote_window_info(info, os.getpid())
+    ]
+    if not candidates:
+        return win if isinstance(win, MacWindow) else None
+
+    def _score(info: Dict[str, Any]) -> int:
+        title = str(info.get("title") or "").strip()
+        title_cf = title.casefold()
+        score = 0
+        if title and title_cf not in MACOS_GENERIC_ONENOTE_TITLES:
+            score += 20
+        if not _is_macos_recent_notebooks_dialog_title(title):
+            score += 80
+        if current_pid and int(info.get("pid") or 0) == current_pid:
+            score += 20
+        if bool(info.get("frontmost")):
+            score += 10
+        return score
+
+    best = max(candidates, key=_score)
+    if _score(best) <= 0:
+        return win if isinstance(win, MacWindow) else None
+    try:
+        return MacWindow(dict(best))
+    except Exception:
+        return win if isinstance(win, MacWindow) else None
+
+
 def build_window_signature_quick(
     win,
     fallback_sig: Optional[Dict[str, Any]] = None,
@@ -3643,12 +3705,17 @@ def build_window_signature_quick(
         handle = int(info.get("handle") or win.handle or 0) or None
     except Exception:
         handle = int(info.get("handle") or 0) or None
+    try:
+        window_number = int(info.get("window_number") or 0) or None
+    except Exception:
+        window_number = int(info.get("window_number") or 0) or None
 
     exe_name = os.path.basename(bundle_id or cls_name or "").lower()
     title = _preferred_connected_window_title_quick(win, fallback_sig)
     return _merge_connection_signature(
         {
             "handle": handle,
+            "window_number": window_number,
             "pid": pid,
             "class_name": cls_name,
             "title": title,
@@ -3677,6 +3744,10 @@ def build_window_signature(win) -> dict:
         handle = win.handle
     except Exception:
         handle = None
+    try:
+        window_number = int(getattr(win, "info", {}).get("window_number") or 0) or None
+    except Exception:
+        window_number = None
     title = _preferred_connected_window_title(win)
     try:
         cls_name = win.class_name()
@@ -3685,6 +3756,7 @@ def build_window_signature(win) -> dict:
 
     return {
         "handle": handle,
+        "window_number": window_number,
         "pid": pid,
         "class_name": cls_name,
         "title": title,
@@ -4189,6 +4261,10 @@ class OpenAllNotebooksWorker(QThread):
                 result["error"] = "연결된 OneNote 창을 다시 찾지 못했습니다."
                 self.done.emit(result)
                 return
+            if IS_MACOS:
+                resolved_mac_win = _resolve_macos_primary_notebook_window(win, self.sig)
+                if resolved_mac_win is not None:
+                    win = resolved_mac_win
 
             try:
                 result["window_info"] = {
@@ -4207,6 +4283,11 @@ class OpenAllNotebooksWorker(QThread):
                     _append_open_all_debug_log(line)
 
                 _mac_open_all_debug("[DBG][OPEN_ALL][MAC] branch-start")
+                _mac_open_all_debug(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"resolved-window-title={_preferred_connected_window_title_quick(win, self.sig)!r}",
+                    f"pid={getattr(win, 'process_id', lambda: 0)() if hasattr(win, 'process_id') else 0}",
+                )
                 self.progress.emit("실제 OneNote 전체 열기 준비 중... 현재 열린 목록 확인")
                 initial_notebook_name = _preferred_connected_window_title_quick(
                     win,
@@ -15448,9 +15529,25 @@ __CODEX_SKILL_TAGS__
             self.update_status_and_ui("오류: OneNote 창 정보를 읽지 못했습니다.", True)
             return
 
+        notebook_candidates = self._collect_open_all_notebook_candidates()
+        candidate_scope = str(
+            getattr(self, "_last_open_all_candidate_scope", "SETTINGS_FALLBACK") or ""
+        )
+        print(
+            "[DBG][OPEN_ALL][CANDIDATES]",
+            f"scope={candidate_scope}",
+            f"count={len(notebook_candidates)}",
+            f"sample={[str((record or {}).get('name') or '').strip() for record in notebook_candidates[:8]]!r}",
+        )
+        if candidate_scope == "AGG_UNCLASSIFIED" and not notebook_candidates:
+            self.update_status_and_ui(
+                "미분류 카테고리에 열 대상 전자필기장이 없습니다.",
+                False,
+            )
+            return
         worker = OpenAllNotebooksWorker(
             sig,
-            notebook_candidates=_collect_known_notebook_name_records(self.settings),
+            notebook_candidates=notebook_candidates,
             parent=self,
         )
         self._open_all_notebooks_worker = worker
@@ -15923,6 +16020,69 @@ __CODEX_SKILL_TAGS__
             persist=True,
             show_status=True,
         )
+
+    def _collect_open_all_notebook_candidates(self) -> List[Dict[str, Any]]:
+        def _coerce_last_accessed_at(value: Any) -> int:
+            try:
+                return max(0, int(value or 0))
+            except Exception:
+                return 0
+
+        self._last_open_all_candidate_scope = "SETTINGS_FALLBACK"
+        seen: Set[str] = set()
+        records: List[Dict[str, Any]] = []
+
+        def _append_record(name: str, target: Dict[str, Any], source: str) -> None:
+            clean_name = str(name or "").strip()
+            key = _normalize_notebook_name_key(clean_name)
+            if not key or key in seen:
+                return
+            seen.add(key)
+            records.append(
+                {
+                    "name": clean_name,
+                    "id": str(target.get("notebook_id") or "").strip(),
+                    "path": str(target.get("path") or "").strip(),
+                    "url": str(target.get("url") or target.get("notebook_url") or "").strip(),
+                    "last_accessed_at": _coerce_last_accessed_at(
+                        target.get("last_accessed_at")
+                    ),
+                    "source": source,
+                }
+            )
+
+        try:
+            source_nodes = self._aggregate_source_nodes_for_fast_classification()
+            categorized = self._build_aggregate_categorized_display_nodes(source_nodes)
+            unclassified_nodes: List[Dict[str, Any]] = []
+            unclassified_group_found = False
+            for node in categorized:
+                if not isinstance(node, dict):
+                    continue
+                if node.get("id") == AGG_UNCLASSIFIED_GROUP_ID:
+                    unclassified_group_found = True
+                    unclassified_nodes = self._collect_notebook_nodes_from_nodes(
+                        node.get("children") or []
+                    )
+                    break
+            for node in unclassified_nodes:
+                target = dict(node.get("target") or {})
+                notebook_name = (
+                    str(target.get("notebook_text") or "").strip()
+                    or str(node.get("name") or "").strip()
+                )
+                if notebook_name:
+                    _append_record(notebook_name, target, "AGG_UNCLASSIFIED")
+            if unclassified_group_found:
+                self._last_open_all_candidate_scope = "AGG_UNCLASSIFIED"
+                return records
+        except Exception as e:
+            print(f"[WARN][OPEN_ALL][CANDIDATES][AGG] {e}")
+
+        if records:
+            return records
+        self._last_open_all_candidate_scope = "SETTINGS_FALLBACK"
+        return _collect_known_notebook_name_records(self.settings)
 
     def _build_aggregate_buffer(self):
         """모든 섹션을 수집하여 종합 버퍼 데이터를 생성합니다."""

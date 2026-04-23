@@ -104,8 +104,19 @@ _MAC_ONENOTE_RESOURCEINFOCACHE_JSON = Path(
         "~/Library/Containers/com.microsoft.onenote.mac/Data/Library/Application Support/Microsoft/Office/16.0/ResourceInfoCache/data.json"
     )
 )
+_MAC_DEBUG_LOG_PATH = Path(
+    os.path.expanduser("~/Library/Logs/OneNote_Remocon/macos_ui_debug.log")
+)
 _MAC_RECENT_CACHE_TIMED_OUT = False
 _MAC_LAST_AX_NOTEBOOK_DEBUG: Dict[str, Any] = {}
+_MAC_RECENT_NOTEBOOK_DIALOG_TOKENS = (
+    "최근 전자 필기장",
+    "최근 전자필기장",
+    "새 전자 필기장",
+    "새 전자필기장",
+    "recent notebook",
+    "new notebook",
+)
 
 
 class MacAutomationError(RuntimeError):
@@ -131,6 +142,17 @@ def _run_osascript(script: str, timeout: int = 20) -> str:
     if completed.returncode != 0:
         raise MacAutomationError((completed.stderr or completed.stdout or "").strip())
     return (completed.stdout or "").strip()
+
+
+def _append_macos_debug_log(line: str) -> None:
+    try:
+        _MAC_DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _MAC_DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} {str(line or '').rstrip()}\n"
+            )
+    except Exception:
+        pass
 
 
 def _read_macos_clipboard_text() -> str:
@@ -171,6 +193,13 @@ def _synthetic_window_handle(pid: int, title: str, bundle_id: str) -> int:
 def _clean_field(value: str) -> str:
     text = unicodedata.normalize("NFC", str(value or ""))
     return text.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
+def _is_recent_notebook_dialog_title(value: str) -> bool:
+    title = _clean_field(value).casefold()
+    if not title:
+        return False
+    return any(token.casefold() in title for token in _MAC_RECENT_NOTEBOOK_DIALOG_TOKENS)
 
 
 def _normalize_text(text: Optional[str]) -> str:
@@ -270,6 +299,16 @@ def _ax_text_attribute(element: c_void_p, attr_name: str) -> str:
         if _cf_type_id(value) != int(_CF.CFStringGetTypeID()):
             return ""
         return _clean_field(_cf_string_to_text(value))
+    finally:
+        _cf_release(value)
+
+
+def _ax_number_attribute(element: c_void_p, attr_name: str) -> int:
+    value = _ax_copy_attribute(element, attr_name)
+    if not value:
+        return 0
+    try:
+        return _cf_number_to_int(value)
     finally:
         _cf_release(value)
 
@@ -1796,6 +1835,7 @@ def _ax_window_roots_for_onenote(window: Optional[MacWindow]) -> List[c_void_p]:
     if not roots:
         return []
 
+    window_number_hint = int(window.info.get("window_number") or 0)
     title_hint = _clean_field(str(window.info.get("title") or ""))
     if not title_hint:
         try:
@@ -1817,12 +1857,16 @@ def _ax_window_roots_for_onenote(window: Optional[MacWindow]) -> List[c_void_p]:
         unique.append(root)
 
     def _rank(root: c_void_p) -> Tuple[int, int, str]:
+        ax_window_number = _ax_number_attribute(root, "AXWindowNumber")
+        if window_number_hint and ax_window_number == window_number_hint:
+            ax_title = _ax_text_attribute(root, "AXTitle")
+            return (0, 0, _normalize_text(ax_title))
         ax_title = _ax_text_attribute(root, "AXTitle")
         key = _normalize_text(ax_title)
         if title_key and key == title_key:
-            return (0, 0, key)
-        if title_key and (title_key in key or key in title_key):
             return (0, 1, key)
+        if title_key and (title_key in key or key in title_key):
+            return (0, 2, key)
         return (1, 0, key)
 
     return sorted(unique, key=_rank)
@@ -2143,8 +2187,20 @@ def _recent_notebook_records_from_cache() -> List[Dict[str, Any]]:
     if not isinstance(entries, list):
         return []
 
+    def _is_supported_recent_netloc(netloc: str) -> bool:
+        host = str(netloc or "").strip().lower()
+        if not host:
+            return False
+        if host in {"d.docs.live.net", "onedrive.live.com", "1drv.ms"}:
+            return True
+        if host.endswith(".sharepoint.com") or host.endswith(".sharepoint-df.com"):
+            return True
+        return False
+
     records: List[Dict[str, Any]] = []
     seen = set()
+    domain_counts: Dict[str, int] = {}
+    accepted_domains: Dict[str, int] = {}
     for item in sorted(
         (entry for entry in entries if isinstance(entry, dict)),
         key=lambda entry: int(entry.get("LastAccessedAt") or 0),
@@ -2156,8 +2212,11 @@ def _recent_notebook_records_from_cache() -> List[Dict[str, Any]]:
         parsed = urlparse(raw_url)
         if parsed.scheme.lower() not in {"http", "https"}:
             continue
-        if parsed.netloc.lower() != "d.docs.live.net":
+        host = parsed.netloc.lower()
+        domain_counts[host] = int(domain_counts.get(host) or 0) + 1
+        if not _is_supported_recent_netloc(host):
             continue
+        accepted_domains[host] = int(accepted_domains.get(host) or 0) + 1
         notebook_name = _clean_field(str(item.get("Title") or item.get("title") or ""))
         if not notebook_name:
             notebook_name = _clean_field(unquote(parsed.path.rstrip("/").split("/")[-1]))
@@ -2171,6 +2230,22 @@ def _recent_notebook_records_from_cache() -> List[Dict[str, Any]]:
                 "url": raw_url,
                 "last_accessed_at": int(item.get("LastAccessedAt") or 0),
             }
+        )
+    if not records or accepted_domains:
+        ordered_domains = sorted(
+            domain_counts.items(),
+            key=lambda item: (-int(item[1]), item[0]),
+        )
+        ordered_accepted = sorted(
+            accepted_domains.items(),
+            key=lambda item: (-int(item[1]), item[0]),
+        )
+        _append_macos_debug_log(
+            "[DBG][MAC][RECENT_CACHE] "
+            f"records={len(records)} "
+            f"domains={ordered_domains[:8]!r} "
+            f"accepted={ordered_accepted[:8]!r} "
+            f"sample={[record.get('name') for record in records[:8]]!r}"
         )
     return records
 
@@ -3725,6 +3800,8 @@ def current_open_notebook_names_quick(
 
     def _append_name(raw_name: str) -> None:
         name = _clean_field(str(raw_name or ""))
+        if _is_recent_notebook_dialog_title(name):
+            return
         key = _normalize_text(name)
         if not key or key in seen:
             return
@@ -3732,13 +3809,16 @@ def current_open_notebook_names_quick(
         names.append(name)
 
     if window is not None:
+        info_title = _clean_field(str(getattr(window, "info", {}).get("title") or ""))
         try:
             current_title = _clean_field(window.window_text())
         except Exception:
             current_title = ""
-        if current_title:
-            _append_name(current_title)
-            debug["title_count"] = 1
+        for title_candidate in (info_title, current_title):
+            if title_candidate and not _is_recent_notebook_dialog_title(title_candidate):
+                _append_name(title_candidate)
+                debug["title_count"] = 1
+                break
 
         ax_names, ax_error, ax_timed_out = _read_notebook_names_with_timeout(
             lambda: _read_open_notebook_names_from_ax(window),
