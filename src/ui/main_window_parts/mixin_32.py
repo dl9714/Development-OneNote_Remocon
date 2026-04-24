@@ -343,12 +343,16 @@ class MainWindowMixin32:
                         or node.get("open")
                         or (node.get("target") or {}).get("is_open")
                     )
+                    target = dict(node.get("target") or {})
+                    sig = target.get("sig")
+                    if isinstance(sig, dict):
+                        target["sig"] = dict(sig)
                     found.append(
                         {
                             "type": "notebook",
                             "id": node.get("id") or str(uuid.uuid4()),
                             "name": node.get("name") or "전자필기장",
-                            "target": copy.deepcopy(node.get("target") or {}),
+                            "target": target,
                             "is_open": is_open,
                         }
                     )

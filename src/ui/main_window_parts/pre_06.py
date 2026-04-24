@@ -111,9 +111,20 @@ def _normalize_text(s: Optional[str]) -> str:
     return " ".join(((s or "").strip().split())).lower()
 
 
+_NOTEBOOK_NAME_KEY_CACHE = {}
+
+
 def _normalize_notebook_name_key(s: Optional[str]) -> str:
-    text = unicodedata.normalize("NFKC", s or "").casefold()
-    return re.sub(r"[\s\-_]+", "", text)
+    raw = s if isinstance(s, str) else str(s or "")
+    cached = _NOTEBOOK_NAME_KEY_CACHE.get(raw)
+    if cached is not None:
+        return cached
+    text = unicodedata.normalize("NFKC", raw).casefold()
+    key = re.sub(r"[\s\-_]+", "", text)
+    if len(_NOTEBOOK_NAME_KEY_CACHE) >= 4096:
+        _NOTEBOOK_NAME_KEY_CACHE.clear()
+    _NOTEBOOK_NAME_KEY_CACHE[raw] = key
+    return key
 
 
 def _normalize_project_search_key(s: Optional[str]) -> str:
