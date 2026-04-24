@@ -37,9 +37,10 @@ def bind_context(namespace) -> None:
 def publish_context(namespace) -> None:
     start = _BASELINE_POS.get(id(namespace), 0)
     preexisting = _PREEXISTING_NAMES.get(id(namespace), set())
-    for index, (name, value) in enumerate(namespace.items()):
-        if index < start and name not in preexisting:
-            continue
+    for name in preexisting:
+        if _is_exportable(name):
+            _SHARED[name] = namespace[name]
+    for name, value in list(namespace.items())[start:]:
         if _is_exportable(name):
             _SHARED[name] = value
 
