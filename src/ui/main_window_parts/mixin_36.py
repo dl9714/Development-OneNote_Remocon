@@ -75,7 +75,6 @@ class MainWindowMixin36:
             #    - 예전에는 최초 1회만 펼쳤는데, 그 이후엔 항상 접힌 상태로 복원되어 사용성이 나빠짐
             #    - expandAll() 대신 '자식이 있는 노드만 expandItem' 방식으로 그룹만 펼쳐 성능도 방어
             self._expand_fav_groups_always(total_nodes=total_nodes, reason="rebuild")
-            self._rebuild_module_search_index()
             self._last_center_payload_hash = None
             self._last_center_payload_snapshot = payload_raw
             self._last_center_payload_source_id = source_id

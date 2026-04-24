@@ -241,17 +241,6 @@ class MainWindowMixin34:
             self._buffer_item_index[item_id] = item
             if node_type == "buffer" and self._first_buffer_item is None:
                 self._first_buffer_item = item
-        if node_type == "buffer":
-            search_key = self._project_buffer_search_key_for_item(item)
-            if search_key:
-                parents = []
-                parent_item = item.parent()
-                while parent_item is not None:
-                    parents.append(parent_item)
-                    parent_item = parent_item.parent()
-                self._buffer_search_index.append(
-                    {"item": item, "key": search_key, "parents": tuple(parents)}
-                )
 
         # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
         if payload.get("locked"):
