@@ -8,10 +8,7 @@ Windows 전용 구현을 유지하면서 macOS용 경로/아이콘/파일 열기
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
-import ctypes
-from ctypes.util import find_library
 from typing import Optional
 
 
@@ -49,6 +46,8 @@ def open_path_in_system(path: str) -> None:
     if IS_WINDOWS:
         os.startfile(path)  # type: ignore[attr-defined]
         return
+    import subprocess
+
     if IS_MACOS:
         subprocess.Popen([MAC_OPEN_PATH, path])
         return
@@ -65,6 +64,9 @@ def is_macos_accessibility_trusted() -> bool:
     if not IS_MACOS:
         return True
     try:
+        import ctypes
+        from ctypes.util import find_library
+
         lib_path = find_library("ApplicationServices") or "ApplicationServices"
         app_services = ctypes.CDLL(lib_path)
         checker = app_services.AXIsProcessTrusted

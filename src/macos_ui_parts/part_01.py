@@ -35,7 +35,6 @@ from ctypes import (
     c_void_p,
     create_string_buffer,
 )
-from ctypes.util import find_library
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -68,52 +67,6 @@ _CG_WINDOW_INFO_KEYS = (
     "kCGWindowLayer",
 )
 
-if IS_MACOS:
-    _CF = ctypes.CDLL(find_library("CoreFoundation"))
-    _APP_SERVICES = ctypes.CDLL(find_library("ApplicationServices"))
-    _APP_SERVICES.CGWindowListCopyWindowInfo.argtypes = [c_uint32, c_uint32]
-    _APP_SERVICES.CGWindowListCopyWindowInfo.restype = c_void_p
-    _CF.CFArrayGetCount.argtypes = [c_void_p]
-    _CF.CFArrayGetCount.restype = c_long
-    _CF.CFArrayGetValueAtIndex.argtypes = [c_void_p, c_long]
-    _CF.CFArrayGetValueAtIndex.restype = c_void_p
-    _CF.CFDictionaryGetValue.argtypes = [c_void_p, c_void_p]
-    _CF.CFDictionaryGetValue.restype = c_void_p
-    _CF.CFStringCreateWithCString.argtypes = [c_void_p, c_char_p, c_uint32]
-    _CF.CFStringCreateWithCString.restype = c_void_p
-    _CF.CFStringGetCString.argtypes = [c_void_p, c_char_p, c_long, c_uint32]
-    _CF.CFStringGetCString.restype = c_bool
-    _CF.CFNumberGetValue.argtypes = [c_void_p, c_int, c_void_p]
-    _CF.CFNumberGetValue.restype = c_bool
-    _CF.CFGetTypeID.argtypes = [c_void_p]
-    _CF.CFGetTypeID.restype = c_long
-    _CF.CFArrayGetTypeID.argtypes = []
-    _CF.CFArrayGetTypeID.restype = c_long
-    _CF.CFStringGetTypeID.argtypes = []
-    _CF.CFStringGetTypeID.restype = c_long
-    _CF.CFRetain.argtypes = [c_void_p]
-    _CF.CFRetain.restype = c_void_p
-    _CF.CFRelease.argtypes = [c_void_p]
-    _CF.CFRelease.restype = None
-    _APP_SERVICES.AXUIElementCreateApplication.argtypes = [c_int]
-    _APP_SERVICES.AXUIElementCreateApplication.restype = c_void_p
-    _APP_SERVICES.AXUIElementCopyAttributeValue.argtypes = [
-        c_void_p,
-        c_void_p,
-        ctypes.POINTER(c_void_p),
-    ]
-    _APP_SERVICES.AXUIElementCopyAttributeValue.restype = c_int
-    _APP_SERVICES.AXUIElementPerformAction.argtypes = [c_void_p, c_void_p]
-    _APP_SERVICES.AXUIElementPerformAction.restype = c_int
-    _APP_SERVICES.AXValueGetValue.argtypes = [c_void_p, c_int, c_void_p]
-    _APP_SERVICES.AXValueGetValue.restype = c_bool
-    _APP_SERVICES.AXIsProcessTrusted.argtypes = []
-    _APP_SERVICES.AXIsProcessTrusted.restype = c_bool
-else:
-    _CF = None
-    _APP_SERVICES = None
-
-
 class _CGPoint(ctypes.Structure):
     _fields_ = [("x", c_double), ("y", c_double)]
 
@@ -122,16 +75,89 @@ class _CGSize(ctypes.Structure):
     _fields_ = [("width", c_double), ("height", c_double)]
 
 
-if IS_MACOS:
-    _APP_SERVICES.CGEventCreateMouseEvent.argtypes = [
+_CF_LIB = None
+_APP_SERVICES_LIB = None
+
+
+def _load_macos_libraries():
+    global _CF_LIB, _APP_SERVICES_LIB
+    if not IS_MACOS:
+        return None, None
+    if _CF_LIB is not None and _APP_SERVICES_LIB is not None:
+        return _CF_LIB, _APP_SERVICES_LIB
+
+    from ctypes.util import find_library
+
+    cf = ctypes.CDLL(find_library("CoreFoundation"))
+    app_services = ctypes.CDLL(find_library("ApplicationServices"))
+    app_services.CGWindowListCopyWindowInfo.argtypes = [c_uint32, c_uint32]
+    app_services.CGWindowListCopyWindowInfo.restype = c_void_p
+    cf.CFArrayGetCount.argtypes = [c_void_p]
+    cf.CFArrayGetCount.restype = c_long
+    cf.CFArrayGetValueAtIndex.argtypes = [c_void_p, c_long]
+    cf.CFArrayGetValueAtIndex.restype = c_void_p
+    cf.CFDictionaryGetValue.argtypes = [c_void_p, c_void_p]
+    cf.CFDictionaryGetValue.restype = c_void_p
+    cf.CFStringCreateWithCString.argtypes = [c_void_p, c_char_p, c_uint32]
+    cf.CFStringCreateWithCString.restype = c_void_p
+    cf.CFStringGetCString.argtypes = [c_void_p, c_char_p, c_long, c_uint32]
+    cf.CFStringGetCString.restype = c_bool
+    cf.CFNumberGetValue.argtypes = [c_void_p, c_int, c_void_p]
+    cf.CFNumberGetValue.restype = c_bool
+    cf.CFGetTypeID.argtypes = [c_void_p]
+    cf.CFGetTypeID.restype = c_long
+    cf.CFArrayGetTypeID.argtypes = []
+    cf.CFArrayGetTypeID.restype = c_long
+    cf.CFStringGetTypeID.argtypes = []
+    cf.CFStringGetTypeID.restype = c_long
+    cf.CFRetain.argtypes = [c_void_p]
+    cf.CFRetain.restype = c_void_p
+    cf.CFRelease.argtypes = [c_void_p]
+    cf.CFRelease.restype = None
+    app_services.AXUIElementCreateApplication.argtypes = [c_int]
+    app_services.AXUIElementCreateApplication.restype = c_void_p
+    app_services.AXUIElementCopyAttributeValue.argtypes = [
+        c_void_p,
+        c_void_p,
+        ctypes.POINTER(c_void_p),
+    ]
+    app_services.AXUIElementCopyAttributeValue.restype = c_int
+    app_services.AXUIElementPerformAction.argtypes = [c_void_p, c_void_p]
+    app_services.AXUIElementPerformAction.restype = c_int
+    app_services.AXValueGetValue.argtypes = [c_void_p, c_int, c_void_p]
+    app_services.AXValueGetValue.restype = c_bool
+    app_services.AXIsProcessTrusted.argtypes = []
+    app_services.AXIsProcessTrusted.restype = c_bool
+    app_services.CGEventCreateMouseEvent.argtypes = [
         c_void_p,
         c_uint32,
         _CGPoint,
         c_uint32,
     ]
-    _APP_SERVICES.CGEventCreateMouseEvent.restype = c_void_p
-    _APP_SERVICES.CGEventPost.argtypes = [c_uint32, c_void_p]
-    _APP_SERVICES.CGEventPost.restype = None
+    app_services.CGEventCreateMouseEvent.restype = c_void_p
+    app_services.CGEventPost.argtypes = [c_uint32, c_void_p]
+    app_services.CGEventPost.restype = None
+    _CF_LIB = cf
+    _APP_SERVICES_LIB = app_services
+    return _CF_LIB, _APP_SERVICES_LIB
+
+
+class _LazyMacOSLibrary:
+    def __init__(self, index: int):
+        self._index = index
+
+    def __bool__(self) -> bool:
+        return bool(IS_MACOS)
+
+    def __getattr__(self, name: str):
+        library = _load_macos_libraries()[self._index]
+        if library is None:
+            raise AttributeError(name)
+        return getattr(library, name)
+
+
+_CF = _LazyMacOSLibrary(0)
+_APP_SERVICES = _LazyMacOSLibrary(1)
 
 _MAC_BUNDLE_ID_CACHE: Dict[int, str] = {}
 _MAC_ONENOTE_NOTEBOOKS_PLIST = Path(

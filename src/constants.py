@@ -5,8 +5,6 @@
 애플리케이션 전반에서 사용되는 상수들을 정의합니다.
 """
 
-from PyQt6.QtCore import Qt
-
 from src.platform_support import default_icon_path
 
 # ----------------- 파일 경로 관련 -----------------
@@ -27,9 +25,10 @@ SCROLL_CENTER_TOLERANCE = 10  # 픽셀 단위
 DEFAULT_FAVORITES_BUFFER = "기본 즐겨찾기 버퍼"
 
 # ----------------- Qt ItemDataRole 관련 -----------------
-ROLE_TYPE = Qt.ItemDataRole.UserRole + 1
-ROLE_DATA = Qt.ItemDataRole.UserRole + 2
-ROLE_OPEN_NOTEBOOK = Qt.ItemDataRole.UserRole + 3
+QT_USER_ROLE = 0x0100
+ROLE_TYPE = QT_USER_ROLE + 1
+ROLE_DATA = QT_USER_ROLE + 2
+ROLE_OPEN_NOTEBOOK = QT_USER_ROLE + 3
 
 # ----------------- 기본 설정 -----------------
 DEFAULT_SETTINGS = {

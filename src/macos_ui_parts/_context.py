@@ -5,6 +5,7 @@ from typing import Any, Dict, MutableMapping
 
 _SHARED: Dict[str, Any] = {}
 _NAMESPACES: list[MutableMapping[str, Any]] = []
+_NAMESPACE_IDS: set[int] = set()
 
 _RESERVED = {
     "_bind_context",
@@ -24,13 +25,15 @@ def _is_exportable(name: str) -> bool:
 
 
 def bind_context(namespace: MutableMapping[str, Any]) -> None:
+    namespace_id = id(namespace)
     namespace.update(_SHARED)
-    if namespace not in _NAMESPACES:
+    if namespace_id not in _NAMESPACE_IDS:
+        _NAMESPACE_IDS.add(namespace_id)
         _NAMESPACES.append(namespace)
 
 
 def publish_context(namespace: MutableMapping[str, Any]) -> None:
-    for name, value in list(namespace.items()):
+    for name, value in namespace.items():
         if _is_exportable(name):
             _SHARED[name] = value
 
