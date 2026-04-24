@@ -8,6 +8,41 @@ from src.ui.main_window_parts._context import (
 
 _bind_context(globals())
 
+
+class _FavoriteBulkEditContext:
+    def __init__(self, owner, reason: str = ""):
+        self.owner = owner
+        self.reason = reason
+        self.was_updates_enabled = True
+
+    def __enter__(self):
+        owner = self.owner
+        owner._fav_begin_undo_group(reason=self.reason)
+        self.was_updates_enabled = owner.fav_tree.updatesEnabled()
+        owner.fav_tree.blockSignals(True)
+        owner.fav_tree.setUpdatesEnabled(False)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        owner = self.owner
+        try:
+            if exc_type is None:
+                try:
+                    owner._save_favorites()
+                except Exception:
+                    pass
+        finally:
+            owner.fav_tree.setUpdatesEnabled(self.was_updates_enabled)
+            owner.fav_tree.blockSignals(False)
+            try:
+                if self.was_updates_enabled:
+                    owner.fav_tree.viewport().update()
+            except Exception:
+                pass
+            owner._fav_end_undo_group()
+        return False
+
+
 class MainWindowMixin40:
 
     def _fav_end_undo_group(self) -> None:
@@ -45,33 +80,13 @@ class MainWindowMixin40:
         self._fav_undo_batch_final_snapshot = None
         self._fav_undo_batch_reason = ""
 
-    @contextmanager
     def _fav_bulk_edit(self, *, reason: str = ""):
         """
         FavoritesTree를 벌크로 수정할 때 사용.
         - Qt itemChanged 연쇄 save를 막기 위해 fav_tree signals를 잠깐 막고
         - Undo/Redo는 begin/end로 한 번의 step으로 묶는다.
         """
-        self._fav_begin_undo_group(reason=reason)
-        was_updates_enabled = self.fav_tree.updatesEnabled()
-        self.fav_tree.blockSignals(True)
-        self.fav_tree.setUpdatesEnabled(False)
-        try:
-            yield
-            # 벌크 작업이 끝나면 딱 1번만 저장(=스냅샷 갱신)
-            try:
-                self._save_favorites()
-            except Exception:
-                pass
-        finally:
-            self.fav_tree.setUpdatesEnabled(was_updates_enabled)
-            self.fav_tree.blockSignals(False)
-            try:
-                if was_updates_enabled:
-                    self.fav_tree.viewport().update()
-            except Exception:
-                pass
-            self._fav_end_undo_group()
+        return _FavoriteBulkEditContext(self, reason)
 
     def _fav_apply_snapshot(self, snapshot: str):
         """스냅샷(JSON 문자열)을 중앙 즐겨찾기 트리에 적용합니다."""

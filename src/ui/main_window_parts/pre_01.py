@@ -10,14 +10,9 @@ _bind_context(globals())
 
 # -*- coding: utf-8 -*-
 import sys
-import json
 import os
 import time
 import ctypes
-from contextlib import contextmanager
-from typing import Optional, List, Dict, Any, Set, Callable, Tuple
-import unicodedata
-import re
 from types import SimpleNamespace
 from src.lazy_import import LazyModule
 
@@ -27,9 +22,12 @@ except ImportError:  # pragma: no cover - Windows 전용
     winreg = None
 
 
+json = LazyModule("json")
 base64 = LazyModule("base64")
 hashlib = LazyModule("hashlib")
 copy = LazyModule("copy")
+unicodedata = LazyModule("unicodedata")
+re = LazyModule("re")
 uuid = LazyModule("uuid")
 traceback = LazyModule("traceback")
 wintypes = LazyModule("ctypes.wintypes")

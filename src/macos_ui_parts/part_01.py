@@ -16,12 +16,10 @@ OneNote for Mac의 화면 구조를 기준으로 System Events(접근성)와 osa
 """
 
 import ctypes
-import json
 import os
 import sys
 import threading
 import time
-import unicodedata
 from ctypes import (
     c_bool,
     c_char_p,
@@ -33,7 +31,6 @@ from ctypes import (
     c_void_p,
     create_string_buffer,
 )
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from src.lazy_import import LazyModule, LazyPath
 from src.platform_support import (
@@ -44,8 +41,10 @@ from src.platform_support import (
     open_url_in_system,
 )
 
+json = LazyModule("json")
 hashlib = LazyModule("hashlib")
 subprocess = LazyModule("subprocess")
+unicodedata = LazyModule("unicodedata")
 _urllib_parse = LazyModule("urllib.parse")
 
 

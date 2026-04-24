@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Dict, MutableMapping
-
-_SHARED: Dict[str, Any] = {}
-_NAMESPACES: list[MutableMapping[str, Any]] = []
+_SHARED = {}
+_NAMESPACES = []
 _NAMESPACE_IDS: set[int] = set()
+_BASELINE_POS = {}
+_PREEXISTING_NAMES = {}
 
 _RESERVED = {
     "_bind_context",
@@ -24,16 +24,22 @@ def _is_exportable(name: str) -> bool:
     )
 
 
-def bind_context(namespace: MutableMapping[str, Any]) -> None:
+def bind_context(namespace) -> None:
     namespace_id = id(namespace)
+    _PREEXISTING_NAMES[namespace_id] = set(namespace)
     namespace.update(_SHARED)
+    _BASELINE_POS[namespace_id] = len(namespace)
     if namespace_id not in _NAMESPACE_IDS:
         _NAMESPACE_IDS.add(namespace_id)
         _NAMESPACES.append(namespace)
 
 
-def publish_context(namespace: MutableMapping[str, Any]) -> None:
-    for name, value in namespace.items():
+def publish_context(namespace) -> None:
+    start = _BASELINE_POS.get(id(namespace), 0)
+    preexisting = _PREEXISTING_NAMES.get(id(namespace), set())
+    for index, (name, value) in enumerate(namespace.items()):
+        if index < start and name not in preexisting:
+            continue
         if _is_exportable(name):
             _SHARED[name] = value
 
@@ -43,5 +49,5 @@ def finalize_context() -> None:
         registered.update(_SHARED)
 
 
-def exported_globals() -> Dict[str, Any]:
+def exported_globals() -> dict:
     return dict(_SHARED)
