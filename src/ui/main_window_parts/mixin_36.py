@@ -32,6 +32,7 @@ class MainWindowMixin36:
 
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
+        self._ensure_tree_icons()
         # ✅ 동일 데이터면 rebuild 스킵 (클릭 렉 제거 핵심)
         payload_raw = None
         source_id = id(node_data) if isinstance(node_data, list) else 0

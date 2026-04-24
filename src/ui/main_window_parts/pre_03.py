@@ -201,13 +201,18 @@ def _migrate_favorites_buffers_inplace(data: Dict[str, Any]) -> bool:
     return migrated
 
 
-def load_settings() -> Dict[str, Any]:
+def load_settings(cache_object: bool = True) -> Dict[str, Any]:
     # 설정 파일 경로를 실행 파일 위치 기준으로 가져옴
     settings_path = _get_settings_file_path()
 
     file_sig = _get_file_signature(settings_path)
     cache_entry = _SETTINGS_OBJECT_CACHE.get(settings_path)
-    if file_sig is not None and cache_entry and cache_entry.get("sig") == file_sig:
+    if (
+        cache_object
+        and file_sig is not None
+        and cache_entry
+        and cache_entry.get("sig") == file_sig
+    ):
         cached = copy.deepcopy(cache_entry.get("data") or DEFAULT_SETTINGS)
         _sanitize_settings_for_platform_inplace(cached)
         _ensure_default_and_aggregate_inplace(cached)
@@ -229,7 +234,8 @@ def load_settings() -> Dict[str, Any]:
                     _write_json(settings_path, settings)
                 except Exception as e:
                     print(f"[WARN] 초기 설정 복사 실패(메모리 로드는 계속): {e}")
-                _update_settings_object_cache(settings_path, settings)
+                if cache_object:
+                    _update_settings_object_cache(settings_path, settings)
                 return settings
             except Exception as e:
                 print(f"[WARN] 초기 설정 파일 로드 실패({seed_path}): {e}")
@@ -240,7 +246,8 @@ def load_settings() -> Dict[str, Any]:
             _write_json(settings_path, settings)
         except Exception as e:
             print(f"[WARN] 기본 설정 파일 생성 실패(메모리 로드는 계속): {e}")
-        _update_settings_object_cache(settings_path, settings)
+        if cache_object:
+            _update_settings_object_cache(settings_path, settings)
         return settings
     try:
         with open(settings_path, "r", encoding="utf-8") as f:
@@ -280,7 +287,8 @@ def load_settings() -> Dict[str, Any]:
             except Exception as e:
                 print(f"[WARN] 마이그레이션 저장 실패(무시): {e}")
 
-        _update_settings_object_cache(settings_path, settings)
+        if cache_object:
+            _update_settings_object_cache(settings_path, settings)
         return settings
     except Exception as e:
         print(f"[ERROR] 설정 파일 로드 실패: {e}")

@@ -11,6 +11,18 @@ _bind_context(globals())
 
 class MainWindowInitRightMixin:
 
+    def _apply_workspace_button_icons(self) -> None:
+        try:
+            style = self.style()
+            pixmap = QApplication.style().StandardPixmap
+            self.refresh_button.setIcon(style.standardIcon(pixmap.SP_BrowserReload))
+            self.connect_selected_list_button.setIcon(
+                style.standardIcon(pixmap.SP_ArrowForward)
+            )
+            self.center_button.setIcon(style.standardIcon(pixmap.SP_ArrowRight))
+        except Exception:
+            pass
+
     def _build_right_workspace(
         self,
         initial_status,
@@ -37,18 +49,10 @@ class MainWindowInitRightMixin:
         list_header_layout.addStretch()
 
         self.refresh_button = QPushButton(" 새로고침")
-        refresh_icon = self.style().standardIcon(
-            QApplication.style().StandardPixmap.SP_BrowserReload
-        )
-        self.refresh_button.setIcon(QIcon(refresh_icon))
         self.refresh_button.clicked.connect(self.refresh_onenote_list)
         list_header_layout.addWidget(self.refresh_button)
 
         self.connect_selected_list_button = QPushButton("선택 연결")
-        connect_icon = self.style().standardIcon(
-            QApplication.style().StandardPixmap.SP_ArrowForward
-        )
-        self.connect_selected_list_button.setIcon(QIcon(connect_icon))
         self.connect_selected_list_button.clicked.connect(
             self._connect_selected_onenote_list_item
         )
@@ -77,10 +81,6 @@ class MainWindowInitRightMixin:
         actions_layout = QVBoxLayout(actions_group)
 
         self.center_button = QPushButton(_primary_restore_button_text())
-        center_icon = self.style().standardIcon(
-            QApplication.style().StandardPixmap.SP_ArrowRight
-        )
-        self.center_button.setIcon(QIcon(center_icon))
         self.center_button.setStyleSheet(
             f"""
             QPushButton {{
@@ -206,5 +206,6 @@ class MainWindowInitRightMixin:
         self.version_status_label.setToolTip("앱 버전 / 빌드")
         self.statusBar().addPermanentWidget(self.version_status_label)
         self.statusBar().setStyleSheet(f"background-color: {COLOR_STATUS_BAR};")
+        QTimer.singleShot(0, self._apply_workspace_button_icons)
 
 _publish_context(globals())

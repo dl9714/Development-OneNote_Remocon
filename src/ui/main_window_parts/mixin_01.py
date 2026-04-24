@@ -21,7 +21,7 @@ class MainWindowMixin01:
         self._boot_mark = _mark
         self._boot_mark("QMainWindow.__init__ done")
         # 1. 설정 로드 및 창 위치/상태 복원
-        self.settings = load_settings()
+        self.settings = load_settings(cache_object=False)
         self._boot_mark("load_settings done")
         self.onenote_window = None
         self.tree_control = None

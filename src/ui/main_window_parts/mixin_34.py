@@ -116,6 +116,7 @@ class MainWindowMixin34:
         # ✅ 로드 전에 강제 보정 (UI에서 깨져도 복구)
         _ensure_default_and_aggregate_inplace(self.settings)
         self._invalidate_aggregate_cache()
+        self._ensure_tree_icons()
 
         self.buffer_tree.blockSignals(True)
         self.buffer_tree.clear()

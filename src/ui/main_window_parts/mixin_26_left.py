@@ -11,6 +11,23 @@ _bind_context(globals())
 
 class MainWindowInitLeftMixin:
 
+    def _ensure_tree_icons(self) -> None:
+        if getattr(self, "_tree_icons_ready", False):
+            return
+        self._tree_icons_ready = True
+        try:
+            style = self.style()
+            pixmap = QApplication.style().StandardPixmap
+            self._icon_file = style.standardIcon(pixmap.SP_FileIcon)
+            self._icon_dir = style.standardIcon(pixmap.SP_DirIcon)
+            self._icon_agg = style.standardIcon(pixmap.SP_ComputerIcon)
+            self._icon_open_notebook = _make_open_notebook_check_icon()
+        except Exception:
+            self._icon_file = None
+            self._icon_dir = None
+            self._icon_agg = None
+            self._icon_open_notebook = None
+
     def _build_left_panels(self) -> None:
         # 1. 즐겨찾기 버퍼 관리 패널 (가장 왼쪽)
         buffer_panel = QWidget()
@@ -173,17 +190,11 @@ class MainWindowInitLeftMixin:
         except Exception:
             pass
 
-        # PERF: 아이콘 캐싱(standardIcon 반복 호출 비용 감소)
-        try:
-            self._icon_file = self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
-            self._icon_dir = self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
-            self._icon_agg = self.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon)
-            self._icon_open_notebook = _make_open_notebook_check_icon()
-        except Exception:
-            self._icon_file = None
-            self._icon_dir = None
-            self._icon_agg = None
-            self._icon_open_notebook = None
+        self._tree_icons_ready = False
+        self._icon_file = None
+        self._icon_dir = None
+        self._icon_agg = None
+        self._icon_open_notebook = None
 
         self.action_expand_all_groups.triggered.connect(
             lambda: self._expand_fav_groups_always(reason="toolbar")
