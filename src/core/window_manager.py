@@ -35,22 +35,12 @@ class WindowManager:
     """OneNote 윈도우를 검색하고 관리하는 클래스"""
 
     def __init__(self):
-        """윈도우 관리자를 초기화합니다."""
         self._current_pid = os.getpid()
         self._user32 = ctypes.windll.user32 if IS_WINDOWS else None
 
     # ==================== Win32 API 헬퍼 메소드 ====================
 
     def _get_window_text(self, hwnd: int) -> str:
-        """
-        윈도우 핸들로부터 윈도우 제목을 가져옵니다.
-
-        Args:
-            hwnd: 윈도우 핸들
-
-        Returns:
-            str: 윈도우 제목
-        """
         if not self._user32:
             return ""
         length = self._user32.GetWindowTextLengthW(hwnd)
@@ -59,15 +49,6 @@ class WindowManager:
         return buf.value
 
     def _get_class_name(self, hwnd: int) -> str:
-        """
-        윈도우 핸들로부터 클래스 이름을 가져옵니다.
-
-        Args:
-            hwnd: 윈도우 핸들
-
-        Returns:
-            str: 클래스 이름
-        """
         if not self._user32:
             return ""
         buf = ctypes.create_unicode_buffer(256)
@@ -75,15 +56,6 @@ class WindowManager:
         return buf.value
 
     def get_process_image_path(self, pid: int) -> Optional[str]:
-        """
-        프로세스 ID로부터 실행 파일의 전체 경로를 가져옵니다.
-
-        Args:
-            pid: 프로세스 ID
-
-        Returns:
-            Optional[str]: 실행 파일 경로 또는 None
-        """
         if not pid:
             return None
         if not IS_WINDOWS or wintypes is None:
@@ -137,19 +109,6 @@ class WindowManager:
     # ==================== 윈도우 열거 ====================
 
     def enumerate_windows(self, filter_title_substr=None) -> List[Dict[str, Any]]:
-        """
-        모든 보이는 윈도우를 빠르게 열거합니다.
-
-        Args:
-            filter_title_substr: 제목 필터 (문자열 또는 문자열 리스트)
-
-        Returns:
-            List[Dict[str, Any]]: 윈도우 정보 딕셔너리 리스트
-                - handle: 윈도우 핸들
-                - title: 윈도우 제목
-                - class_name: 윈도우 클래스 이름
-                - pid: 프로세스 ID
-        """
         if isinstance(filter_title_substr, str):
             filters = [filter_title_substr.lower()]
         elif filter_title_substr:
@@ -194,15 +153,6 @@ class WindowManager:
     # ==================== OneNote 윈도우 검증 ====================
 
     def is_onenote_window(self, window_info: Dict[str, Any]) -> bool:
-        """
-        주어진 창 정보가 실제로 OneNote 앱 창인지 엄격하게 확인합니다.
-
-        Args:
-            window_info: 윈도우 정보 딕셔너리 (handle, title, class_name, pid)
-
-        Returns:
-            bool: OneNote 윈도우 여부
-        """
         if IS_MACOS:
             return is_macos_onenote_window_info(window_info, self._current_pid)
 
@@ -234,12 +184,6 @@ class WindowManager:
         return False
 
     def enumerate_onenote_windows(self) -> List[Dict[str, Any]]:
-        """
-        시스템에서 모든 OneNote 윈도우를 찾습니다.
-
-        Returns:
-            List[Dict[str, Any]]: OneNote 윈도우 정보 리스트
-        """
         all_windows = self.enumerate_windows(filter_title_substr=ONENOTE_KEYWORDS)
         onenote_windows = [w for w in all_windows if self.is_onenote_window(w)]
         return onenote_windows
@@ -247,21 +191,6 @@ class WindowManager:
     # ==================== 윈도우 시그니처 관리 ====================
 
     def create_window_signature(self, window_element) -> Dict[str, Any]:
-        """
-        pywinauto 윈도우 요소로부터 시그니처를 생성합니다.
-
-        Args:
-            window_element: pywinauto 윈도우 객체
-
-        Returns:
-            Dict[str, Any]: 윈도우 시그니처
-                - handle: 윈도우 핸들
-                - pid: 프로세스 ID
-                - class_name: 클래스 이름
-                - title: 윈도우 제목
-                - exe_path: 실행 파일 경로
-                - exe_name: 실행 파일 이름
-        """
         try:
             pid = window_element.process_id()
         except Exception:
@@ -299,16 +228,6 @@ class WindowManager:
         }
 
     def score_candidate(self, candidate: Dict[str, Any], signature: Dict[str, Any]) -> int:
-        """
-        후보 윈도우가 시그니처와 얼마나 일치하는지 점수를 계산합니다.
-
-        Args:
-            candidate: 후보 윈도우 정보
-            signature: 찾으려는 윈도우 시그니처
-
-        Returns:
-            int: 일치 점수 (높을수록 더 일치)
-        """
         try:
             title = (candidate.get("title") or "").lower()
             cls = candidate.get("class_name") or ""
@@ -371,16 +290,6 @@ class WindowManager:
     def find_window_by_signature(
         self, signature: Dict[str, Any], min_score: int = 30
     ) -> Optional[object]:
-        """
-        시그니처를 사용하여 윈도우를 찾습니다.
-
-        Args:
-            signature: 윈도우 시그니처
-            min_score: 최소 일치 점수 (기본값: 30)
-
-        Returns:
-            Optional[object]: pywinauto 윈도우 객체 또는 None
-        """
         if IS_MACOS:
             Desktop = MacDesktop
         else:

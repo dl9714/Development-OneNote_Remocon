@@ -1,0 +1,204 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from src.ui.main_window_parts._context import (
+    bind_context as _bind_context,
+    publish_context as _publish_context,
+)
+
+_bind_context(globals())
+
+
+class MainWindowInitRightMixin:
+
+    def _build_right_workspace(
+        self,
+        initial_status,
+        COLOR_ACCENT,
+        COLOR_ACCENT_HOVER,
+        COLOR_ACCENT_PRESSED,
+        COLOR_STATUS_BAR,
+        search_hint_font_pt,
+    ) -> None:
+        # 3. 오른쪽 패널: 위치정렬/코덱스 탭만 교체되고 1, 2패널은 고정된다.
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+
+        connection_group = QGroupBox(_connection_group_title())
+        connection_layout = QVBoxLayout(connection_group)
+
+        list_header_layout = QHBoxLayout()
+        list_header_layout.addWidget(
+            QLabel(_onenote_list_hint_text()),
+            alignment=Qt.AlignmentFlag.AlignLeft,
+        )
+        list_header_layout.addStretch()
+
+        self.refresh_button = QPushButton(" 새로고침")
+        refresh_icon = self.style().standardIcon(
+            QApplication.style().StandardPixmap.SP_BrowserReload
+        )
+        self.refresh_button.setIcon(QIcon(refresh_icon))
+        self.refresh_button.clicked.connect(self.refresh_onenote_list)
+        list_header_layout.addWidget(self.refresh_button)
+
+        self.connect_selected_list_button = QPushButton("선택 연결")
+        connect_icon = self.style().standardIcon(
+            QApplication.style().StandardPixmap.SP_ArrowForward
+        )
+        self.connect_selected_list_button.setIcon(QIcon(connect_icon))
+        self.connect_selected_list_button.clicked.connect(
+            self._connect_selected_onenote_list_item
+        )
+        self.connect_selected_list_button.setEnabled(False)
+        list_header_layout.addWidget(self.connect_selected_list_button)
+
+        connection_layout.addLayout(list_header_layout)
+
+        self.onenote_list_widget = QListWidget()
+        self.onenote_list_widget.addItem("자동 재연결 시도 중...")
+        self.onenote_list_widget.installEventFilter(self)
+        self.onenote_list_widget.viewport().installEventFilter(self)
+        self.onenote_list_widget.itemDoubleClicked.connect(
+            self.connect_and_center_from_list_item
+        )
+        self.onenote_list_widget.itemActivated.connect(
+            self.connect_and_center_from_list_item
+        )
+        self.onenote_list_widget.itemSelectionChanged.connect(
+            self._sync_onenote_list_action_buttons
+        )
+        connection_layout.addWidget(self.onenote_list_widget)
+        right_layout.addWidget(connection_group)
+
+        actions_group = QGroupBox(_current_actions_group_title())
+        actions_layout = QVBoxLayout(actions_group)
+
+        self.center_button = QPushButton(_primary_restore_button_text())
+        center_icon = self.style().standardIcon(
+            QApplication.style().StandardPixmap.SP_ArrowRight
+        )
+        self.center_button.setIcon(QIcon(center_icon))
+        self.center_button.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLOR_ACCENT};
+                color: #111;
+                font-weight: bold;
+                padding: 8px 16px;
+            }}
+            QPushButton:hover {{ background-color: {COLOR_ACCENT_HOVER}; }}
+            QPushButton:pressed {{ background-color: {COLOR_ACCENT_PRESSED}; }}
+            QPushButton:disabled {{
+                background-color: #555555;
+                color: #999999;
+                border: 1px solid #444444;
+            }}
+        """
+        )
+        self.center_button.clicked.connect(self.center_selected_item_action)
+        self.center_button.setEnabled(False)
+        actions_layout.addWidget(self.center_button)
+
+        if IS_MACOS:
+            mac_bulk_actions_layout = QHBoxLayout()
+
+            self.open_all_notebooks_button = QPushButton(
+                _open_unchecked_notebooks_button_label()
+            )
+            self.open_all_notebooks_button.setToolTip(_open_unchecked_notebooks_tip())
+            self.open_all_notebooks_button.clicked.connect(
+                self._open_all_notebooks_from_connected_onenote
+            )
+            self.open_all_notebooks_button.setEnabled(False)
+            mac_bulk_actions_layout.addWidget(self.open_all_notebooks_button)
+
+            self.refresh_open_notebooks_button = QPushButton("열린 전자필기장 새로고침")
+            self.refresh_open_notebooks_button.setToolTip(
+                "현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 연두색 체크에 반영합니다."
+            )
+            self.refresh_open_notebooks_button.clicked.connect(
+                lambda: self._register_all_notebooks_from_current_onenote(force=True)
+            )
+            self.refresh_open_notebooks_button.setEnabled(False)
+            mac_bulk_actions_layout.addWidget(self.refresh_open_notebooks_button)
+
+            actions_layout.addLayout(mac_bulk_actions_layout)
+
+        other_buttons_layout = QHBoxLayout()
+        connect_other_button = QPushButton("다른 앱에 연결...")
+        connect_other_button.clicked.connect(self.select_other_window)
+        other_buttons_layout.addWidget(connect_other_button)
+
+        disconnect_button = QPushButton("연결 해제")
+        disconnect_button.clicked.connect(self.disconnect_and_clear_info)
+        other_buttons_layout.addWidget(disconnect_button)
+        actions_layout.addLayout(other_buttons_layout)
+
+        right_layout.addWidget(actions_group)
+
+        search_group = QGroupBox(_search_group_title())
+        search_group_layout = QVBoxLayout(search_group)
+        search_group_layout.setSpacing(8)
+
+        project_search_label = QLabel(_project_search_label_text())
+        project_search_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        search_group_layout.addWidget(project_search_label)
+
+        module_search_layout = QHBoxLayout()
+        self.module_project_search_input = QLineEdit()
+        self.module_project_search_input.setPlaceholderText(_project_search_placeholder_text())
+        self.module_project_search_input.setClearButtonEnabled(True)
+        self.module_project_search_input.textChanged.connect(
+            self._schedule_project_buffer_search_highlight
+        )
+        self.btn_module_project_search_clear = QToolButton()
+        self.btn_module_project_search_clear.setText("검색 지우기")
+        self.btn_module_project_search_clear.clicked.connect(
+            self.module_project_search_input.clear
+        )
+        module_search_layout.addStretch(1)
+        module_search_layout.addWidget(self.module_project_search_input, stretch=4)
+        module_search_layout.addWidget(self.btn_module_project_search_clear)
+        module_search_layout.addStretch(1)
+        search_group_layout.addLayout(module_search_layout)
+
+        project_search_hint = QLabel(_project_search_hint_text())
+        project_search_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        project_search_hint.setWordWrap(True)
+        project_search_hint.setStyleSheet(
+            f"color: #B8B8B8; font-size: {search_hint_font_pt};"
+        )
+        search_group_layout.addWidget(project_search_hint)
+        right_layout.addWidget(search_group)
+
+        right_layout.addStretch(1)
+
+        workspace_panel = QWidget()
+        workspace_layout = QVBoxLayout(workspace_panel)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(0)
+
+        self._workspace_splitter_profiles = {}
+        self._active_workspace_splitter_mode = "remocon"
+        self.remocon_workspace_tabs = QTabWidget()
+        self.remocon_workspace_tabs.setObjectName("RemoconWorkspaceTabs")
+        self.remocon_workspace_tabs.addTab(right_panel, _remocon_workspace_tab_title())
+        self.remocon_workspace_tabs.addTab(self._build_codex_tab("remocon"), "원노트 리모컨")
+        self.remocon_workspace_tabs.addTab(self._build_codex_tab("harness"), "원노트 하네스")
+        self.remocon_workspace_tabs.currentChanged.connect(
+            self._on_remocon_workspace_tab_changed
+        )
+        workspace_layout.addWidget(self.remocon_workspace_tabs, stretch=1)
+        self.main_splitter.addWidget(workspace_panel)
+
+        self.connection_status_label = QLabel(initial_status)
+        self.statusBar().addPermanentWidget(self.connection_status_label)
+        self.version_status_label = QLabel(f"v{APP_VERSION} ({APP_BUILD_VERSION})")
+        self.version_status_label.setToolTip("앱 버전 / 빌드")
+        self.statusBar().addPermanentWidget(self.version_status_label)
+        self.statusBar().setStyleSheet(f"background-color: {COLOR_STATUS_BAR};")
+
+_publish_context(globals())
