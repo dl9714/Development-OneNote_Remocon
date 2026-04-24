@@ -156,6 +156,7 @@ class MainWindowMixin23:
             pass
 
     def _on_remocon_workspace_tab_changed(self, index: int) -> None:
+        self._ensure_remocon_workspace_tab_loaded(index)
         next_mode = self._workspace_mode_from_tab_index(index)
         self._active_workspace_splitter_mode = next_mode
 

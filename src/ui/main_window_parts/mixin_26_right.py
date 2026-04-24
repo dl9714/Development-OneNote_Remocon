@@ -185,9 +185,15 @@ class MainWindowInitRightMixin:
         self._active_workspace_splitter_mode = "remocon"
         self.remocon_workspace_tabs = QTabWidget()
         self.remocon_workspace_tabs.setObjectName("RemoconWorkspaceTabs")
+        self._codex_remocon_tab_loaded = False
+        self._codex_harness_tab_loaded = False
         self.remocon_workspace_tabs.addTab(right_panel, _remocon_workspace_tab_title())
-        self.remocon_workspace_tabs.addTab(self._build_codex_tab("remocon"), "원노트 리모컨")
-        self.remocon_workspace_tabs.addTab(self._build_codex_tab("harness"), "원노트 하네스")
+        self.remocon_workspace_tabs.addTab(
+            self._build_codex_tab_placeholder("remocon"), "원노트 리모컨"
+        )
+        self.remocon_workspace_tabs.addTab(
+            self._build_codex_tab_placeholder("harness"), "원노트 하네스"
+        )
         self.remocon_workspace_tabs.currentChanged.connect(
             self._on_remocon_workspace_tab_changed
         )

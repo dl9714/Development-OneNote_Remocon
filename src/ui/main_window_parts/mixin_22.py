@@ -319,10 +319,6 @@ class MainWindowMixin22:
 
 
     def _scroll_codex_to_widget(self, attr_name: str) -> None:
-        widget = getattr(self, attr_name, None)
-        if widget is None:
-            return
-
         page_mapping = {
             "codex_status_summary_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 0),
             "codex_quick_tools_widget": ("codex_remocon_stacked_widget", "_codex_remocon_nav_buttons", 1, 0),
@@ -340,6 +336,12 @@ class MainWindowMixin22:
         stack_attr, buttons_attr, workspace_index, idx = page_mapping.get(
             attr_name, ("", "", -1, -1)
         )
+        if workspace_index >= 0:
+            self._ensure_remocon_workspace_tab_loaded(workspace_index)
+        widget = getattr(self, attr_name, None)
+        if widget is None:
+            return
+
         stacked = getattr(self, stack_attr, None)
         if stacked is None:
             return

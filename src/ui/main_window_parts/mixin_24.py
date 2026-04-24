@@ -19,6 +19,41 @@ def codex_tab_stylesheet(codex_font_stack: str) -> str:
 
 class MainWindowMixin24:
 
+    def _build_codex_tab_placeholder(self, section: str) -> QWidget:
+        root = QWidget()
+        root.setObjectName("CodexRoot")
+        root.setProperty("codex_section", section)
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        return root
+
+    def _ensure_remocon_workspace_tab_loaded(self, index: int) -> None:
+        section = "remocon" if index == 1 else "harness" if index == 2 else ""
+        if not section:
+            return
+        loaded_attr = f"_codex_{section}_tab_loaded"
+        if getattr(self, loaded_attr, False):
+            return
+        tabs = getattr(self, "remocon_workspace_tabs", None)
+        if tabs is None or index >= tabs.count():
+            return
+        tab_text = tabs.tabText(index)
+        tab_icon = tabs.tabIcon(index)
+        tab_tooltip = tabs.tabToolTip(index)
+        tab_enabled = tabs.isTabEnabled(index)
+        widget = self._build_codex_tab(section)
+        tabs.blockSignals(True)
+        try:
+            tabs.removeTab(index)
+            tabs.insertTab(index, widget, tab_icon, tab_text)
+            tabs.setTabToolTip(index, tab_tooltip)
+            tabs.setTabEnabled(index, tab_enabled)
+            tabs.setCurrentIndex(index)
+        finally:
+            tabs.blockSignals(False)
+        setattr(self, loaded_attr, True)
+
     def _build_codex_tab(self, section: str) -> QWidget:
         root = QWidget()
         root.setObjectName("CodexRoot")
