@@ -10,6 +10,7 @@ _RESERVED = {
     "_bind_context",
     "_publish_context",
     "bind_context",
+    "finalize_context",
     "publish_context",
     "exported_globals",
 }
@@ -32,6 +33,9 @@ def publish_context(namespace: MutableMapping[str, Any]) -> None:
     for name, value in list(namespace.items()):
         if _is_exportable(name):
             _SHARED[name] = value
+
+
+def finalize_context() -> None:
     for registered in list(_NAMESPACES):
         registered.update(_SHARED)
 

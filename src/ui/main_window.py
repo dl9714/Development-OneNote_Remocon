@@ -8,7 +8,10 @@ path used by ``main.py`` and older builds.
 
 from importlib import import_module
 
-from src.ui.main_window_parts._context import exported_globals as _exported_globals
+from src.ui.main_window_parts._context import (
+    exported_globals as _exported_globals,
+    finalize_context as _finalize_context,
+)
 
 _PART_MODULES = (
     'pre_01',
@@ -86,6 +89,7 @@ _PART_MODULES = (
 for _module_name in _PART_MODULES:
     import_module(f"src.ui.main_window_parts.{_module_name}")
 
+_finalize_context()
 globals().update(_exported_globals())
 
 for _name, _value in list(globals().items()):
