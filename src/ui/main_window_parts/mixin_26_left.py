@@ -28,6 +28,43 @@ class MainWindowInitLeftMixin:
             self._icon_agg = None
             self._icon_open_notebook = None
 
+    def _apply_loaded_tree_icons(self) -> None:
+        self._ensure_tree_icons()
+        for tree_name in ("buffer_tree", "fav_tree"):
+            tree = getattr(self, tree_name, None)
+            if tree is None:
+                continue
+            was_blocked = tree.blockSignals(True)
+            was_updates_enabled = tree.updatesEnabled()
+            tree.setUpdatesEnabled(False)
+            try:
+                root = tree.invisibleRootItem()
+                stack = [root.child(i) for i in range(root.childCount() - 1, -1, -1)]
+                while stack:
+                    item = stack.pop()
+                    node_type = item.data(0, ROLE_TYPE)
+                    payload = item.data(0, ROLE_DATA) or {}
+                    if tree_name == "buffer_tree":
+                        if node_type == "group":
+                            icon = self._icon_dir
+                        elif payload.get("virtual") == "aggregate":
+                            icon = self._icon_agg
+                        else:
+                            icon = self._icon_file
+                    else:
+                        icon = (
+                            self._icon_file
+                            if node_type in ("section", "notebook")
+                            else self._icon_dir
+                        )
+                    if icon is not None:
+                        item.setIcon(0, icon)
+                    for j in range(item.childCount() - 1, -1, -1):
+                        stack.append(item.child(j))
+            finally:
+                tree.setUpdatesEnabled(was_updates_enabled)
+                tree.blockSignals(was_blocked)
+
     def _build_left_panels(self) -> None:
         # 1. 즐겨찾기 버퍼 관리 패널 (가장 왼쪽)
         buffer_panel = QWidget()

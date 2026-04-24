@@ -100,13 +100,14 @@ class MainWindowMixin27:
         try:
             self._save_window_state()
             try:
-                self._flush_pending_favorites_save()
+                flushed_favorites = self._flush_pending_favorites_save()
             except Exception:
-                pass
-            self._save_favorites()
+                flushed_favorites = False
             self._flush_pending_buffer_structure_save()
-            self._flush_pending_settings_save()
-            print("[DBG][FLUSH] Favorites saved on exit")
+            flushed_settings = self._flush_pending_settings_save()
+            self._dbg_hot(
+                f"[DBG][FLUSH] close favorites={flushed_favorites} settings={flushed_settings}"
+            )
         except Exception as e:
             print(f"[ERR][FLUSH] Failed to save favorites on exit: {e}")
         super().closeEvent(event)

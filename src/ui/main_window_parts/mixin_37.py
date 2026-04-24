@@ -13,6 +13,7 @@ class MainWindowMixin37:
     def _save_settings_to_file(self, immediate: bool = False):
         """현재 self.settings 객체를 파일에 저장합니다."""
         if immediate:
+            self._settings_save_pending = True
             self._flush_pending_settings_save()
         else:
             self._request_settings_save()
@@ -286,11 +287,13 @@ class MainWindowMixin37:
             if is_open_notebook:
                 payload["is_open"] = True
                 item.setToolTip(0, "현재 OneNote에 열려 있는 전자필기장")
-            icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
-            item.setIcon(0, icon)
+            icon = getattr(self, "_icon_file", None)
+            if icon is not None:
+                item.setIcon(0, icon)
         else:
-            icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
-            item.setIcon(0, icon)
+            icon = getattr(self, "_icon_dir", None)
+            if icon is not None:
+                item.setIcon(0, icon)
         item.setData(0, ROLE_DATA, payload)
         item.setFlags(
             item.flags()

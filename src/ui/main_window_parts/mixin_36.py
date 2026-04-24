@@ -32,7 +32,6 @@ class MainWindowMixin36:
 
     def _load_favorites_into_center_tree(self, node_data: List):
         """즐겨찾기 데이터를 중앙 트리에 로드합니다."""
-        self._ensure_tree_icons()
         # ✅ 동일 데이터면 rebuild 스킵 (클릭 렉 제거 핵심)
         payload_raw = None
         source_id = id(node_data) if isinstance(node_data, list) else 0
@@ -355,13 +354,16 @@ class MainWindowMixin36:
 
     def _flush_pending_settings_save(self):
         if self._settings_save_in_progress:
-            return
-        if not self._settings_save_pending and self._settings_save_timer.isActive():
+            return False
+        timer_active = self._settings_save_timer.isActive()
+        if not self._settings_save_pending and not timer_active:
+            return False
+        if timer_active:
             self._settings_save_timer.stop()
         self._settings_save_pending = False
         self._settings_save_in_progress = True
         try:
-            save_settings(self.settings)
+            return save_settings(self.settings)
         finally:
             self._settings_save_in_progress = False
 

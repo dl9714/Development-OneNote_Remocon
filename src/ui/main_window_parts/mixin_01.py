@@ -225,6 +225,7 @@ class MainWindowMixin01:
             self._boot_mark("timers scheduled")
 
             # FIX: 앱 시작 시 저장된 버퍼 기준으로 2패널 강제 리빌드
+            QTimer.singleShot(0, self._apply_loaded_tree_icons)
             QTimer.singleShot(50, self._finish_boot_sequence)
         except Exception as e:
             print(f"[BOOT][ERROR] deferred bootstrap failed: {e}")

@@ -116,7 +116,6 @@ class MainWindowMixin34:
         # ✅ 로드 전에 강제 보정 (UI에서 깨져도 복구)
         _ensure_default_and_aggregate_inplace(self.settings)
         self._invalidate_aggregate_cache()
-        self._ensure_tree_icons()
 
         self.buffer_tree.blockSignals(True)
         self.buffer_tree.clear()
@@ -221,17 +220,18 @@ class MainWindowMixin34:
         }
 
         if node_type == "group":
-            icon = getattr(self, "_icon_dir", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_DirIcon)
-            item.setIcon(0, icon)
+            icon = getattr(self, "_icon_dir", None)
+            if icon is not None:
+                item.setIcon(0, icon)
             for child in node.get("children", []):
                 self._append_buffer_node(item, child)
         else:
             # ✅ 종합(가상) 버퍼는 전용 아이콘(컴퓨터)로 표시
             if payload.get("virtual") == "aggregate":
-                icon = getattr(self, "_icon_agg", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_ComputerIcon)
-                item.setIcon(0, icon)
+                icon = getattr(self, "_icon_agg", None)
             else:
-                icon = getattr(self, "_icon_file", None) or self.style().standardIcon(QApplication.style().StandardPixmap.SP_FileIcon)
+                icon = getattr(self, "_icon_file", None)
+            if icon is not None:
                 item.setIcon(0, icon)
 
         item.setData(0, ROLE_DATA, payload)
