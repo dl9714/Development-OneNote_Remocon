@@ -37,12 +37,13 @@ class MainWindowMixin36:
         source_id = id(node_data) if isinstance(node_data, list) else 0
         try:
             payload_raw = json.dumps(node_data, sort_keys=True, ensure_ascii=False)
-            new_hash = hashlib.md5(payload_raw.encode("utf-8")).hexdigest()
         except Exception:
-            new_hash = None
+            payload_raw = None
 
-        if new_hash is not None and getattr(self, "_last_center_payload_hash", None) == new_hash:
-            self._last_center_payload_snapshot = payload_raw
+        if (
+            payload_raw is not None
+            and payload_raw == getattr(self, "_last_center_payload_snapshot", None)
+        ):
             self._last_center_payload_source_id = source_id
             return
 
@@ -75,7 +76,7 @@ class MainWindowMixin36:
             #    - expandAll() 대신 '자식이 있는 노드만 expandItem' 방식으로 그룹만 펼쳐 성능도 방어
             self._expand_fav_groups_always(total_nodes=total_nodes, reason="rebuild")
             self._rebuild_module_search_index()
-            self._last_center_payload_hash = new_hash
+            self._last_center_payload_hash = None
             self._last_center_payload_snapshot = payload_raw
             self._last_center_payload_source_id = source_id
         finally:
@@ -141,6 +142,14 @@ class MainWindowMixin36:
                 snap = json.dumps(data, sort_keys=True, ensure_ascii=False)
             except Exception:
                 snap = "[]"
+            if (
+                snap == getattr(self, "_fav_last_snapshot", None)
+                and getattr(self, "_fav_last_persisted_hash", None) is None
+            ):
+                self._last_center_payload_hash = None
+                self._last_center_payload_snapshot = snap
+                self._last_center_payload_source_id = id(data)
+                return
             try:
                 current_hash = None
                 if snap == getattr(self, "_last_center_payload_snapshot", None):

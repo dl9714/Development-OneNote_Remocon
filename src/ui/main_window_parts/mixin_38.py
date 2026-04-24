@@ -81,18 +81,11 @@ class MainWindowMixin38:
             self._fav_undo_stack = []
             self._fav_redo_stack = []
         self._fav_last_snapshot = snap
-        try:
-            self._fav_last_persisted_hash = None
-            if snap == getattr(self, "_last_center_payload_snapshot", None):
-                self._fav_last_persisted_hash = getattr(
-                    self, "_last_center_payload_hash", None
-                )
-            if not self._fav_last_persisted_hash:
-                self._fav_last_persisted_hash = hashlib.md5(
-                    snap.encode("utf-8")
-                ).hexdigest()
-        except Exception:
-            self._fav_last_persisted_hash = None
+        self._fav_last_persisted_hash = (
+            getattr(self, "_last_center_payload_hash", None)
+            if snap == getattr(self, "_last_center_payload_snapshot", None)
+            else None
+        )
         try:
             tag = f" reason={reason}" if reason else ""
             self._dbg_hot(f"[DBG][FAV][UNDO_CTX] reset{tag} undo=0 redo=0 snap_len={len(snap)}")

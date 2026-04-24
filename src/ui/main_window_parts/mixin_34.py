@@ -212,8 +212,9 @@ class MainWindowMixin34:
         # 데이터(즐겨찾기 목록)는 트리에 직접 저장하지 않고,
         # 구조 변경 시 settings에서 다시 읽거나 관리함.
         # 여기서는 ID와 데이터 참조를 위해 payload 저장
+        node_id = node.get("id") or str(uuid.uuid4())
         payload = {
-            "id": node.get("id", str(uuid.uuid4())),
+            "id": node_id,
             "data": node.get("data", []),  # 버퍼인 경우 데이터
             "virtual": node.get("virtual"),  # 종합(aggregate) 등
             "locked": bool(node.get("locked", False)),

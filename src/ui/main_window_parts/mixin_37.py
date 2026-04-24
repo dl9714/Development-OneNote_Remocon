@@ -275,7 +275,7 @@ class MainWindowMixin37:
         )
         item.setText(0, name)
         item.setData(0, ROLE_TYPE, node_type)
-        payload = {"id": node.get("id", str(uuid.uuid4()))}
+        payload = {"id": node.get("id") or str(uuid.uuid4())}
         if node_type in ("section", "notebook"):
             payload["target"] = node.get("target", {})
             is_open_notebook = node_type == "notebook" and bool(
