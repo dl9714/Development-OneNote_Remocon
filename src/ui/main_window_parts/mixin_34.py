@@ -12,7 +12,7 @@ class MainWindowMixin34:
 
     def _finish_boot_sequence(self):
         """부팅 완료 단계에서 마지막 상태(활성 버퍼 데이터)를 강제 복원합니다."""
-        print("[BOOT] Starting final boot sequence...")
+        self._dbg_perf("[BOOT] Starting final boot sequence...")
         t0 = time.perf_counter()
         try:
             # 활성 버퍼 다시 확인
@@ -20,7 +20,7 @@ class MainWindowMixin34:
             found_data = []
             buf_name = "None"
             if active_id and getattr(self, "_last_loaded_center_buffer_id", None) == active_id:
-                print(f"[BOOT][PERF] final restore skipped; active buffer already loaded: {active_id}")
+                self._dbg_perf(f"[BOOT][PERF] final restore skipped; active buffer already loaded: {active_id}")
                 return
 
             found_item = self._buffer_item_index.get(active_id) if active_id else None
@@ -61,15 +61,15 @@ class MainWindowMixin34:
                 total_nodes = self._count_nodes_recursive(found_data)
             except Exception:
                 total_nodes = len(found_data) if isinstance(found_data, list) else 0
-            print(f"[BOOT][PERF] final_restore_ms={total_ms:.1f} total_nodes={total_nodes}")
-            print(f"[BOOT] Final boot sequence finished. (Active: {buf_name})")
+            self._dbg_perf(f"[BOOT][PERF] final_restore_ms={total_ms:.1f} total_nodes={total_nodes}")
+            self._dbg_perf(f"[BOOT] Final boot sequence finished. (Active: {buf_name})")
 
     def _rebuild_modules_from_buffer(self, buffer_name: str, nodes: list):
         """
         저장된 favorites_buffers 기준으로
         2패널(모듈/전자필기장 영역)을 복원합니다.
         """
-        print(f"[BOOT][BUF_RESTORE] buffer='{buffer_name}' count={len(nodes)}")
+        self._dbg_perf(f"[BOOT][BUF_RESTORE] buffer='{buffer_name}' count={len(nodes)}")
 
         if nodes:
             self._load_favorites_into_center_tree(nodes)

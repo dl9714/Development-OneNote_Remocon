@@ -83,13 +83,23 @@ class MainWindowMixin33:
             open_count = sum(1 for child in children if _notebook_is_open(child))
             return f"{base_name} (열림 {open_count}/{len(children)})"
 
+        classified_keys = self._collect_classified_aggregate_notebook_keys()
+        source_id = id(source_nodes)
+        cache_sig = ("categorized", tuple(sorted(classified_keys)))
+        if (
+            source_id == getattr(self, "_aggregate_display_cache_source_id", 0)
+            and cache_sig == getattr(self, "_aggregate_display_cache_sig", None)
+            and getattr(self, "_aggregate_display_cache_kind", None) == "categorized"
+            and isinstance(getattr(self, "_aggregate_display_cache", None), list)
+        ):
+            return self._aggregate_display_cache
+
         notebooks = self._collect_notebook_nodes_from_nodes(source_nodes)
         if not notebooks:
             notebooks = self._collect_notebook_nodes_from_nodes(
                 _collect_all_sections_dedup(self.settings)
             )
 
-        classified_keys = self._collect_classified_aggregate_notebook_keys()
         unclassified: List[Dict[str, Any]] = []
         classified: List[Dict[str, Any]] = []
         for notebook in notebooks:
@@ -105,7 +115,7 @@ class MainWindowMixin33:
         except Exception:
             pass
 
-        return [
+        result = [
             {
                 "type": "group",
                 "id": AGG_UNCLASSIFIED_GROUP_ID,
@@ -119,6 +129,11 @@ class MainWindowMixin33:
                 "children": classified,
             },
         ]
+        self._aggregate_display_cache_sig = cache_sig
+        self._aggregate_display_cache_kind = "categorized"
+        self._aggregate_display_cache = result
+        self._aggregate_display_cache_source_id = source_id
+        return result
 
     def _aggregate_classification_signature_from_nodes(self, nodes: Any) -> tuple:
         if not isinstance(nodes, list):
