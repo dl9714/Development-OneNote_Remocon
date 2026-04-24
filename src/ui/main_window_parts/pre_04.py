@@ -283,9 +283,11 @@ def ensure_pywinauto():
     if _pwa_ready:
         return
     if IS_MACOS:
-        Desktop = MacDesktop
-        WindowNotFoundError = MacAutomationError
-        ElementNotFoundError = MacAutomationError
+        from src import macos_ui as _macos_ui
+
+        Desktop = _macos_ui.MacDesktop
+        WindowNotFoundError = _macos_ui.MacAutomationError
+        ElementNotFoundError = _macos_ui.MacAutomationError
         TimeoutError = TimeoutError or RuntimeError
         UIAWrapper = None
         UIAElementInfo = None

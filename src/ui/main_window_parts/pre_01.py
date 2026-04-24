@@ -12,13 +12,15 @@ _bind_context(globals())
 import sys
 import os
 import time
-import ctypes
 from types import SimpleNamespace
-from src.lazy_import import LazyModule
+from src.lazy_import import LazyAttr, LazyModule, lazy_class
 
-try:
-    import winreg
-except ImportError:  # pragma: no cover - Windows 전용
+if sys.platform.startswith("win"):
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - Windows 전용
+        winreg = None
+else:
     winreg = None
 
 
@@ -26,6 +28,7 @@ json = LazyModule("json")
 base64 = LazyModule("base64")
 hashlib = LazyModule("hashlib")
 copy = LazyModule("copy")
+ctypes = LazyModule("ctypes")
 unicodedata = LazyModule("unicodedata")
 re = LazyModule("re")
 uuid = LazyModule("uuid")
@@ -85,30 +88,47 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QIcon, QAction, QBrush, QColor, QPixmap, QPainter, QPen
 from src.app_version import APP_BUILD_VERSION, APP_VERSION
-from src.macos_ui import (
-    MacAutomationError,
-    MacDesktop,
-    MacWindow,
-    _recent_notebook_records_from_cache as mac_recent_notebook_records_from_cache,
-    current_notebook_name as mac_current_notebook_name,
-    current_open_notebook_names as mac_current_open_notebook_names,
-    current_open_notebook_names_quick as mac_current_open_notebook_names_quick,
-    macos_accessibility_is_trusted,
-    macos_last_ax_notebook_debug,
-    open_tab_notebook_records as mac_open_tab_notebook_records,
-    open_recent_notebook_record as mac_open_recent_notebook_record,
-    current_outline_context as mac_current_outline_context,
-    enumerate_macos_windows,
-    enumerate_macos_windows_quick,
-    is_onenote_window_info as is_macos_onenote_window_info,
-    macos_lookup_targets_json,
-    pick_selected_row as mac_pick_selected_row,
-    recent_notebook_records as mac_recent_notebook_records,
-    select_page_row_by_text as mac_select_page_row_by_text,
-    select_open_notebook_by_name as mac_select_open_notebook_by_name,
-    select_row_by_text as mac_select_row_by_text,
-    center_selected_row as mac_center_selected_row,
+_MACOS_UI_MODULE = "src.macos_ui"
+MacAutomationError = lazy_class(_MACOS_UI_MODULE, "MacAutomationError", Exception)
+MacDesktop = lazy_class(_MACOS_UI_MODULE, "MacDesktop")
+MacWindow = lazy_class(_MACOS_UI_MODULE, "MacWindow")
+mac_recent_notebook_records_from_cache = LazyAttr(
+    _MACOS_UI_MODULE, "_recent_notebook_records_from_cache"
 )
+mac_current_notebook_name = LazyAttr(_MACOS_UI_MODULE, "current_notebook_name")
+mac_current_open_notebook_names = LazyAttr(
+    _MACOS_UI_MODULE, "current_open_notebook_names"
+)
+mac_current_open_notebook_names_quick = LazyAttr(
+    _MACOS_UI_MODULE, "current_open_notebook_names_quick"
+)
+macos_accessibility_is_trusted = LazyAttr(
+    _MACOS_UI_MODULE, "macos_accessibility_is_trusted"
+)
+macos_last_ax_notebook_debug = LazyAttr(
+    _MACOS_UI_MODULE, "macos_last_ax_notebook_debug"
+)
+mac_open_tab_notebook_records = LazyAttr(
+    _MACOS_UI_MODULE, "open_tab_notebook_records"
+)
+mac_open_recent_notebook_record = LazyAttr(
+    _MACOS_UI_MODULE, "open_recent_notebook_record"
+)
+mac_current_outline_context = LazyAttr(_MACOS_UI_MODULE, "current_outline_context")
+enumerate_macos_windows = LazyAttr(_MACOS_UI_MODULE, "enumerate_macos_windows")
+enumerate_macos_windows_quick = LazyAttr(
+    _MACOS_UI_MODULE, "enumerate_macos_windows_quick"
+)
+is_macos_onenote_window_info = LazyAttr(_MACOS_UI_MODULE, "is_onenote_window_info")
+macos_lookup_targets_json = LazyAttr(_MACOS_UI_MODULE, "macos_lookup_targets_json")
+mac_pick_selected_row = LazyAttr(_MACOS_UI_MODULE, "pick_selected_row")
+mac_recent_notebook_records = LazyAttr(_MACOS_UI_MODULE, "recent_notebook_records")
+mac_select_page_row_by_text = LazyAttr(_MACOS_UI_MODULE, "select_page_row_by_text")
+mac_select_open_notebook_by_name = LazyAttr(
+    _MACOS_UI_MODULE, "select_open_notebook_by_name"
+)
+mac_select_row_by_text = LazyAttr(_MACOS_UI_MODULE, "select_row_by_text")
+mac_center_selected_row = LazyAttr(_MACOS_UI_MODULE, "center_selected_row")
 from src.platform_support import (
     IS_MACOS,
     IS_WINDOWS,
@@ -141,8 +161,9 @@ class WheelSafeComboBox(QComboBox):
         event.ignore()
 
 
-# widgets 모듈에서 커스텀 트리 위젯 임포트
-from src.ui.widgets import FavoritesTree, BufferTree, TreeNameEditDelegate
+FavoritesTree = lazy_class("src.ui.widgets", "FavoritesTree")
+BufferTree = lazy_class("src.ui.widgets", "BufferTree")
+TreeNameEditDelegate = lazy_class("src.ui.widgets", "TreeNameEditDelegate")
 
 # ----------------- 0. 전역 상수 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
