@@ -9,6 +9,19 @@ from src.ui.main_window_parts._context import (
 _bind_context(globals())
 
 
+FavoriteActivationWorker = lazy_class(
+    "src.ui.main_window_parts.pre_14", "FavoriteActivationWorker"
+)
+OpenNotebookRecordsWorker = lazy_class(
+    "src.ui.main_window_parts.pre_16", "OpenNotebookRecordsWorker"
+)
+CodexLocationLookupWorker = lazy_class(
+    "src.ui.main_window_parts.pre_16", "CodexLocationLookupWorker"
+)
+OtherWindowSelectionDialog = lazy_class(
+    "src.ui.main_window_parts.pre_16", "OtherWindowSelectionDialog"
+)
+
 
 def _score_candidate_dict(c, sig) -> int:
     try:

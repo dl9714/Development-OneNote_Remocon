@@ -1,13 +1,20 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from src.ui.main_window_parts.main_window_style import main_window_stylesheet
 from src.ui.main_window_parts._context import (
     bind_context as _bind_context,
     publish_context as _publish_context,
 )
 
 _bind_context(globals())
+
+
+def main_window_stylesheet(**kwargs) -> str:
+    from src.ui.main_window_parts.main_window_style import (
+        main_window_stylesheet as _main_window_stylesheet,
+    )
+
+    return _main_window_stylesheet(**kwargs)
 
 
 class MainWindowInitStateMixin:

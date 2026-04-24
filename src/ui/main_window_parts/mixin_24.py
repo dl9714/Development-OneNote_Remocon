@@ -8,7 +8,14 @@ from src.ui.main_window_parts._context import (
 
 _bind_context(globals())
 
-from src.ui.main_window_parts.codex_tab_style import codex_tab_stylesheet
+
+def codex_tab_stylesheet(codex_font_stack: str) -> str:
+    from src.ui.main_window_parts.codex_tab_style import (
+        codex_tab_stylesheet as _codex_tab_stylesheet,
+    )
+
+    return _codex_tab_stylesheet(codex_font_stack)
+
 
 class MainWindowMixin24:
 

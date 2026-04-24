@@ -9,6 +9,34 @@ from src.ui.main_window_parts._context import (
 _bind_context(globals())
 
 
+class MainWindowWindowsTemplatesAMixin:
+
+    def _codex_onenote_templates_windows_a(
+        self, values, title, body, target, section_group_id, section_id
+    ) -> Dict[str, str]:
+        from src.ui.main_window_parts.mixin_06_windows_a import (
+            MainWindowWindowsTemplatesAMixin as _WindowsTemplatesAMixin,
+        )
+
+        return _WindowsTemplatesAMixin._codex_onenote_templates_windows_a(
+            self, values, title, body, target, section_group_id, section_id
+        )
+
+
+class MainWindowWindowsTemplatesBMixin:
+
+    def _codex_onenote_templates_windows_b(
+        self, values, title, body, target, section_group_id, section_id
+    ) -> Dict[str, str]:
+        from src.ui.main_window_parts.mixin_06_windows_b import (
+            MainWindowWindowsTemplatesBMixin as _WindowsTemplatesBMixin,
+        )
+
+        return _WindowsTemplatesBMixin._codex_onenote_templates_windows_b(
+            self, values, title, body, target, section_group_id, section_id
+        )
+
+
 class MainWindowMixin06:
 
     def _codex_onenote_templates_windows(
