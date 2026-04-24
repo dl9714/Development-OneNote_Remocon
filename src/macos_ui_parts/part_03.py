@@ -255,9 +255,11 @@ class MacDesktop:
         raise MacAutomationError("해당 macOS 윈도우를 찾지 못했습니다.")
 
 
-@dataclass
 class MacWindow:
-    info: Dict[str, Any]
+    __slots__ = ("info",)
+
+    def __init__(self, info: Dict[str, Any]):
+        self.info = info
 
     @property
     def handle(self) -> int:

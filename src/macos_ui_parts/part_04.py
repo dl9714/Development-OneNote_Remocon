@@ -10,15 +10,26 @@ _bind_context(globals())
 
 
 
-@dataclass
 class MacRow:
-    window: MacWindow
-    text: str
-    selected: bool
-    rect: MacRect
-    scroll_rect: MacRect
-    order: int
-    detail: str = ""
+    __slots__ = ("window", "text", "selected", "rect", "scroll_rect", "order", "detail")
+
+    def __init__(
+        self,
+        window: MacWindow,
+        text: str,
+        selected: bool,
+        rect: MacRect,
+        scroll_rect: MacRect,
+        order: int,
+        detail: str = "",
+    ):
+        self.window = window
+        self.text = text
+        self.selected = selected
+        self.rect = rect
+        self.scroll_rect = scroll_rect
+        self.order = order
+        self.detail = detail
 
     def window_text(self) -> str:
         return self.text

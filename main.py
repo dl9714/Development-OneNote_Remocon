@@ -18,7 +18,6 @@ _boot("process start")
 import sys
 _boot("import sys done")
 import os
-import traceback
 
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -93,6 +92,8 @@ def main():
         try:
             _toggle_group_and_activate_section(item, col)
         except Exception as e:
+            import traceback
+
             print("[ERR][FAV][DBLCLK][MAIN] exception")
             traceback.print_exc()
             try:

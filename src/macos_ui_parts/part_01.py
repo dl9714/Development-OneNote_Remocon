@@ -16,10 +16,8 @@ OneNote for Mac의 화면 구조를 기준으로 System Events(접근성)와 osa
 """
 
 import ctypes
-import hashlib
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -35,11 +33,9 @@ from ctypes import (
     c_void_p,
     create_string_buffer,
 )
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
-from urllib.parse import quote, unquote, urlparse
 
+from src.lazy_import import LazyModule, LazyPath
 from src.platform_support import (
     IS_MACOS,
     MAC_OSASCRIPT_PATH,
@@ -47,6 +43,15 @@ from src.platform_support import (
     ONENOTE_MAC_BUNDLE_ID,
     open_url_in_system,
 )
+
+hashlib = LazyModule("hashlib")
+subprocess = LazyModule("subprocess")
+_urllib_parse = LazyModule("urllib.parse")
+
+
+def quote(*args, **kwargs): return _urllib_parse.quote(*args, **kwargs)
+def unquote(*args, **kwargs): return _urllib_parse.unquote(*args, **kwargs)
+def urlparse(*args, **kwargs): return _urllib_parse.urlparse(*args, **kwargs)
 
 MAC_LSAPPINFO_PATH = "/usr/bin/lsappinfo"
 _KCF_STRING_ENCODING_UTF8 = 0x08000100
@@ -160,17 +165,17 @@ _CF = _LazyMacOSLibrary(0)
 _APP_SERVICES = _LazyMacOSLibrary(1)
 
 _MAC_BUNDLE_ID_CACHE: Dict[int, str] = {}
-_MAC_ONENOTE_NOTEBOOKS_PLIST = Path(
+_MAC_ONENOTE_NOTEBOOKS_PLIST = LazyPath(
     os.path.expanduser(
         "~/Library/Group Containers/UBF8T346G9.Office/OneNote/ShareExtension/Notebooks.plist"
     )
 )
-_MAC_ONENOTE_RESOURCEINFOCACHE_JSON = Path(
+_MAC_ONENOTE_RESOURCEINFOCACHE_JSON = LazyPath(
     os.path.expanduser(
         "~/Library/Containers/com.microsoft.onenote.mac/Data/Library/Application Support/Microsoft/Office/16.0/ResourceInfoCache/data.json"
     )
 )
-_MAC_DEBUG_LOG_PATH = Path(
+_MAC_DEBUG_LOG_PATH = LazyPath(
     os.path.expanduser("~/Library/Logs/OneNote_Remocon/macos_ui_debug.log")
 )
 _MAC_RECENT_CACHE_TIMED_OUT = False

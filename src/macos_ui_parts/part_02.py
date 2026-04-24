@@ -284,12 +284,14 @@ def _enumerate_macos_windows_via_coregraphics(filter_title_substr=None) -> List[
     return results
 
 
-@dataclass
 class MacRect:
-    left: int
-    top: int
-    right: int
-    bottom: int
+    __slots__ = ("left", "top", "right", "bottom")
+
+    def __init__(self, left: int, top: int, right: int, bottom: int):
+        self.left = left
+        self.top = top
+        self.right = right
+        self.bottom = bottom
 
     def mid_point(self):
         return type("Point", (), {"x": int((self.left + self.right) / 2), "y": int((self.top + self.bottom) / 2)})()

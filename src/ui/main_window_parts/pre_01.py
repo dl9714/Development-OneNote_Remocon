@@ -13,28 +13,35 @@ import sys
 import json
 import os
 import time
-import uuid
-import traceback
 import ctypes
-from ctypes import wintypes
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Set, Callable, Tuple
-import base64
-import hashlib
-import copy
 import unicodedata
-import subprocess
 import re
-import difflib
-import html
-import threading
 from types import SimpleNamespace
-from urllib.parse import urlparse, parse_qs
+from src.lazy_import import LazyModule
 
 try:
     import winreg
 except ImportError:  # pragma: no cover - Windows 전용
     winreg = None
+
+
+base64 = LazyModule("base64")
+hashlib = LazyModule("hashlib")
+copy = LazyModule("copy")
+uuid = LazyModule("uuid")
+traceback = LazyModule("traceback")
+wintypes = LazyModule("ctypes.wintypes")
+subprocess = LazyModule("subprocess")
+difflib = LazyModule("difflib")
+html = LazyModule("html")
+threading = LazyModule("threading")
+_urllib_parse = LazyModule("urllib.parse")
+
+
+def urlparse(*args, **kwargs): return _urllib_parse.urlparse(*args, **kwargs)
+def parse_qs(*args, **kwargs): return _urllib_parse.parse_qs(*args, **kwargs)
 
 from PyQt6.QtWidgets import (
     QApplication,

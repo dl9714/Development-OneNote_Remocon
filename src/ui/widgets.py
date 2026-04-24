@@ -15,11 +15,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QColor, QPainter, QPen
-import traceback
 from src.constants import ROLE_TYPE, ROLE_OPEN_NOTEBOOK
+from src.lazy_import import LazyModule
 from typing import Optional
 
 
+traceback = LazyModule("traceback")
 TREE_WIDGET_KEY_DEBUG = os.environ.get("ONENOTE_REMOCON_DEBUG_KEYS") == "1"
 
 

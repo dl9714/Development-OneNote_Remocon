@@ -25,7 +25,6 @@ import json
 import os
 from pathlib import Path
 from urllib.parse import unquote, urlparse
-
 path = Path(os.path.expanduser("""__CACHE_PATH__"""))
 if not path.is_file():
     print("[]")
