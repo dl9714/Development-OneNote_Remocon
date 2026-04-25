@@ -29,6 +29,7 @@ _PART_MODULES = (
     'part_14',
     'part_15',
     'part_16',
+    'part_17',
 )
 
 for _module_name in _PART_MODULES:

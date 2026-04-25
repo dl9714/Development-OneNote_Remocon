@@ -11,6 +11,12 @@ _bind_context(globals())
 
 
 def current_outline_context(window: MacWindow) -> Dict[str, str]:
+    fast_context = globals().get("current_outline_context_fast")
+    if callable(fast_context):
+        context = fast_context(window)
+        if any(context.get(key) for key in ("notebook", "section", "page")):
+            return context
+
     locator = _applescript_window_locator(window.process_id(), window.window_text())
     script = locator + r'''
         set notebookName to ""
@@ -148,6 +154,16 @@ def center_selected_row(
     prefer_leftmost: bool = True,
     target_text: str = "",
 ) -> Tuple[bool, Optional[str]]:
+    fast_center = globals().get("center_selected_row_fast")
+    if callable(fast_center):
+        ok, name = fast_center(
+            window,
+            prefer_leftmost=prefer_leftmost,
+            target_text=target_text,
+        )
+        if ok:
+            return True, name
+
     for _ in range(3):
         snapshot = collect_onenote_snapshot(window)
         rows = snapshot.get("rows", [])

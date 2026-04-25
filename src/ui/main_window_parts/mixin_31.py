@@ -144,6 +144,20 @@ class MainWindowMixin31:
                 pass
             return False
 
+        if IS_MACOS:
+            try:
+                if hasattr(self, "_bring_onenote_to_front"):
+                    ok_focus = self._bring_onenote_to_front()
+                    print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
+                    if ok_focus is False:
+                        print("[DBG][PRECHECK] FAIL: bring_onenote_to_front returned False")
+                        return False
+            except Exception as e:
+                print(f"[DBG][PRECHECK] bring/front EXC: {e}")
+                return False
+            print("[DBG][PRECHECK] PASS macOS")
+            return True
+
         # 2) pywinauto backend / wrapper 사용 가능 여부
         try:
             ensure_pywinauto()
@@ -217,7 +231,7 @@ class MainWindowMixin31:
 
         if preselected_tree_control is not None:
             self.tree_control = preselected_tree_control
-        elif not self.tree_control:
+        elif not self.tree_control and not IS_MACOS:
             self.tree_control = _find_tree_or_list(self.onenote_window)
 
         success, item_name = scroll_selected_item_to_center(
@@ -246,7 +260,8 @@ class MainWindowMixin31:
                 success_message = f"성공: '{item_name}' 중앙 정렬 완료."
             self.update_status_and_ui(success_message, True)
         elif allow_retry:
-            self.tree_control = _find_tree_or_list(self.onenote_window)
+            if not IS_MACOS:
+                self.tree_control = _find_tree_or_list(self.onenote_window)
             success, item_name = scroll_selected_item_to_center(
                 self.onenote_window,
                 self.tree_control,

@@ -18,9 +18,6 @@ def scroll_selected_item_to_center(
     selected_item=None,
     expected_text: str = "",
 ):
-    ensure_pywinauto()
-    if not _pwa_ready:
-        return False, None
     if IS_MACOS:
         try:
             return mac_center_selected_row(
@@ -31,6 +28,9 @@ def scroll_selected_item_to_center(
         except Exception as e:
             print(f"[WARN] 중앙 정렬 중 오류(macOS): {e}")
             return False, None
+    ensure_pywinauto()
+    if not _pwa_ready:
+        return False, None
     try:
         tree_control = tree_control or _find_tree_or_list(onenote_window)
         if not tree_control:
