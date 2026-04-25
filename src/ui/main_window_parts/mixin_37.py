@@ -277,14 +277,15 @@ class MainWindowMixin37:
         item.setData(0, ROLE_TYPE, node_type)
         payload = {"id": node.get("id") or str(uuid.uuid4())}
         if node_type in ("section", "notebook"):
-            payload["target"] = node.get("target", {})
+            target = node.get("target", {})
+            payload["target"] = target
             is_open_notebook = node_type == "notebook" and bool(
                 node.get("is_open")
                 or node.get("open")
-                or (node.get("target") or {}).get("is_open")
+                or (target or {}).get("is_open")
             )
-            item.setData(0, ROLE_OPEN_NOTEBOOK, bool(is_open_notebook))
             if is_open_notebook:
+                item.setData(0, ROLE_OPEN_NOTEBOOK, True)
                 payload["is_open"] = True
                 item.setToolTip(0, "현재 OneNote에 열려 있는 전자필기장")
             icon = getattr(self, "_icon_file", None)
