@@ -243,10 +243,28 @@ class MainWindowMixin34:
                 self._first_buffer_item = item
 
         # ✅ locked 노드는 편집/이동/드롭 막기 (Default 그룹, 종합)
+        locked_flags = getattr(self, "_buffer_tree_item_locked_flags", None)
+        editable_flags = getattr(self, "_buffer_tree_item_editable_flags", None)
+        if locked_flags is None or editable_flags is None:
+            base_flags = item.flags()
+            locked_flags = (
+                base_flags
+                & ~Qt.ItemFlag.ItemIsEditable
+                & ~Qt.ItemFlag.ItemIsDragEnabled
+                & ~Qt.ItemFlag.ItemIsDropEnabled
+            )
+            editable_flags = (
+                base_flags
+                | Qt.ItemFlag.ItemIsEditable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
+            self._buffer_tree_item_locked_flags = locked_flags
+            self._buffer_tree_item_editable_flags = editable_flags
         if payload.get("locked"):
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsDragEnabled & ~Qt.ItemFlag.ItemIsDropEnabled)
+            item.setFlags(locked_flags)
         else:
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled | Qt.ItemFlag.ItemIsDropEnabled)
+            item.setFlags(editable_flags)
 
         return item
 

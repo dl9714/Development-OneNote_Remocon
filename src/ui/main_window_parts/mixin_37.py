@@ -295,14 +295,18 @@ class MainWindowMixin37:
             if icon is not None:
                 item.setIcon(0, icon)
         item.setData(0, ROLE_DATA, payload)
-        item.setFlags(
-            item.flags()
-            | Qt.ItemFlag.ItemIsEditable
-            | Qt.ItemFlag.ItemIsDragEnabled
-            | Qt.ItemFlag.ItemIsDropEnabled
-            | Qt.ItemFlag.ItemIsEnabled
-            | Qt.ItemFlag.ItemIsSelectable
-        )
+        flags = getattr(self, "_fav_tree_item_flags", None)
+        if flags is None:
+            flags = (
+                item.flags()
+                | Qt.ItemFlag.ItemIsEditable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+                | Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+            )
+            self._fav_tree_item_flags = flags
+        item.setFlags(flags)
         for ch in node.get("children", []):
             self._append_fav_node(item, ch)
         return item
