@@ -94,16 +94,16 @@ class MainWindowMixin33:
         classified_keys = self._collect_classified_aggregate_notebook_keys()
         cache_sig = ("categorized", tuple(sorted(classified_keys)))
 
-        notebooks = self._collect_notebook_nodes_from_nodes(source_nodes)
+        notebooks = self._collect_notebook_nodes_from_nodes(source_nodes, include_keys=True)
         if not notebooks:
             notebooks = self._collect_notebook_nodes_from_nodes(
-                _collect_all_sections_dedup(self.settings)
+                _collect_all_sections_dedup(self.settings),
+                include_keys=True,
             )
 
         unclassified: List[Dict[str, Any]] = []
         classified: List[Dict[str, Any]] = []
-        for notebook in notebooks:
-            notebook_keys = self._aggregate_notebook_keys_from_node(notebook)
+        for notebook, notebook_keys in notebooks:
             if notebook_keys and notebook_keys & classified_keys:
                 classified.append(notebook)
             else:

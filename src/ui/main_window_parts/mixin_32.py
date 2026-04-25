@@ -338,10 +338,10 @@ class MainWindowMixin32:
         cache[cache_key] = result
         return result
 
-    def _collect_notebook_nodes_from_nodes(self, nodes: Any) -> List[Dict[str, Any]]:
+    def _collect_notebook_nodes_from_nodes(self, nodes: Any, *, include_keys: bool = False) -> List[Any]:
         if not isinstance(nodes, list):
             return []
-        found: List[Dict[str, Any]] = []
+        found: List[Any] = []
         seen: Set[str] = set()
         stack = list(reversed(nodes))
         while stack:
@@ -361,15 +361,14 @@ class MainWindowMixin32:
                     sig = target.get("sig")
                     if isinstance(sig, dict):
                         target["sig"] = dict(sig)
-                    found.append(
-                        {
-                            "type": "notebook",
-                            "id": node.get("id") or str(uuid.uuid4()),
-                            "name": node.get("name") or "전자필기장",
-                            "target": target,
-                            "is_open": is_open,
-                        }
-                    )
+                    record = {
+                        "type": "notebook",
+                        "id": node.get("id") or str(uuid.uuid4()),
+                        "name": node.get("name") or "전자필기장",
+                        "target": target,
+                        "is_open": is_open,
+                    }
+                    found.append((record, node_keys) if include_keys else record)
                 continue
             children = node.get("children")
             if isinstance(children, list):
@@ -378,7 +377,7 @@ class MainWindowMixin32:
             if isinstance(data, list):
                 stack.extend(reversed(data))
         try:
-            found.sort(key=lambda n: _name_sort_key((n or {}).get("name", "")))
+            found.sort(key=lambda n: _name_sort_key(((n[0] if include_keys else n) or {}).get("name", "")))
         except Exception:
             pass
         return found
