@@ -112,15 +112,22 @@ def _normalize_text(s: Optional[str]) -> str:
 
 
 _NOTEBOOK_NAME_KEY_CACHE = {}
+_NOTEBOOK_NAME_NORMALIZE = None
+_NOTEBOOK_NAME_SEPARATOR_SUB = None
 
 
 def _normalize_notebook_name_key(s: Optional[str]) -> str:
+    global _NOTEBOOK_NAME_NORMALIZE, _NOTEBOOK_NAME_SEPARATOR_SUB
     raw = s if isinstance(s, str) else str(s or "")
     cached = _NOTEBOOK_NAME_KEY_CACHE.get(raw)
     if cached is not None:
         return cached
-    text = unicodedata.normalize("NFKC", raw).casefold()
-    key = re.sub(r"[\s\-_]+", "", text)
+    if _NOTEBOOK_NAME_NORMALIZE is None:
+        _NOTEBOOK_NAME_NORMALIZE = unicodedata.normalize
+    if _NOTEBOOK_NAME_SEPARATOR_SUB is None:
+        _NOTEBOOK_NAME_SEPARATOR_SUB = re.compile(r"[\s\-_]+").sub
+    text = _NOTEBOOK_NAME_NORMALIZE("NFKC", raw).casefold()
+    key = _NOTEBOOK_NAME_SEPARATOR_SUB("", text)
     if len(_NOTEBOOK_NAME_KEY_CACHE) >= 4096:
         _NOTEBOOK_NAME_KEY_CACHE.clear()
     _NOTEBOOK_NAME_KEY_CACHE[raw] = key
