@@ -312,11 +312,12 @@ class MainWindowMixin32:
             return frozenset()
         target = node.get("target") or {}
         notebook_id = str(target.get("notebook_id") or "").strip()
+        notebook_id_key = notebook_id.casefold()
         name = (
             str(target.get("notebook_text") or "").strip()
             or str(node.get("name") or "").strip()
         )
-        cache_key = (notebook_id.casefold(), name)
+        cache_key = (notebook_id_key, name)
         cache = getattr(self, "_aggregate_notebook_keys_cache", None)
         if cache is None:
             cache = {}
@@ -326,8 +327,8 @@ class MainWindowMixin32:
             return cached
 
         keys: Set[str] = set()
-        if notebook_id:
-            keys.add("id:" + notebook_id.casefold())
+        if notebook_id_key:
+            keys.add("id:" + notebook_id_key)
         name_key = _normalize_notebook_name_key(name)
         if name_key:
             keys.add("name:" + name_key)

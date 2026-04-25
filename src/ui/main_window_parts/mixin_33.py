@@ -83,16 +83,16 @@ class MainWindowMixin33:
             open_count = sum(1 for child in children if _notebook_is_open(child))
             return f"{base_name} (열림 {open_count}/{len(children)})"
 
-        classified_keys = self._collect_classified_aggregate_notebook_keys()
         source_id = id(source_nodes)
-        cache_sig = ("categorized", tuple(sorted(classified_keys)))
         if (
             source_id == getattr(self, "_aggregate_display_cache_source_id", 0)
-            and cache_sig == getattr(self, "_aggregate_display_cache_sig", None)
             and getattr(self, "_aggregate_display_cache_kind", None) == "categorized"
             and isinstance(getattr(self, "_aggregate_display_cache", None), list)
         ):
             return self._aggregate_display_cache
+
+        classified_keys = self._collect_classified_aggregate_notebook_keys()
+        cache_sig = ("categorized", tuple(sorted(classified_keys)))
 
         notebooks = self._collect_notebook_nodes_from_nodes(source_nodes)
         if not notebooks:
