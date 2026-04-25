@@ -35,6 +35,12 @@ class MainWindowMixin36:
         # ✅ 동일 데이터면 rebuild 스킵 (클릭 렉 제거 핵심)
         payload_raw = None
         source_id = id(node_data) if isinstance(node_data, list) else 0
+        if (
+            source_id
+            and source_id == getattr(self, "_last_center_payload_source_id", 0)
+            and getattr(self, "_last_center_payload_snapshot", None) is not None
+        ):
+            return
         try:
             payload_raw = json.dumps(node_data, sort_keys=True, ensure_ascii=False)
         except Exception:

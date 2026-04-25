@@ -309,20 +309,33 @@ class MainWindowMixin32:
 
     def _aggregate_notebook_keys_from_node(self, node: Any) -> Set[str]:
         if not isinstance(node, dict):
-            return set()
+            return frozenset()
         target = node.get("target") or {}
-        keys: Set[str] = set()
         notebook_id = str(target.get("notebook_id") or "").strip()
-        if notebook_id:
-            keys.add("id:" + notebook_id.casefold())
         name = (
             str(target.get("notebook_text") or "").strip()
             or str(node.get("name") or "").strip()
         )
+        cache_key = (notebook_id.casefold(), name)
+        cache = getattr(self, "_aggregate_notebook_keys_cache", None)
+        if cache is None:
+            cache = {}
+            self._aggregate_notebook_keys_cache = cache
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        keys: Set[str] = set()
+        if notebook_id:
+            keys.add("id:" + notebook_id.casefold())
         name_key = _normalize_notebook_name_key(name)
         if name_key:
             keys.add("name:" + name_key)
-        return keys
+        result = frozenset(keys)
+        if len(cache) >= 4096:
+            cache.clear()
+        cache[cache_key] = result
+        return result
 
     def _collect_notebook_nodes_from_nodes(self, nodes: Any) -> List[Dict[str, Any]]:
         if not isinstance(nodes, list):
