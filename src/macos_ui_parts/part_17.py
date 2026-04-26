@@ -11,6 +11,30 @@ _bind_context(globals())
 
 _ROW_TEXT_ATTRS = ("AXValue", "AXTitle", "AXDescription")
 _NOTEBOOK_MARKERS = ("(현재 전자필기장)", "(현재 전자 필기장)")
+_FAST_OUTLINE_CACHE: Dict[str, Any] = {
+    "key": None,
+    "timestamp": 0.0,
+    "snapshot": None,
+}
+
+
+def _fast_outline_cache_key(window: MacWindow) -> Tuple[int, int, str]:
+    return (
+        int(window.process_id() or 0),
+        int(getattr(window, "info", {}).get("window_number") or 0),
+        str(window.window_text() or ""),
+    )
+
+
+def _clone_fast_outline(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "notebook": str(snapshot.get("notebook") or ""),
+        "rows": list(snapshot.get("rows") or []),
+    }
+
+
+def _fast_outline_has_context(result: Dict[str, Any]) -> bool:
+    return bool(result.get("notebook")) and len(result.get("rows") or []) >= 2
 
 
 def _ax_rect(element) -> Optional[MacRect]:
@@ -58,11 +82,19 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
     if not (IS_MACOS and _APP_SERVICES and window is not None):
         return result
 
+    cache_key = _fast_outline_cache_key(window)
+    now = time.monotonic()
+    if _FAST_OUTLINE_CACHE.get("key") == cache_key:
+        age = now - float(_FAST_OUTLINE_CACHE.get("timestamp") or 0.0)
+        cached = _FAST_OUTLINE_CACHE.get("snapshot")
+        if age <= 0.4 and isinstance(cached, dict):
+            return _clone_fast_outline(cached)
+
     roots = _ax_window_roots_for_onenote(window)
     state = {"nodes": 0, "order": 0}
 
     def visit(element, depth: int, scroll_rect: Optional[MacRect]) -> None:
-        if depth > 16 or state["nodes"] >= 1800:
+        if depth > 16 or state["nodes"] >= 1800 or _fast_outline_has_context(result):
             return
         state["nodes"] += 1
 
@@ -93,6 +125,8 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
         try:
             for child in children:
                 visit(child, depth + 1, current_scroll)
+                if _fast_outline_has_context(result):
+                    break
         finally:
             _release_ax_refs(children)
 
@@ -110,6 +144,9 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
         seen_rows.add(key)
         unique_rows.append(row)
     result["rows"] = unique_rows
+    _FAST_OUTLINE_CACHE.update(
+        {"key": cache_key, "timestamp": now, "snapshot": _clone_fast_outline(result)}
+    )
     return result
 
 
