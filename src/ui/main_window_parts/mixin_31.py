@@ -111,15 +111,18 @@ class MainWindowMixin31:
         OneNote 관련 액션을 실행하기 전 선행 조건 체크.
         False가 나오는 이유를 터미널에 상세히 출력한다.
         """
-        print("[DBG][PRECHECK] ENTER")
+        debug_hot = bool(getattr(self, "_debug_hotpaths", False))
+        if debug_hot:
+            print("[DBG][PRECHECK] ENTER")
         try:
             w = getattr(self, "onenote_window", None)
             if IS_MACOS:
-                refreshed = self._coerce_macos_window(w)
+                refreshed = w if isinstance(w, MacWindow) else self._coerce_macos_window(w)
                 if refreshed is not None:
                     self.onenote_window = refreshed
                     w = refreshed
-            print(f"[DBG][PRECHECK] onenote_window={w}")
+            if debug_hot:
+                print(f"[DBG][PRECHECK] onenote_window={w}")
         except Exception as e:
             print(f"[DBG][PRECHECK] onenote_window read EXC: {e}")
             w = None
@@ -131,7 +134,8 @@ class MainWindowMixin31:
                 hwnd = getattr(w, "handle", None)
                 if callable(hwnd):
                     hwnd = w.handle()
-            print(f"[DBG][PRECHECK] hwnd={hwnd}")
+            if debug_hot:
+                print(f"[DBG][PRECHECK] hwnd={hwnd}")
         except Exception as e:
             print(f"[DBG][PRECHECK] hwnd EXC: {e}")
             hwnd = None
@@ -148,20 +152,23 @@ class MainWindowMixin31:
             try:
                 if hasattr(self, "_bring_onenote_to_front"):
                     ok_focus = self._bring_onenote_to_front()
-                    print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
+                    if debug_hot:
+                        print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
                     if ok_focus is False:
                         print("[DBG][PRECHECK] FAIL: bring_onenote_to_front returned False")
                         return False
             except Exception as e:
                 print(f"[DBG][PRECHECK] bring/front EXC: {e}")
                 return False
-            print("[DBG][PRECHECK] PASS macOS")
+            if debug_hot:
+                print("[DBG][PRECHECK] PASS macOS")
             return True
 
         # 2) pywinauto backend / wrapper 사용 가능 여부
         try:
             ensure_pywinauto()
-            print("[DBG][PRECHECK] ensure_pywinauto OK")
+            if debug_hot:
+                print("[DBG][PRECHECK] ensure_pywinauto OK")
         except Exception as e:
             print(f"[DBG][PRECHECK] FAIL: ensure_pywinauto EXC: {e}")
             return False
@@ -171,7 +178,8 @@ class MainWindowMixin31:
             # 프로젝트에 기존 함수가 있으면 그대로 호출하되, 실패 사유를 찍는다.
             if hasattr(self, "_bring_onenote_to_front"):
                 ok_focus = self._bring_onenote_to_front()
-                print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
+                if debug_hot:
+                    print(f"[DBG][PRECHECK] _bring_onenote_to_front={ok_focus}")
                 if ok_focus is False:
                     print("[DBG][PRECHECK] FAIL: bring_onenote_to_front returned False")
                     return False
@@ -182,13 +190,15 @@ class MainWindowMixin31:
         # 4) 트리 컨트롤 찾기 조건 (기존에 precheck에서 강제하는 경우가 많음)
         try:
             tc = getattr(self, "tree_control", None)
-            print(f"[DBG][PRECHECK] tree_control(before)={tc}")
+            if debug_hot:
+                print(f"[DBG][PRECHECK] tree_control(before)={tc}")
             if not tc:
                 finder = globals().get("_find_tree_or_list", None)
                 if callable(finder):
                     tc = finder(w)
                     self.tree_control = tc
-                print(f"[DBG][PRECHECK] tree_control(after)={tc}")
+                if debug_hot:
+                    print(f"[DBG][PRECHECK] tree_control(after)={tc}")
             if not tc:
                 print("[DBG][PRECHECK] FAIL: tree_control not found")
                 return False
@@ -196,7 +206,8 @@ class MainWindowMixin31:
             print(f"[DBG][PRECHECK] tree_control find EXC: {e}")
             return False
 
-        print("[DBG][PRECHECK] PASS")
+        if debug_hot:
+            print("[DBG][PRECHECK] PASS")
         return True
 
     def center_selected_item_action(
@@ -212,10 +223,12 @@ class MainWindowMixin31:
         expected_text: str = "",
     ):
         op_started_at = started_at or time.perf_counter()
-        print(
-            f"[DBG][CENTER][START] source={debug_source} "
-            f"at_s={(time.perf_counter() - self._t_boot):.3f}"
-        )
+        debug_hot = bool(getattr(self, "_debug_hotpaths", False))
+        if debug_hot:
+            print(
+                f"[DBG][CENTER][START] source={debug_source} "
+                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+            )
         if not skip_precheck and not self._pre_action_check():
             print(
                 f"[DBG][CENTER][ABORT] source={debug_source} "
@@ -224,7 +237,7 @@ class MainWindowMixin31:
             )
             return
 
-        if IS_MACOS:
+        if IS_MACOS and (skip_precheck or self.onenote_window is None):
             refreshed = self._coerce_macos_window(getattr(self, "onenote_window", None))
             if refreshed is not None:
                 self.onenote_window = refreshed
@@ -242,11 +255,12 @@ class MainWindowMixin31:
         )
 
         if success:
-            print(
-                f"[DBG][CENTER][DONE] source={debug_source} success=True "
-                f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
-                f"at_s={(time.perf_counter() - self._t_boot):.3f}"
-            )
+            if debug_hot:
+                print(
+                    f"[DBG][CENTER][DONE] source={debug_source} success=True "
+                    f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                    f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+                )
             if IS_MACOS:
                 summary = _mac_context_summary_text(
                     self._mac_selected_outline_context(self.onenote_window),
@@ -268,11 +282,12 @@ class MainWindowMixin31:
                 expected_text=expected_text,
             )
             if success:
-                print(
-                    f"[DBG][CENTER][DONE] source={debug_source} success=True retry=1 "
-                    f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
-                    f"at_s={(time.perf_counter() - self._t_boot):.3f}"
-                )
+                if debug_hot:
+                    print(
+                        f"[DBG][CENTER][DONE] source={debug_source} success=True retry=1 "
+                        f"item={item_name!r} elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
+                        f"at_s={(time.perf_counter() - self._t_boot):.3f}"
+                    )
                 if IS_MACOS:
                     summary = _mac_context_summary_text(
                         self._mac_selected_outline_context(self.onenote_window),
