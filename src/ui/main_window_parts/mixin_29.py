@@ -156,10 +156,6 @@ class MainWindowMixin29:
             return True
 
         if IS_MACOS and target_kind == "notebook":
-            try:
-                self.onenote_window.set_focus()
-            except Exception:
-                pass
             if _activate_macos_notebook_context():
                 return True
 
