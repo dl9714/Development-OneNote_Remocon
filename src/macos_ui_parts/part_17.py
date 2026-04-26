@@ -108,6 +108,105 @@ def _append_selected_outline_rows(
     return len(result.get("rows") or []) > before_count
 
 
+def _ax_child_at(element, index: int):
+    if element is None:
+        return None
+    children = _ax_array_attribute(element, "AXChildren")
+    if not (0 <= index < len(children)):
+        _release_ax_refs(children)
+        return None
+    picked = children[index]
+    for child_index, child in enumerate(children):
+        if child_index != index:
+            _cf_release(child)
+    return picked
+
+
+def _ax_preferred_window_root(window: MacWindow, title_hint: str):
+    pid = int(window.process_id() or 0)
+    if not pid:
+        return None
+    app_ref = c_void_p(_APP_SERVICES.AXUIElementCreateApplication(pid))
+    if not app_ref:
+        return None
+    title_key = _normalize_text(title_hint)
+    try:
+        for attr_name in ("AXFocusedWindow", "AXMainWindow"):
+            root = _ax_element_attribute(app_ref, attr_name)
+            if not root:
+                continue
+            root_key = _normalize_text(_ax_text_attribute(root, "AXTitle"))
+            if not title_key or root_key == title_key or title_key in root_key:
+                return root
+            _cf_release(root)
+    finally:
+        _cf_release(app_ref)
+    return None
+
+
+def _append_direct_group_outline(
+    result: Dict[str, Any],
+    window: MacWindow,
+    group,
+    state: Dict[str, int],
+) -> bool:
+    scroll = _ax_child_at(group, 0)
+    outline = _ax_child_at(scroll, 0) if scroll else None
+    try:
+        if not outline:
+            return False
+        return _append_selected_outline_rows(
+            result,
+            window,
+            outline,
+            _ax_rect(scroll) if scroll else None,
+            state,
+        )
+    finally:
+        if outline:
+            _cf_release(outline)
+        if scroll:
+            _cf_release(scroll)
+
+
+def _walk_direct_outline(window: MacWindow, cache_key: Tuple[int, int, str]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "notebook": str(cache_key[2] or "").strip(),
+        "rows": [],
+    }
+    root = _ax_preferred_window_root(window, cache_key[2])
+    roots = [root] if root else _ax_window_roots_for_onenote(window)
+    state = {"nodes": 0, "order": 0}
+    try:
+        for root in roots[:1]:
+            main_split = _ax_child_at(root, 0)
+            left_group = _ax_child_at(main_split, 0) if main_split else None
+            nav_split = _ax_child_at(left_group, 1) if left_group else None
+            nested_split = _ax_child_at(nav_split, 0) if nav_split else None
+            section_group = _ax_child_at(nested_split, 0) if nested_split else None
+            page_group = _ax_child_at(nested_split, 2) if nested_split else None
+            try:
+                for group in (section_group, page_group):
+                    if group is not None:
+                        _append_direct_group_outline(result, window, group, state)
+                if _fast_outline_has_context(result):
+                    return result
+            finally:
+                for ref in (
+                    page_group,
+                    section_group,
+                    nested_split,
+                    nav_split,
+                    left_group,
+                    main_split,
+                ):
+                    if ref:
+                        _cf_release(ref)
+    finally:
+        _release_ax_refs(roots)
+    return result
+
+
 def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
     result: Dict[str, Any] = {"notebook": "", "rows": []}
     if not (IS_MACOS and _APP_SERVICES and window is not None):
@@ -121,6 +220,13 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
         cached = _FAST_OUTLINE_CACHE.get("snapshot")
         if age <= 0.4 and isinstance(cached, dict):
             return _clone_fast_outline(cached)
+
+    direct = _walk_direct_outline(window, cache_key)
+    if _fast_outline_has_context(direct):
+        _FAST_OUTLINE_CACHE.update(
+            {"key": cache_key, "timestamp": now, "snapshot": _clone_fast_outline(direct)}
+        )
+        return direct
 
     roots = _ax_window_roots_for_onenote(window)
     state = {"nodes": 0, "order": 0}
