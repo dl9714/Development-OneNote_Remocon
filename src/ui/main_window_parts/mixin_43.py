@@ -264,7 +264,7 @@ class MainWindowMixin43:
         started_at: Optional[float] = None,
     ):
         ensure_pywinauto()
-        if not _pwa_ready:
+        if not IS_MACOS and not _pwa_ready:
             self.update_status_and_ui(
                 "오류: 자동화 모듈이 로드되지 않았습니다.",
                 self.center_button.isEnabled(),

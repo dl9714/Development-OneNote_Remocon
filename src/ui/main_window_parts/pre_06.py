@@ -12,7 +12,7 @@ _bind_context(globals())
 
 def get_selected_tree_item_fast(tree_control):
     ensure_pywinauto()
-    if not _pwa_ready:
+    if not IS_MACOS and not _pwa_ready:
         return None
     candidates = []
     seen = set()
@@ -94,7 +94,7 @@ def get_selected_tree_item_fast(tree_control):
 # ----------------- 8. 페이지/섹션 컨테이너(Tree/List) 찾기 - ensure 호출 -----------------
 def _find_tree_or_list(onenote_window):
     ensure_pywinauto()
-    if not _pwa_ready:
+    if not IS_MACOS and not _pwa_ready:
         return None
     for ctype in ("Tree", "List"):
         try:
@@ -151,7 +151,7 @@ def select_section_by_text(
     onenote_window, text: str, tree_control: Optional[object] = None
 ) -> bool:
     ensure_pywinauto()
-    if not _pwa_ready:
+    if not IS_MACOS and not _pwa_ready:
         return False
     if IS_MACOS:
         try:
@@ -210,7 +210,7 @@ def select_notebook_item_by_text(
     - 실패하면 descendants(TreeItem/ListItem)로 fallback
     """
     ensure_pywinauto()
-    if not _pwa_ready:
+    if not IS_MACOS and not _pwa_ready:
         return False
     if IS_MACOS:
         try:
@@ -294,6 +294,13 @@ def _mac_outline_notebook_matches(onenote_window, notebook_name: str) -> bool:
     expected_key = _normalize_notebook_name_key(notebook_name)
     if not expected_key:
         return False
+    try:
+        context = mac_current_outline_context(onenote_window)
+        current_name = str((context or {}).get("notebook") or "").strip()
+        if current_name:
+            return _normalize_notebook_name_key(current_name) == expected_key
+    except Exception:
+        pass
     current_name = mac_current_notebook_name(onenote_window)
     if current_name:
         return _normalize_notebook_name_key(current_name) == expected_key

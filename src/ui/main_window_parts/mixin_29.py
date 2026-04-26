@@ -73,13 +73,21 @@ class MainWindowMixin29:
             requested_name = expected_notebook_text or display_text
             if not requested_name:
                 return False
-            refreshed_win = self._refresh_macos_onenote_main_window()
-            if refreshed_win is not None:
-                self.onenote_window = refreshed_win
-            notebook_result = _mac_ensure_notebook_context_for_section(
-                self.onenote_window,
-                requested_name,
-            )
+            if _mac_outline_notebook_matches(self.onenote_window, requested_name):
+                notebook_result = {
+                    "ok": True,
+                    "name": requested_name,
+                    "source": "current",
+                    "error": "",
+                }
+            else:
+                refreshed_win = self._refresh_macos_onenote_main_window()
+                if refreshed_win is not None:
+                    self.onenote_window = refreshed_win
+                notebook_result = _mac_ensure_notebook_context_for_section(
+                    self.onenote_window,
+                    requested_name,
+                )
             if not notebook_result.get("ok", True):
                 fail_msg = notebook_result.get("error") or (
                     f"전자필기장 '{requested_name}'을(를) 열지 못했습니다."
