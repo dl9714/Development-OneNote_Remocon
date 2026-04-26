@@ -83,6 +83,7 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
         return result
 
     cache_key = _fast_outline_cache_key(window)
+    result["notebook"] = str(cache_key[2] or "").strip()
     now = time.monotonic()
     if _FAST_OUTLINE_CACHE.get("key") == cache_key:
         age = now - float(_FAST_OUTLINE_CACHE.get("timestamp") or 0.0)
