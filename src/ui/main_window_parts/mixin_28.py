@@ -104,9 +104,11 @@ class MainWindowMixin28:
         if win is None:
             return {}
         try:
+            context = mac_current_outline_context(win)
+            if any(context.get(key) for key in ("notebook", "section", "page")):
+                return context
             try:
                 win.set_focus()
-                time.sleep(0.08)
             except Exception:
                 pass
             return mac_current_outline_context(win)
