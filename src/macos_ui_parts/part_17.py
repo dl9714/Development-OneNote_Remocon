@@ -85,7 +85,8 @@ def _append_selected_outline_rows(
     state: Dict[str, int],
 ) -> bool:
     selected_rows = _ax_array_attribute(outline, "AXSelectedRows")
-    before_count = len(result.get("rows") or [])
+    rows = result["rows"]
+    before_count = len(rows)
     try:
         for row in selected_rows:
             rect = _ax_rect(row)
@@ -93,7 +94,7 @@ def _append_selected_outline_rows(
             if not (rect and text):
                 continue
             state["order"] += 1
-            result["rows"].append(
+            rows.append(
                 MacRow(
                     window=window,
                     text=text,
@@ -105,7 +106,7 @@ def _append_selected_outline_rows(
             )
     finally:
         _release_ax_refs(selected_rows)
-    return len(result.get("rows") or []) > before_count
+    return len(rows) > before_count
 
 
 def _ax_child_at(element, index: int):
@@ -157,7 +158,9 @@ def _append_direct_group_outline(
         if not outline:
             return False
         selected_rows = _ax_array_attribute(outline, "AXSelectedRows")
-        before_count = len(result.get("rows") or [])
+        rows = result["rows"]
+        before_count = len(rows)
+        scroll_rect = MacRect(group_index, 0, group_index + 1, 1)
         try:
             for row in selected_rows:
                 text = _ax_first_text(row)
@@ -170,19 +173,19 @@ def _append_direct_group_outline(
                     group_index + 1,
                     state["order"] + 1,
                 )
-                result["rows"].append(
+                rows.append(
                     MacRow(
                         window=window,
                         text=text,
                         selected=True,
                         rect=synthetic_rect,
-                        scroll_rect=MacRect(group_index, 0, group_index + 1, 1),
+                        scroll_rect=scroll_rect,
                         order=int(state["order"]),
                     )
                 )
         finally:
             _release_ax_refs(selected_rows)
-        return len(result.get("rows") or []) > before_count
+        return len(rows) > before_count
     finally:
         if outline:
             _cf_release(outline)
@@ -324,14 +327,14 @@ def pick_selected_row_fast(
     rows = _walk_fast_outline(window).get("rows") or []
     if not rows:
         return None
-    return sorted(
+    return min(
         rows,
         key=lambda row: (
             row.scroll_rect.left if prefer_leftmost else -row.scroll_rect.left,
             row.rect.top,
             row.order,
         ),
-    )[0]
+    )
 
 
 def center_selected_row_fast(
@@ -350,11 +353,16 @@ def center_selected_row_fast(
 
 def current_outline_context_fast(window: MacWindow) -> Dict[str, str]:
     snapshot = _walk_fast_outline(window)
-    rows = list(snapshot.get("rows") or [])
-    rows.sort(key=lambda row: (row.scroll_rect.left, row.rect.left, row.order))
+    rows = snapshot.get("rows") or []
+
+    def context_key(row: MacRow) -> Tuple[int, int, int]:
+        return row.scroll_rect.left, row.rect.left, row.order
+
+    section_row = min(rows, key=context_key) if rows else None
+    page_row = max(rows, key=context_key) if len(rows) >= 2 else None
     notebook = str(snapshot.get("notebook") or window.window_text() or "").strip()
-    section = rows[0].text if rows else ""
-    page = rows[-1].text if len(rows) >= 2 else ""
+    section = section_row.text if section_row else ""
+    page = page_row.text if page_row else ""
     return {
         "notebook": notebook,
         "section": str(section or "").strip(),
