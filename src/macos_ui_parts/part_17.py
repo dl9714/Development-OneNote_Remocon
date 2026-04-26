@@ -77,6 +77,37 @@ def _current_notebook_from_button(element) -> str:
     return ""
 
 
+def _append_selected_outline_rows(
+    result: Dict[str, Any],
+    window: MacWindow,
+    outline,
+    scroll_rect: Optional[MacRect],
+    state: Dict[str, int],
+) -> bool:
+    selected_rows = _ax_array_attribute(outline, "AXSelectedRows")
+    before_count = len(result.get("rows") or [])
+    try:
+        for row in selected_rows:
+            rect = _ax_rect(row)
+            text = _ax_first_text(row)
+            if not (rect and text):
+                continue
+            state["order"] += 1
+            result["rows"].append(
+                MacRow(
+                    window=window,
+                    text=text,
+                    selected=True,
+                    rect=rect,
+                    scroll_rect=scroll_rect or rect,
+                    order=int(state["order"]),
+                )
+            )
+    finally:
+        _release_ax_refs(selected_rows)
+    return len(result.get("rows") or []) > before_count
+
+
 def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
     result: Dict[str, Any] = {"notebook": "", "rows": []}
     if not (IS_MACOS and _APP_SERVICES and window is not None):
@@ -105,6 +136,14 @@ def _walk_fast_outline(window: MacWindow) -> Dict[str, Any]:
             current_scroll = _ax_rect(element) or scroll_rect
         elif role == "AXButton" and not result["notebook"]:
             result["notebook"] = _current_notebook_from_button(element)
+        elif role == "AXOutline" and _append_selected_outline_rows(
+            result,
+            window,
+            element,
+            current_scroll,
+            state,
+        ):
+            return
         elif role == "AXRow":
             state["order"] += 1
             if _ax_number_attribute(element, "AXSelected"):
