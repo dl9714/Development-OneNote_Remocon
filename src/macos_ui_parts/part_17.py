@@ -149,19 +149,40 @@ def _append_direct_group_outline(
     window: MacWindow,
     group,
     state: Dict[str, int],
+    group_index: int,
 ) -> bool:
     scroll = _ax_child_at(group, 0)
     outline = _ax_child_at(scroll, 0) if scroll else None
     try:
         if not outline:
             return False
-        return _append_selected_outline_rows(
-            result,
-            window,
-            outline,
-            _ax_rect(scroll) if scroll else None,
-            state,
-        )
+        selected_rows = _ax_array_attribute(outline, "AXSelectedRows")
+        before_count = len(result.get("rows") or [])
+        try:
+            for row in selected_rows:
+                text = _ax_first_text(row)
+                if not text:
+                    continue
+                state["order"] += 1
+                synthetic_rect = MacRect(
+                    group_index,
+                    state["order"],
+                    group_index + 1,
+                    state["order"] + 1,
+                )
+                result["rows"].append(
+                    MacRow(
+                        window=window,
+                        text=text,
+                        selected=True,
+                        rect=synthetic_rect,
+                        scroll_rect=MacRect(group_index, 0, group_index + 1, 1),
+                        order=int(state["order"]),
+                    )
+                )
+        finally:
+            _release_ax_refs(selected_rows)
+        return len(result.get("rows") or []) > before_count
     finally:
         if outline:
             _cf_release(outline)
@@ -186,9 +207,9 @@ def _walk_direct_outline(window: MacWindow, cache_key: Tuple[int, int, str]) -> 
             section_group = _ax_child_at(nested_split, 0) if nested_split else None
             page_group = _ax_child_at(nested_split, 2) if nested_split else None
             try:
-                for group in (section_group, page_group):
+                for group_index, group in enumerate((section_group, page_group)):
                     if group is not None:
-                        _append_direct_group_outline(result, window, group, state)
+                        _append_direct_group_outline(result, window, group, state, group_index)
                 if _fast_outline_has_context(result):
                     return result
             finally:
