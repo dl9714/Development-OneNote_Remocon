@@ -263,6 +263,7 @@ class MainWindowMixin43:
         *,
         started_at: Optional[float] = None,
     ):
+        self._last_favorite_activation_at = time.monotonic()
         ensure_pywinauto()
         if not IS_MACOS and not _pwa_ready:
             self.update_status_and_ui(

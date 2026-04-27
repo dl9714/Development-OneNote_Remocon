@@ -313,6 +313,16 @@ class MainWindowMixin29:
         return super().eventFilter(obj, event)
 
     def _start_auto_reconnect(self):
+        if self._reconnect_worker is not None:
+            return
+        if IS_MACOS:
+            if getattr(self, "onenote_window", None) is not None:
+                self.refresh_button.setEnabled(True)
+                return
+            last_activation = float(getattr(self, "_last_favorite_activation_at", 0.0) or 0.0)
+            if last_activation and (time.monotonic() - last_activation) < 2.5:
+                QTimer.singleShot(2500, self._start_auto_reconnect)
+                return
         self.refresh_button.setEnabled(False)
         self._reconnect_worker = ReconnectWorker()
         self._reconnect_worker.finished.connect(self._on_reconnect_done)

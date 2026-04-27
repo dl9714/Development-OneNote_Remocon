@@ -43,12 +43,20 @@ class MainWindowMixin30:
                     self._remember_connection_signature(self.onenote_window)
                 self.update_status_and_ui(f"연결됨: {status}", True)
                 QTimer.singleShot(0, self._cache_tree_control)
+                if IS_MACOS:
+                    self.refresh_button.setEnabled(True)
+                    self._sync_onenote_list_action_buttons()
+                    return
                 self.refresh_onenote_list()
                 return
 
         self.onenote_window = None
         self.tree_control = None
         self.update_status_and_ui(f"상태: {status}", False)
+        if IS_MACOS:
+            self.refresh_button.setEnabled(True)
+            self.connect_selected_list_button.setEnabled(False)
+            return
         self.refresh_onenote_list()
 
     def refresh_onenote_list(self, reset_retry_budget: bool = True):

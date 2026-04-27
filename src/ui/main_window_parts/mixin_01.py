@@ -218,7 +218,7 @@ class MainWindowMixin01:
             # macOS에서 초기 스캔/재연결을 동시에 돌리면 잠깐 앱명만 보이거나 상태가 흔들릴 수 있다.
             has_saved_sig = bool(self.settings.get("connection_signature"))
             if has_saved_sig:
-                reconnect_delay_ms = 400 if IS_MACOS else 0
+                reconnect_delay_ms = 1500 if IS_MACOS else 0
                 QTimer.singleShot(reconnect_delay_ms, self._start_auto_reconnect)
             else:
                 QTimer.singleShot(0, self.refresh_onenote_list)
