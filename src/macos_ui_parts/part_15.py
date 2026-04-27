@@ -83,6 +83,14 @@ def select_open_notebook_by_name(
         except Exception:
             pass
 
+    direct_select = globals().get("_select_open_notebook_by_name_direct")
+    if callable(direct_select) and direct_select(
+        window,
+        wanted_name,
+        wait_for_visible=wait_for_visible,
+    ):
+        return True
+
     if _select_open_notebook_by_name_ax(
         window,
         wanted_name,

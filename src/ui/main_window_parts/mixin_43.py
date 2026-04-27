@@ -195,7 +195,7 @@ class MainWindowMixin43:
 
                 aligned_now = False
                 if (
-                    target_kind == "notebook"
+                    target_kind == "notebook" and not IS_MACOS
                     and expected_center_text
                     and getattr(self, "onenote_window", None) is not None
                 ):
@@ -364,7 +364,7 @@ class MainWindowMixin43:
 
         self._cancel_pending_favorite_activation()
         self._cancel_pending_center_after_activate()
-        if self._try_activate_favorite_fastpath(
+        if not (IS_MACOS and node_type == "notebook") and self._try_activate_favorite_fastpath(
             item,
             sig,
             target,

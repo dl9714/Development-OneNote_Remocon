@@ -84,6 +84,28 @@ class FavoriteActivationWorker(QThread):
                 result["error"] = target_info.get("error") or ""
                 self.done.emit(result)
                 return
+            if IS_MACOS and result["target_kind"] == "notebook":
+                requested_name = (
+                    result["expected_center_text"]
+                    or result["resolved_name"]
+                    or str((self.target or {}).get("notebook_text") or "")
+                    or self.display_name
+                )
+                notebook_result = _mac_ensure_notebook_context_for_section(
+                    win,
+                    requested_name,
+                    wait_for_visible=False,
+                )
+                if not notebook_result.get("ok", True):
+                    result["error"] = notebook_result.get("error") or ""
+                    self.done.emit(result)
+                    return
+                final_name = str(notebook_result.get("name") or requested_name).strip()
+                result["ok"] = True
+                result["resolved_name"] = final_name
+                result["expected_center_text"] = final_name
+                self.done.emit(result)
+                return
             if IS_MACOS and result["target_kind"] == "section":
                 notebook_text = str(
                     target_info.get("expected_notebook_text")
