@@ -77,10 +77,11 @@ def select_open_notebook_by_name(
     wanted_name = _clean_field(notebook_name)
     if not wanted_name:
         return False
-    try:
-        window.set_focus()
-    except Exception:
-        pass
+    if wait_for_visible:
+        try:
+            window.set_focus()
+        except Exception:
+            pass
 
     if _select_open_notebook_by_name_ax(
         window,
@@ -138,10 +139,11 @@ def open_recent_notebook_by_name(
     wanted_name = _clean_field(notebook_name)
     if not wanted_name:
         return False
-    try:
-        window.set_focus()
-    except Exception:
-        pass
+    if wait_for_visible:
+        try:
+            window.set_focus()
+        except Exception:
+            pass
     opened_sidebar = False
     row_count_timeout = 2 if fast else 15
     clear_timeout = 3 if fast else 10

@@ -26,10 +26,11 @@ def _mac_ensure_notebook_context_for_section(
     if not IS_MACOS or not requested_name:
         return result
 
-    try:
-        onenote_window.set_focus()
-    except Exception:
-        pass
+    if wait_for_visible:
+        try:
+            onenote_window.set_focus()
+        except Exception:
+            pass
 
     if _mac_outline_notebook_matches(onenote_window, requested_name):
         result["source"] = "current"

@@ -73,18 +73,19 @@ def _select_open_notebook_by_name_ax(
     if not wanted_key or window is None:
         return False
 
-    try:
-        window.set_focus()
-    except Exception:
+    if wait_for_visible:
         try:
-            subprocess.run(
-                ["/usr/bin/open", "-b", ONENOTE_MAC_BUNDLE_ID],
-                capture_output=True,
-                timeout=3,
-            )
-            time.sleep(0.25)
+            window.set_focus()
         except Exception:
-            pass
+            try:
+                subprocess.run(
+                    ["/usr/bin/open", "-b", ONENOTE_MAC_BUNDLE_ID],
+                    capture_output=True,
+                    timeout=3,
+                )
+                time.sleep(0.25)
+            except Exception:
+                pass
 
     names = _read_open_notebook_names_from_ax(window)
     name_keys = {_normalize_text(name) for name in names}
