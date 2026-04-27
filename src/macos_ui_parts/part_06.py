@@ -326,6 +326,14 @@ def list_current_notebook_targets(window: MacWindow) -> List[Dict[str, str]]:
 def _read_open_notebook_names_from_plist() -> List[str]:
     if not _MAC_ONENOTE_NOTEBOOKS_PLIST.is_file():
         return []
+    fast_reader = globals().get("_read_open_notebook_names_from_plist_fast_xml")
+    if callable(fast_reader):
+        try:
+            fast_names = fast_reader()
+            if fast_names is not None:
+                return fast_names
+        except Exception:
+            pass
     try:
         import plistlib
 

@@ -16,6 +16,85 @@ _QUICK_PLIST_CACHE: Dict[str, Any] = {
 }
 
 
+def _xml_unescape_basic(value: str) -> str:
+    if "&" not in value:
+        return value
+    return (
+        value.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", '"')
+        .replace("&apos;", "'")
+    )
+
+
+def _read_open_notebook_names_from_plist_fast_xml() -> Optional[List[str]]:
+    names: List[str] = []
+    seen = set()
+    dict_depth = 0
+    pending_key = ""
+    current_name = ""
+    current_type: Optional[int] = None
+    in_data = False
+    saw_xml = False
+
+    def _append_name(raw_name: str) -> None:
+        name = _clean_field(str(raw_name or ""))
+        key = _normalize_text(name)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        names.append(name)
+
+    with _MAC_ONENOTE_NOTEBOOKS_PLIST.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore",
+    ) as f:
+        for raw_line in f:
+            if in_data:
+                if "</data>" in raw_line:
+                    in_data = False
+                continue
+            line = raw_line.strip()
+            if line.startswith("<?xml"):
+                saw_xml = True
+            if line == "<data>":
+                in_data = True
+                continue
+            if line == "<dict>":
+                dict_depth += 1
+                if dict_depth == 1:
+                    pending_key = ""
+                    current_name = ""
+                    current_type = None
+                continue
+            if line == "</dict>":
+                if dict_depth == 1 and current_type == 1:
+                    _append_name(current_name)
+                dict_depth = max(0, dict_depth - 1)
+                pending_key = ""
+                continue
+            if dict_depth != 1:
+                continue
+            if line.startswith("<key>") and line.endswith("</key>"):
+                pending_key = line[5:-6]
+                continue
+            if pending_key == "Name":
+                if line.startswith("<string>") and line.endswith("</string>"):
+                    current_name = _xml_unescape_basic(line[8:-9])
+                pending_key = ""
+            elif pending_key == "Type":
+                if line.startswith("<integer>") and line.endswith("</integer>"):
+                    try:
+                        current_type = int(line[9:-10].strip())
+                    except Exception:
+                        current_type = None
+                pending_key = ""
+
+    return names if saw_xml else None
+
+
 def _quick_plist_names(timeout_sec: float) -> Tuple[List[str], bool]:
     try:
         stat = _MAC_ONENOTE_NOTEBOOKS_PLIST.stat()
@@ -23,11 +102,7 @@ def _quick_plist_names(timeout_sec: float) -> Tuple[List[str], bool]:
     except Exception:
         key = None
     now = time.monotonic()
-    if (
-        key is not None
-        and _QUICK_PLIST_CACHE.get("key") == key
-        and now - float(_QUICK_PLIST_CACHE.get("timestamp") or 0.0) <= 2.0
-    ):
+    if key is not None and _QUICK_PLIST_CACHE.get("key") == key:
         return list(_QUICK_PLIST_CACHE.get("names") or []), False
     names = _read_open_notebook_names_from_plist()
     if key is not None:

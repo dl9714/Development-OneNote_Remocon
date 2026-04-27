@@ -291,15 +291,24 @@ def current_open_notebook_names(window: Optional[MacWindow]) -> List[str]:
             current_title = ""
         _append_name(current_title)
 
+    quick_plist_names = globals().get("_quick_plist_names")
+    if callable(quick_plist_names):
+        try:
+            plist_names, _plist_timed_out = quick_plist_names(1.5)
+        except Exception:
+            plist_names = []
+    else:
+        plist_names = _read_open_notebook_names_from_plist_with_timeout(timeout_sec=1.5)
+    if plist_names:
+        for plist_name in plist_names:
+            _append_name(plist_name)
+        if len(names) >= 12:
+            return names
+
     ax_names = _read_open_notebook_names_from_ax(window)
     if ax_names:
         for ax_name in ax_names:
             _append_name(ax_name)
-
-    plist_names = _read_open_notebook_names_from_plist_with_timeout(timeout_sec=1.5)
-    if plist_names:
-        for plist_name in plist_names:
-            _append_name(plist_name)
         if len(names) >= 12:
             return names
 
