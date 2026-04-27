@@ -67,6 +67,25 @@ class FavoritesTree(QTreeWidget):
         self.setAnimated(False)
         self.setExpandsOnDoubleClick(True)
 
+    def _emit_activation_for_item(self, item) -> bool:
+        if item is None:
+            return False
+        if item.data(0, ROLE_TYPE) not in {"section", "notebook"}:
+            return False
+        column = self.currentColumn()
+        self.itemDoubleClicked.emit(item, column if column >= 0 else 0)
+        return True
+
+    def mouseDoubleClickEvent(self, event):
+        try:
+            pos = event.position().toPoint()
+        except Exception:
+            pos = event.pos()
+        if self._emit_activation_for_item(self.itemAt(pos)):
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     def dropEvent(self, event):
         """
         드롭 이벤트를 처리합니다.
@@ -151,6 +170,10 @@ class FavoritesTree(QTreeWidget):
                 self.deleteRequested.emit()
                 event.accept()
                 return
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                if self._emit_activation_for_item(self.currentItem()):
+                    event.accept()
+                    return
         except Exception:
             print("[ERR][TREE][KEY] exception")
             traceback.print_exc()

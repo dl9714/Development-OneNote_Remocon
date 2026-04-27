@@ -13,6 +13,8 @@ _bind_context(globals())
 def _mac_ensure_notebook_context_for_section(
     onenote_window,
     notebook_name: str,
+    *,
+    wait_for_visible: bool = True,
 ) -> Dict[str, Any]:
     requested_name = _strip_stale_favorite_prefix(str(notebook_name or "").strip())
     result = {
@@ -37,10 +39,11 @@ def _mac_ensure_notebook_context_for_section(
         if mac_select_open_notebook_by_name(
             onenote_window,
             requested_name,
-            wait_for_visible=True,
+            wait_for_visible=wait_for_visible,
         ):
             _clear_open_notebook_records_cache()
-            _mac_wait_for_notebook_context(onenote_window, requested_name)
+            if wait_for_visible:
+                _mac_wait_for_notebook_context(onenote_window, requested_name)
             result["source"] = "open_sidebar"
             return result
     except Exception as e:
@@ -52,10 +55,11 @@ def _mac_ensure_notebook_context_for_section(
             if mac_open_recent_notebook_record(
                 onenote_window,
                 record,
-                wait_for_visible=True,
+                wait_for_visible=wait_for_visible,
             ):
                 _clear_open_notebook_records_cache()
-                _mac_wait_for_notebook_context(onenote_window, requested_name)
+                if wait_for_visible:
+                    _mac_wait_for_notebook_context(onenote_window, requested_name)
                 result["source"] = "recent"
                 return result
         except Exception as e:

@@ -87,6 +87,7 @@ class MainWindowMixin29:
                 notebook_result = _mac_ensure_notebook_context_for_section(
                     self.onenote_window,
                     requested_name,
+                    wait_for_visible=False,
                 )
             if not notebook_result.get("ok", True):
                 fail_msg = notebook_result.get("error") or (
@@ -235,10 +236,11 @@ class MainWindowMixin29:
             f"elapsed_ms={(time.perf_counter() - (started_at or time.perf_counter())) * 1000.0:.1f}",
         )
 
-        try:
-            self.onenote_window.set_focus()
-        except Exception:
-            pass
+        if not (IS_MACOS and ok):
+            try:
+                self.onenote_window.set_focus()
+            except Exception:
+                pass
 
         if _activate_macos_notebook_context():
             return True

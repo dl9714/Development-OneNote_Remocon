@@ -316,7 +316,6 @@ class MacWindow:
         )
         script = f'''
 {app_activate}
-delay 0.1
 tell application "System Events"
     tell first application process whose unix id is {self.process_id()}
         try
