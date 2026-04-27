@@ -236,6 +236,16 @@ class MainWindowMixin14:
         *,
         switch_to_codex: bool = False,
     ) -> bool:
+        if not switch_to_codex and not any(
+            getattr(self, attr, None)
+            for attr in (
+                "codex_target_name_input",
+                "codex_request_target_input",
+                "codex_status_summary_preview",
+            )
+        ):
+            return True
+
         profile = self._codex_target_profile_from_fav_item(item)
         if not profile:
             return False

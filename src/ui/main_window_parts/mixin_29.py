@@ -96,7 +96,7 @@ class MainWindowMixin29:
                     fail_msg,
                     self.center_button.isEnabled(),
                 )
-                print(
+                self._dbg_hot(
                     "[DBG][FAV][FASTPATH]",
                     "notebook_context_abort",
                     f"error={fail_msg!r}",
@@ -112,7 +112,7 @@ class MainWindowMixin29:
             self._cache_tree_control()
             self._cancel_pending_center_after_activate()
             self.update_status_and_ui(f"활성화: '{final_name}'", True)
-            print(
+            self._dbg_hot(
                 "[DBG][FAV][FASTPATH]",
                 "mac_notebook_context",
                 f"text={final_name!r}",
@@ -144,7 +144,7 @@ class MainWindowMixin29:
                     fail_msg,
                     self.center_button.isEnabled(),
                 )
-                print(
+                self._dbg_hot(
                     "[DBG][FAV][FASTPATH]",
                     "section_notebook_abort",
                     f"error={fail_msg!r}",
@@ -190,7 +190,7 @@ class MainWindowMixin29:
                         fail_msg,
                         self.center_button.isEnabled(),
                     )
-                    print(
+                    self._dbg_hot(
                         "[DBG][FAV][FASTPATH]",
                         "quick_abort",
                         f"error={fail_msg!r}",
@@ -208,7 +208,7 @@ class MainWindowMixin29:
                     fail_msg,
                     self.center_button.isEnabled(),
                 )
-                print(
+                self._dbg_hot(
                     "[DBG][FAV][FASTPATH]",
                     "resolve_abort",
                     f"error={fail_msg!r}",
@@ -225,7 +225,7 @@ class MainWindowMixin29:
             resolved_notebook_id = target_info.get("resolved_notebook_id") or ""
             resolution_mode = "resolved"
 
-        print(
+        self._dbg_hot(
             "[DBG][FAV][FASTPATH]",
             direct_source,
             f"kind={target_kind}",
@@ -254,7 +254,7 @@ class MainWindowMixin29:
                 ok = _attempt_select(target_kind, expected_text)
 
         if not ok:
-            print(
+            self._dbg_hot(
                 "[DBG][FAV][FASTPATH]",
                 f"{direct_source}_select_failed",
                 f"kind={target_kind}",

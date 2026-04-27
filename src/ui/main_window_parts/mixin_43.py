@@ -245,11 +245,11 @@ class MainWindowMixin43:
                     return
 
                 if ok and selected_name:
-                    print(
+                    self._dbg_hot(
                         f"[DBG][CENTER][DONE] selected='{selected_name}' req={request_seq}"
                     )
                 else:
-                    print(f"[DBG][CENTER][SKIP] req={request_seq}")
+                    self._dbg_hot(f"[DBG][CENTER][SKIP] req={request_seq}")
 
             worker.done.connect(_on_done)
             worker.start()

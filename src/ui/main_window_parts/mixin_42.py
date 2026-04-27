@@ -230,7 +230,7 @@ class MainWindowMixin42:
             return
         started_at = time.perf_counter()
         node_type = item.data(0, ROLE_TYPE)
-        print(f"[DBG][FAV][DBLCLK] type={node_type} text='{item.text(0)}'")
+        self._dbg_hot(f"[DBG][FAV][DBLCLK] type={node_type} text='{item.text(0)}'")
         # ✅ notebook 타입도 더블클릭 동작해야 함
         if node_type not in ("section", "notebook"):
             return
