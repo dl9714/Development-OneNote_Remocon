@@ -83,7 +83,7 @@ class MainWindowMixin30:
     def _on_onenote_list_ready(self, results: List[Dict]):
         self.onenote_windows_info = results
         self.onenote_list_widget.clear()
-        print(f"[DBG][LIST] onenote_windows={len(results)}")
+        self._dbg_hot(f"[DBG][LIST] onenote_windows={len(results)}")
         selection_key = self._pending_onenote_list_selection_key
         self._pending_onenote_list_selection_key = None
 
@@ -95,7 +95,7 @@ class MainWindowMixin30:
                     "실행 중인 OneNote 창을 찾지 못했습니다. 잠시 후 다시 확인합니다..."
                 )
                 self._mac_empty_scan_retry_timer.start(retry_delay_ms)
-                print(
+                self._dbg_hot(
                     "[DBG][LIST][MAC]",
                     f"empty_retry={self._mac_empty_scan_retry_attempts}",
                     f"delay_ms={retry_delay_ms}",
@@ -255,7 +255,7 @@ class MainWindowMixin30:
             self.update_status_and_ui("pywinauto가 준비되지 않았습니다.", False)
             return False
         try:
-            print(
+            self._dbg_hot(
                 "[DBG][CONNECT] try",
                 f"handle={info.get('handle')}",
                 f"pid={info.get('pid')}",
@@ -272,7 +272,7 @@ class MainWindowMixin30:
             save_connection_info(self.onenote_window)
             self._remember_connection_signature(self.onenote_window)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            print(
+            self._dbg_hot(
                 f"[DBG][CONNECT] success title={window_title!r} "
                 f"elapsed_ms={elapsed_ms:.1f} at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
@@ -284,7 +284,7 @@ class MainWindowMixin30:
 
         except ElementNotFoundError:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            print(
+            self._dbg_hot(
                 "[DBG][CONNECT] fail: target not found/visible "
                 f"elapsed_ms={elapsed_ms:.1f} at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
@@ -293,7 +293,7 @@ class MainWindowMixin30:
             return False
         except Exception as e:
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
-            print(
+            self._dbg_hot(
                 f"[DBG][CONNECT] exception elapsed_ms={elapsed_ms:.1f} "
                 f"at_s={(time.perf_counter() - self._t_boot):.3f} err={e}"
             )

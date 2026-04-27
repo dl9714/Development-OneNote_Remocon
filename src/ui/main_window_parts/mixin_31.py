@@ -18,7 +18,7 @@ class MainWindowMixin31:
         )
 
     def _mac_center_window_key(self):
-        info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+        info = getattr(getattr(self, "onenote_window", None), "info", {}) or {}
 
         def _safe_int(value: object) -> int:
             try:
@@ -33,7 +33,7 @@ class MainWindowMixin31:
         )
 
     def _mac_center_title_hint(self) -> str:
-        info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+        info = getattr(getattr(self, "onenote_window", None), "info", {}) or {}
         title = str(info.get("title") or "").strip()
         if title and title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
             return title
@@ -46,7 +46,10 @@ class MainWindowMixin31:
         return ""
 
     def _mac_repeat_center_hit(self, debug_source: str):
-        if not (IS_MACOS and debug_source == "button"):
+        if not (
+            IS_MACOS
+            and debug_source in {"button", "list_dblclick_same_window", "list_dblclick_connect"}
+        ):
             return None
         key = self._mac_center_window_key()
         last = getattr(self, "_last_macos_center_action", None)
@@ -107,7 +110,7 @@ class MainWindowMixin31:
         if info is None and 0 <= row < len(self.onenote_windows_info):
             info = self.onenote_windows_info[row]
 
-        print(
+        self._dbg_hot(
             "[DBG][LIST][ACTIVATE]",
             f"text={item_text!r}",
             f"row={row}",
@@ -124,7 +127,7 @@ class MainWindowMixin31:
             self._last_list_connect_key == connect_key
             and (now - self._last_list_connect_at) < 0.35
         ):
-            print(f"[DBG][LIST][SKIP] duplicate key={connect_key!r}")
+            self._dbg_hot(f"[DBG][LIST][SKIP] duplicate key={connect_key!r}")
             return
         self._last_list_connect_key = connect_key
         self._last_list_connect_at = now
@@ -132,7 +135,7 @@ class MainWindowMixin31:
         current_handle = self._current_onenote_handle()
         target_handle = info.get("handle")
         if current_handle and target_handle and int(target_handle) == current_handle:
-            print(
+            self._dbg_hot(
                 "[DBG][LIST][FASTPATH] already_connected "
                 f"handle={current_handle} elapsed_ms={(time.perf_counter() - started_at) * 1000.0:.1f} "
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
