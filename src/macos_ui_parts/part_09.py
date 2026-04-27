@@ -9,6 +9,21 @@ from src.macos_ui_parts._context import (
 _bind_context(globals())
 
 
+_MAC_RECENT_RECORDS_CACHE_TTL_SEC = 120.0
+_MAC_RECENT_RECORDS_CACHE: Dict[str, Any] = {
+    "sig": None,
+    "timestamp": 0.0,
+    "records": None,
+}
+
+
+def _recent_cache_file_signature() -> Optional[Tuple[int, int]]:
+    try:
+        st = os.stat(_MAC_ONENOTE_RESOURCEINFOCACHE_JSON)
+        return int(st.st_mtime_ns), int(st.st_size)
+    except Exception:
+        return None
+
 
 def _recent_notebook_records_from_cache_with_timeout(
     timeout_sec: float = 0.8,
@@ -17,8 +32,17 @@ def _recent_notebook_records_from_cache_with_timeout(
     if _MAC_RECENT_CACHE_TIMED_OUT:
         return None
 
-    if not _MAC_ONENOTE_RESOURCEINFOCACHE_JSON.is_file():
+    file_sig = _recent_cache_file_signature()
+    if file_sig is None:
+        _MAC_RECENT_RECORDS_CACHE.update(
+            {"sig": None, "timestamp": time.monotonic(), "records": []}
+        )
         return []
+    cached_records = _MAC_RECENT_RECORDS_CACHE.get("records")
+    if _MAC_RECENT_RECORDS_CACHE.get("sig") == file_sig and isinstance(cached_records, list):
+        age = time.monotonic() - float(_MAC_RECENT_RECORDS_CACHE.get("timestamp") or 0.0)
+        if age <= _MAC_RECENT_RECORDS_CACHE_TTL_SEC:
+            return [dict(record) for record in cached_records]
 
     reader_script = r'''
 import json
@@ -114,12 +138,20 @@ print(json.dumps(records, ensure_ascii=False))
             continue
         if not isinstance(data, list):
             return []
-        return [
+        records = [
             dict(record)
             for record in data
             if isinstance(record, dict)
             and str(record.get("name") or "").strip()
         ]
+        _MAC_RECENT_RECORDS_CACHE.update(
+            {
+                "sig": file_sig,
+                "timestamp": time.monotonic(),
+                "records": [dict(record) for record in records],
+            }
+        )
+        return records
 
     if last_error:
         raise MacAutomationError(last_error)

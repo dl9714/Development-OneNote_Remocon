@@ -212,8 +212,6 @@ end replaceText
         ok = _run_osascript(script, timeout=timeout).strip() == "OK"
     except Exception:
         return False
-    if ok:
-        time.sleep(settle_delay)
     return ok
 
 
@@ -297,8 +295,6 @@ end tell
     finally:
         if clipboard_written:
             _write_macos_clipboard_text(previous_clipboard)
-    if ok:
-        time.sleep(settle_delay)
     return ok
 
 _publish_context(globals())
