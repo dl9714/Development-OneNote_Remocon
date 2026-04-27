@@ -294,6 +294,9 @@ def _mac_outline_notebook_matches(onenote_window, notebook_name: str) -> bool:
     expected_key = _normalize_notebook_name_key(notebook_name)
     if not expected_key:
         return False
+    info_title = str(getattr(onenote_window, "info", {}).get("title") or "").strip()
+    if info_title and _normalize_notebook_name_key(info_title) == expected_key:
+        return True
     try:
         context = mac_current_outline_context(onenote_window)
         current_name = str((context or {}).get("notebook") or "").strip()

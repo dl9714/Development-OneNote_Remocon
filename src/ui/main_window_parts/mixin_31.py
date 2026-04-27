@@ -10,6 +10,50 @@ _bind_context(globals())
 
 class MainWindowMixin31:
 
+    def _mac_center_success_message(self, item_name: object) -> str:
+        summary = str(item_name or "").strip()
+        return (
+            "성공: 현재 전자필기장 보기 열기 완료."
+            + (f" {summary}" if summary else "")
+        )
+
+    def _mac_center_window_key(self):
+        info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+
+        def _safe_int(value: object) -> int:
+            try:
+                return int(value or 0)
+            except Exception:
+                return 0
+
+        return (
+            _safe_int(info.get("pid")),
+            _safe_int(info.get("window_number")),
+            str(info.get("title") or ""),
+        )
+
+    def _mac_repeat_center_hit(self, debug_source: str):
+        if not (IS_MACOS and debug_source == "button"):
+            return None
+        key = self._mac_center_window_key()
+        last = getattr(self, "_last_macos_center_action", None)
+        now = time.monotonic()
+        if isinstance(last, tuple) and len(last) == 3:
+            last_key, last_at, last_name = last
+            if key == last_key and (now - float(last_at or 0.0)) <= 0.85:
+                self._last_macos_center_action = (key, now, last_name)
+                return str(last_name or "")
+        return None
+
+    def _remember_macos_center_action(self, item_name: object) -> None:
+        if not IS_MACOS:
+            return
+        self._last_macos_center_action = (
+            self._mac_center_window_key(),
+            time.monotonic(),
+            str(item_name or ""),
+        )
+
     def connect_and_center_from_list_item(self, item):
         started_at = time.perf_counter()
         self._cancel_pending_onenote_list_auto_refresh()
@@ -247,12 +291,26 @@ class MainWindowMixin31:
         elif not self.tree_control and not IS_MACOS:
             self.tree_control = _find_tree_or_list(self.onenote_window)
 
-        success, item_name = scroll_selected_item_to_center(
-            self.onenote_window,
-            self.tree_control,
-            selected_item=preselected_item,
-            expected_text=expected_text,
+        repeat_name = (
+            None
+            if (
+                expected_text
+                or preselected_item is not None
+                or preselected_tree_control is not None
+            )
+            else self._mac_repeat_center_hit(debug_source)
         )
+        if repeat_name is not None:
+            success, item_name = True, repeat_name
+        else:
+            success, item_name = scroll_selected_item_to_center(
+                self.onenote_window,
+                self.tree_control,
+                selected_item=preselected_item,
+                expected_text=expected_text,
+            )
+            if success:
+                self._remember_macos_center_action(item_name)
 
         if success:
             if debug_hot:
@@ -262,14 +320,7 @@ class MainWindowMixin31:
                     f"at_s={(time.perf_counter() - self._t_boot):.3f}"
                 )
             if IS_MACOS:
-                summary = _mac_context_summary_text(
-                    self._mac_selected_outline_context(self.onenote_window),
-                    fallback=str(item_name or ""),
-                )
-                success_message = (
-                    f"성공: 현재 전자필기장 보기 열기 완료."
-                    + (f" {summary}" if summary else "")
-                )
+                success_message = self._mac_center_success_message(item_name)
             else:
                 success_message = f"성공: '{item_name}' 중앙 정렬 완료."
             self.update_status_and_ui(success_message, True)
@@ -289,14 +340,7 @@ class MainWindowMixin31:
                         f"at_s={(time.perf_counter() - self._t_boot):.3f}"
                     )
                 if IS_MACOS:
-                    summary = _mac_context_summary_text(
-                        self._mac_selected_outline_context(self.onenote_window),
-                        fallback=str(item_name or ""),
-                    )
-                    success_message = (
-                        f"성공: 현재 전자필기장 보기 열기 완료."
-                        + (f" {summary}" if summary else "")
-                    )
+                    success_message = self._mac_center_success_message(item_name)
                 else:
                     success_message = f"성공: '{item_name}' 중앙 정렬 완료."
                 self.update_status_and_ui(success_message, True)
