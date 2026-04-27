@@ -48,6 +48,7 @@ class MainWindowMixin30:
                     info = dict(getattr(target, "info", {}) or sig or {})
                     if info:
                         self._on_onenote_list_ready([info])
+                    QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
                     self.refresh_button.setEnabled(True)
                     self._sync_onenote_list_action_buttons()
                     return
@@ -294,6 +295,8 @@ class MainWindowMixin30:
             status_text = f"연결됨: '{window_title}'"
             self.update_status_and_ui(status_text, True)
             self._cache_tree_control()
+            if IS_MACOS:
+                QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
             return True
 
         except ElementNotFoundError:
@@ -313,5 +316,29 @@ class MainWindowMixin30:
             )
             self.update_status_and_ui(f"연결 실패: {e}", False)
             return False
+
+    def _warm_macos_open_notebook_cache(self) -> None:
+        if not IS_MACOS:
+            return
+        info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+        if not info:
+            return
+
+        def _run() -> None:
+            try:
+                mac_current_open_notebook_names_quick(
+                    MacWindow(info),
+                    ax_timeout_sec=0.0,
+                    plist_timeout_sec=0.35,
+                    sidebar_timeout_sec=0.0,
+                    min_names_before_sidebar=1,
+                )
+            except Exception:
+                pass
+
+        try:
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception:
+            pass
 
 _publish_context(globals())

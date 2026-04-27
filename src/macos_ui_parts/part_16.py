@@ -9,6 +9,34 @@ from src.macos_ui_parts._context import (
 _bind_context(globals())
 
 
+_QUICK_PLIST_CACHE: Dict[str, Any] = {
+    "key": None,
+    "timestamp": 0.0,
+    "names": [],
+}
+
+
+def _quick_plist_names(timeout_sec: float) -> Tuple[List[str], bool]:
+    try:
+        stat = _MAC_ONENOTE_NOTEBOOKS_PLIST.stat()
+        key = (int(stat.st_mtime_ns), int(stat.st_size))
+    except Exception:
+        key = None
+    now = time.monotonic()
+    if (
+        key is not None
+        and _QUICK_PLIST_CACHE.get("key") == key
+        and now - float(_QUICK_PLIST_CACHE.get("timestamp") or 0.0) <= 2.0
+    ):
+        return list(_QUICK_PLIST_CACHE.get("names") or []), False
+    names = _read_open_notebook_names_from_plist()
+    if key is not None:
+        _QUICK_PLIST_CACHE.update(
+            {"key": key, "timestamp": now, "names": list(names)}
+        )
+    return list(names), False
+
+
 
 def current_open_notebook_names_quick(
     window: Optional[MacWindow],
@@ -26,6 +54,7 @@ def current_open_notebook_names_quick(
         "ax_error": "",
         "ax_timed_out": False,
         "plist_count": 0,
+        "plist_cached": False,
         "plist_timed_out": False,
         "sidebar_count": 0,
         "sidebar_error": "",
@@ -54,6 +83,23 @@ def current_open_notebook_names_quick(
                 debug["title_count"] = 1
                 break
 
+    plist_cache_before = _QUICK_PLIST_CACHE.get("timestamp")
+    plist_names, plist_timed_out = _quick_plist_names(plist_timeout_sec)
+    debug["plist_timed_out"] = plist_timed_out
+    debug["plist_cached"] = (
+        bool(plist_cache_before)
+        and plist_cache_before == _QUICK_PLIST_CACHE.get("timestamp")
+    )
+    for plist_name in plist_names:
+        _append_name(plist_name)
+    debug["plist_count"] = len(plist_names)
+
+    should_probe_ax = (
+        window is not None
+        and float(ax_timeout_sec or 0.0) > 0.0
+        and len(names) < max(0, int(min_names_before_sidebar))
+    )
+    if should_probe_ax:
         ax_names, ax_error, ax_timed_out = _read_notebook_names_with_timeout(
             lambda: _read_open_notebook_names_from_ax(window),
             ax_timeout_sec,
@@ -63,16 +109,6 @@ def current_open_notebook_names_quick(
         for ax_name in ax_names or []:
             _append_name(ax_name)
         debug["ax_count"] = len(ax_names or [])
-
-    plist_names = _read_open_notebook_names_from_plist_with_timeout(
-        timeout_sec=plist_timeout_sec
-    )
-    if plist_names is None:
-        debug["plist_timed_out"] = True
-        plist_names = []
-    for plist_name in plist_names:
-        _append_name(plist_name)
-    debug["plist_count"] = len(plist_names)
 
     should_probe_sidebar = (
         window is not None
