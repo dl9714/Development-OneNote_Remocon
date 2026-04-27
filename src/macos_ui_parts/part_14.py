@@ -18,6 +18,7 @@ def _press_recent_notebook_open(
 ) -> bool:
     script = _recent_notebook_dialog_locator(window) + f'''
     set wantedText to {_quote_applescript_text(notebook_name)}
+    set wantedCompact to my compactText(wantedText)
     set targetGroup to first UI element of targetWindow whose role is "AXGroup"
     set targetScrollArea to first UI element of targetGroup whose role is "AXScrollArea"
     set targetTable to first UI element of targetScrollArea whose role is "AXTable"
@@ -50,7 +51,8 @@ def _press_recent_notebook_open(
             if selectedState is "true" then
                 set currentIndex to rowIndex
             end if
-            if labelText is wantedText then
+            set labelCompact to my compactText(labelText)
+            if labelText is wantedText or labelCompact is wantedCompact or labelText contains wantedText or wantedText contains labelText then
                 set targetIndex to rowIndex
             end if
         end try
@@ -114,6 +116,13 @@ on cleanText(v)
     set t to my replaceText(linefeed, " ", t)
     return t
 end cleanText
+
+on compactText(v)
+    set t to my cleanText(v)
+    set t to my replaceText(" ", "", t)
+    set t to my replaceText("-", "", t)
+    return t
+end compactText
 
 on replaceText(findText, replaceText, sourceText)
     set AppleScript's text item delimiters to findText

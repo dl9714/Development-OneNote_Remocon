@@ -194,7 +194,8 @@ class OpenAllNotebooksWorkerMacPrepareMixin:
             elif candidate_limited_mode and _mac_record_is_app_only_without_launch_info(
                 record
             ):
-                missing_launch_records.append(record_copy)
+                record_copy["_open_all_name_search"] = True
+                ui_pending_records.append(record_copy)
             else:
                 ui_pending_records.append(record_copy)
         if candidate_limited_mode:

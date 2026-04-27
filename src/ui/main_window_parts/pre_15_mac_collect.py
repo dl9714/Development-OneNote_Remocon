@@ -47,7 +47,7 @@ class OpenAllNotebooksWorkerMacCollectMixin:
         sidebar_error = ""
         accessibility_trusted = macos_accessibility_is_trusted()
 
-        if accessibility_trusted:
+        if accessibility_trusted and not candidate_limited_mode:
             quick_open_snapshot = mac_current_open_notebook_names_quick(
                 win,
                 ax_timeout_sec=2.2,
@@ -86,6 +86,13 @@ class OpenAllNotebooksWorkerMacCollectMixin:
                     "[DBG][OPEN_ALL][MAC]",
                     f"ax-debug={macos_last_ax_notebook_debug()!r}",
                 )
+        elif candidate_limited_mode:
+            open_detect_debug["skipped_candidate_limited"] = True
+            _mac_open_all_debug(
+                "[DBG][OPEN_ALL][MAC]",
+                "open-detected-skip=candidate-limited",
+                f"title-only={initial_notebook_name!r}",
+            )
         else:
             _mac_open_all_debug("[DBG][OPEN_ALL][MAC] accessibility trusted=false")
 

@@ -232,7 +232,7 @@ class MainWindowMixin27:
                 stats["path"] += 1
                 stats["direct"] += 1
             elif IS_MACOS and _mac_record_is_app_only_without_launch_info(record):
-                stats["missing"] += 1
+                stats["ui"] += 1
             else:
                 stats["ui"] += 1
         return stats
@@ -243,8 +243,7 @@ class MainWindowMixin27:
         if IS_MACOS:
             return (
                 f"URL 일괄 {int(stats.get('url') or 0)}개, "
-                f"UI 보조 {int(stats.get('ui') or 0)}개, "
-                f"정보 부족 {int(stats.get('missing') or 0)}개"
+                f"UI/이름 검색 {int(stats.get('ui') or 0)}개"
             )
         return (
             f"바로가기/URL 자동 {int(stats.get('direct') or 0)}개, "

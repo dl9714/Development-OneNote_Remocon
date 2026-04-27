@@ -24,6 +24,158 @@ class OpenAllNotebooksWorkerMacLaunchMixin:
         ui_pending_records = state["ui_pending_records"]
         missing_launch_records = state["missing_launch_records"]
 
+        def _record_prefers_name_search(record: Dict[str, Any]) -> bool:
+            return bool(
+                record.get("_open_all_name_search")
+                or _mac_record_is_app_only_without_launch_info(record)
+            )
+
+        def _try_open_macos_ui_record(record: Dict[str, Any]) -> bool:
+            name = str(record.get("name") or "").strip()
+            if not name:
+                return False
+            if _record_prefers_name_search(record):
+                try:
+                    if mac_open_tab_notebook_by_name(
+                        win,
+                        name,
+                        wait_for_visible=False,
+                        fast=candidate_limited_mode,
+                    ):
+                        _mac_open_all_debug(
+                            "[DBG][OPEN_ALL][MAC]",
+                            "open-tab-name-search",
+                            f"name={name!r}",
+                        )
+                        return True
+                except Exception as e:
+                    _mac_open_all_debug(
+                        "[DBG][OPEN_ALL][MAC]",
+                        "open-tab-name-search-error",
+                        f"name={name!r}",
+                        f"error={e!r}",
+                    )
+                return False
+            try:
+                return bool(
+                    mac_open_recent_notebook_record(
+                        win,
+                        record,
+                        wait_for_visible=False,
+                        fast=candidate_limited_mode,
+                    )
+                )
+            except Exception as e:
+                failed_details.append(f"{name}: {e}")
+                return False
+
+        if ui_pending_records:
+            deduped_ui_records = []
+            seen_ui_keys = set()
+            for record in ui_pending_records:
+                name = str(record.get("name") or "").strip()
+                key = _normalize_notebook_name_key(name)
+                if not key or key in seen_ui_keys:
+                    continue
+                seen_ui_keys.add(key)
+                deduped_ui_records.append(dict(record))
+            ui_pending_records = deduped_ui_records
+
+        def _process_ui_records(records: List[Dict[str, Any]], phase_label: str) -> None:
+            ui_total = len(records)
+            if records:
+                self.progress.emit(
+                    f"{mac_open_action_label} {phase_label} 중... {ui_total}개"
+                )
+
+            for index, record in enumerate(records, start=1):
+                name = str(record.get("name") or "").strip()
+                print(f"[DBG][OPEN_ALL][MAC] try-open-ui {index}/{ui_total}: {name}")
+                _mac_open_all_debug(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"try-open-ui={index}/{ui_total}",
+                    f"name={name!r}",
+                )
+                if self.isInterruptionRequested():
+                    result["error"] = "사용자 중단"
+                    self.done.emit(result)
+                    return
+
+                self.progress.emit(
+                    f"{mac_open_action_label} 진행 중... "
+                    f"{index}/{ui_total} 시도 - {name}"
+                )
+                opened = _try_open_macos_ui_record(record)
+                if not opened and not _record_prefers_name_search(record):
+                    try:
+                        notebook_result = _mac_ensure_notebook_context_for_section(
+                            win,
+                            name,
+                            wait_for_visible=False,
+                        )
+                        opened = bool(notebook_result.get("ok"))
+                        _mac_open_all_debug(
+                            "[DBG][OPEN_ALL][MAC]",
+                            "fallback-context",
+                            f"ok={opened}",
+                            f"source={str(notebook_result.get('source') or '')!r}",
+                            f"name={name!r}",
+                        )
+                    except Exception as e:
+                        _mac_open_all_debug(
+                            "[DBG][OPEN_ALL][MAC]",
+                            "fallback-context-error",
+                            f"name={name!r}",
+                            f"error={e!r}",
+                        )
+                        if not any(detail.startswith(f"{name}:") for detail in failed_details):
+                            failed_details.append(f"{name}: {e}")
+                print(f"[DBG][OPEN_ALL][MAC] launched={opened} name={name}")
+                _mac_open_all_debug(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"launched={opened}",
+                    f"name={name!r}",
+                )
+
+                if not opened:
+                    failed_names.append(name)
+                    failed_records.append(dict(record))
+                    if not any(detail.startswith(f"{name}:") for detail in failed_details):
+                        failed_details.append(f"{name}: 최근 전자필기장 창에서 열기 실패")
+                    continue
+
+                result["opened_names"].append(name)
+                result["opened_count"] += 1
+                self.progress.emit(
+                    f"{mac_open_action_label} 진행 중... "
+                    f"{index}/{ui_total} 요청 완료 - {name}"
+                )
+
+        pre_bulk_ui_records: List[Dict[str, Any]] = []
+        if candidate_limited_mode and bulk_records and ui_pending_records:
+            pre_bulk_ui_records = [
+                record
+                for record in ui_pending_records
+                if _record_prefers_name_search(record)
+            ]
+            if pre_bulk_ui_records:
+                pre_bulk_keys = {
+                    _normalize_notebook_name_key(record.get("name"))
+                    for record in pre_bulk_ui_records
+                }
+                ui_pending_records = [
+                    record
+                    for record in ui_pending_records
+                    if _normalize_notebook_name_key(record.get("name")) not in pre_bulk_keys
+                ]
+                _mac_open_all_debug(
+                    "[DBG][OPEN_ALL][MAC]",
+                    f"pre-bulk-ui-records={len(pre_bulk_ui_records)}",
+                )
+                _process_ui_records(pre_bulk_ui_records, "이름 검색 UI 선행")
+                if result.get("error"):
+                    return
+
         if bulk_records:
             bulk_total = len(bulk_records)
             self.progress.emit(
@@ -61,8 +213,6 @@ class OpenAllNotebooksWorkerMacLaunchMixin:
                         failed_records.append(dict(record))
                         failed_details.append(f"{name}: URL 실행 실패")
 
-                # Avoid overwhelming OneNote/macOS URL dispatch, while still
-                # keeping this path bulk-oriented instead of per-item UI waits.
                 time.sleep(0.08)
 
             self.progress.emit(
@@ -70,92 +220,11 @@ class OpenAllNotebooksWorkerMacLaunchMixin:
                 f" URL {result['opened_count']}개 요청"
             )
             time.sleep(1.5)
-        if ui_pending_records:
-            deduped_ui_records = []
-            seen_ui_keys = set()
-            for record in ui_pending_records:
-                name = str(record.get("name") or "").strip()
-                key = _normalize_notebook_name_key(name)
-                if not key or key in seen_ui_keys:
-                    continue
-                seen_ui_keys.add(key)
-                deduped_ui_records.append(dict(record))
-            ui_pending_records = deduped_ui_records
 
-        ui_total = len(ui_pending_records)
         if ui_pending_records:
-            self.progress.emit(
-                f"{mac_open_action_label} 최근 목록 UI 실행 중... {ui_total}개"
-            )
-
-        for index, record in enumerate(ui_pending_records, start=1):
-            name = str(record.get("name") or "").strip()
-            print(f"[DBG][OPEN_ALL][MAC] try-open-ui {index}/{ui_total}: {name}")
-            _mac_open_all_debug(
-                "[DBG][OPEN_ALL][MAC]",
-                f"try-open-ui={index}/{ui_total}",
-                f"name={name!r}",
-            )
-            if self.isInterruptionRequested():
-                result["error"] = "사용자 중단"
-                self.done.emit(result)
+            _process_ui_records(ui_pending_records, "최근 목록 UI 실행")
+            if result.get("error"):
                 return
-
-            self.progress.emit(
-                f"{mac_open_action_label} 진행 중... {index}/{ui_total} 시도 - {name}"
-            )
-            try:
-                opened = mac_open_recent_notebook_record(
-                    win,
-                    record,
-                    wait_for_visible=False,
-                    fast=candidate_limited_mode,
-                )
-            except Exception as e:
-                opened = False
-                failed_details.append(f"{name}: {e}")
-            if not opened:
-                try:
-                    notebook_result = _mac_ensure_notebook_context_for_section(
-                        win,
-                        name,
-                    )
-                    opened = bool(notebook_result.get("ok"))
-                    _mac_open_all_debug(
-                        "[DBG][OPEN_ALL][MAC]",
-                        "fallback-context",
-                        f"ok={opened}",
-                        f"source={str(notebook_result.get('source') or '')!r}",
-                        f"name={name!r}",
-                    )
-                except Exception as e:
-                    _mac_open_all_debug(
-                        "[DBG][OPEN_ALL][MAC]",
-                        "fallback-context-error",
-                        f"name={name!r}",
-                        f"error={e!r}",
-                    )
-                    if not any(detail.startswith(f"{name}:") for detail in failed_details):
-                        failed_details.append(f"{name}: {e}")
-            print(f"[DBG][OPEN_ALL][MAC] launched={opened} name={name}")
-            _mac_open_all_debug(
-                "[DBG][OPEN_ALL][MAC]",
-                f"launched={opened}",
-                f"name={name!r}",
-            )
-
-            if not opened:
-                failed_names.append(name)
-                failed_records.append(dict(record))
-                if not any(detail.startswith(f"{name}:") for detail in failed_details):
-                    failed_details.append(f"{name}: 최근 전자필기장 창에서 열기 실패")
-                continue
-
-            result["opened_names"].append(name)
-            result["opened_count"] += 1
-            self.progress.emit(
-                f"{mac_open_action_label} 진행 중... {index}/{ui_total} 요청 완료 - {name}"
-            )
 
         if failed_records:
             retry_names = []
@@ -191,21 +260,13 @@ class OpenAllNotebooksWorkerMacLaunchMixin:
                     result["opened_count"] += 1
                     continue
 
-                try:
-                    opened = mac_open_recent_notebook_record(
-                        win,
-                        record,
-                        wait_for_visible=False,
-                        fast=candidate_limited_mode,
-                    )
-                except Exception as e:
-                    opened = False
-                    retry_details.append(f"{name}: {e}")
-                if not opened:
+                opened = _try_open_macos_ui_record(record)
+                if not opened and not _record_prefers_name_search(record):
                     try:
                         notebook_result = _mac_ensure_notebook_context_for_section(
                             win,
                             name,
+                            wait_for_visible=False,
                         )
                         opened = bool(notebook_result.get("ok"))
                         _mac_open_all_debug(

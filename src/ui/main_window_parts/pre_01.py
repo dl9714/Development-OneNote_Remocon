@@ -111,6 +111,9 @@ macos_last_ax_notebook_debug = LazyAttr(
 mac_open_tab_notebook_records = LazyAttr(
     _MACOS_UI_MODULE, "open_tab_notebook_records"
 )
+mac_open_tab_notebook_by_name = LazyAttr(
+    _MACOS_UI_MODULE, "open_tab_notebook_by_name"
+)
 mac_open_recent_notebook_record = LazyAttr(
     _MACOS_UI_MODULE, "open_recent_notebook_record"
 )
