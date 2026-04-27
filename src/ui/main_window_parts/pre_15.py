@@ -266,7 +266,7 @@ class OpenAllNotebooksWorker(
         }
         try:
             ensure_pywinauto()
-            if not _pwa_ready:
+            if not IS_MACOS and not _pwa_ready:
                 result["error"] = "자동화 모듈이 로드되지 않았습니다."
                 self.done.emit(result)
                 return

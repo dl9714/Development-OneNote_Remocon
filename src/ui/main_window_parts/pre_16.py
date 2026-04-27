@@ -26,7 +26,7 @@ class OpenNotebookRecordsWorker(QThread):
         }
         try:
             ensure_pywinauto()
-            if not _pwa_ready:
+            if not IS_MACOS and not _pwa_ready:
                 result["error"] = "자동화 모듈이 로드되지 않았습니다."
                 self.done.emit(result)
                 return
@@ -34,10 +34,10 @@ class OpenNotebookRecordsWorker(QThread):
                 win = MacWindow(dict(self.sig))
                 quick = mac_current_open_notebook_names_quick(
                     win,
-                    ax_timeout_sec=1.2,
+                    ax_timeout_sec=0.8,
                     plist_timeout_sec=0.6,
-                    sidebar_timeout_sec=14.0,
-                    min_names_before_sidebar=48,
+                    sidebar_timeout_sec=1.4,
+                    min_names_before_sidebar=12,
                 )
                 names = [
                     str(name or "").strip()

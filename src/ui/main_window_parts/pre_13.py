@@ -68,7 +68,7 @@ def _score_candidate_dict(c, sig) -> int:
 
 def reacquire_window_by_signature(sig) -> Optional[object]:
     ensure_pywinauto()
-    if not _pwa_ready:
+    if not IS_MACOS and not _pwa_ready:
         return None
     candidates = (
         enumerate_macos_windows_quick(filter_title_substr=None)
@@ -261,7 +261,7 @@ class CenterAfterActivateWorker(QThread):
     def run(self):
         try:
             ensure_pywinauto()
-            if not _pwa_ready:
+            if not IS_MACOS and not _pwa_ready:
                 self.done.emit(False, "")
                 return
 

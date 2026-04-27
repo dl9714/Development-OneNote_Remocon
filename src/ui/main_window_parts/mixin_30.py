@@ -14,6 +14,7 @@ class MainWindowMixin30:
         self._reconnect_worker = None
         status = payload.get("status", "연결되지 않음")
         if payload.get("ok"):
+            self._mac_auto_connect_after_failed_reconnect = False
             ensure_pywinauto()
             sig = payload.get("sig", {})
             if IS_MACOS:
@@ -44,6 +45,9 @@ class MainWindowMixin30:
                 self.update_status_and_ui(f"연결됨: {status}", True)
                 QTimer.singleShot(0, self._cache_tree_control)
                 if IS_MACOS:
+                    info = dict(getattr(target, "info", {}) or sig or {})
+                    if info:
+                        self._on_onenote_list_ready([info])
                     self.refresh_button.setEnabled(True)
                     self._sync_onenote_list_action_buttons()
                     return
@@ -54,8 +58,10 @@ class MainWindowMixin30:
         self.tree_control = None
         self.update_status_and_ui(f"상태: {status}", False)
         if IS_MACOS:
+            self._mac_auto_connect_after_failed_reconnect = True
             self.refresh_button.setEnabled(True)
             self.connect_selected_list_button.setEnabled(False)
+            QTimer.singleShot(0, self.refresh_onenote_list)
             return
         self.refresh_onenote_list()
 
@@ -128,6 +134,14 @@ class MainWindowMixin30:
         self.onenote_list_widget.setEnabled(True)
         self.refresh_button.setEnabled(True)
         self._sync_onenote_list_action_buttons()
+        if (
+            IS_MACOS
+            and getattr(self, "_mac_auto_connect_after_failed_reconnect", False)
+        ):
+            self._mac_auto_connect_after_failed_reconnect = False
+            if not getattr(self, "onenote_window", None) and len(results) == 1:
+                info = dict(results[0])
+                QTimer.singleShot(0, lambda info=info: self._perform_connection(info))
 
     def _retry_onenote_list_after_empty_macos_scan(self):
         if not IS_MACOS:
@@ -251,7 +265,7 @@ class MainWindowMixin30:
     def _perform_connection(self, info: Dict) -> bool:
         t0 = time.perf_counter()
         ensure_pywinauto()
-        if not _pwa_ready:
+        if not IS_MACOS and not _pwa_ready:
             self.update_status_and_ui("pywinauto가 준비되지 않았습니다.", False)
             return False
         try:
