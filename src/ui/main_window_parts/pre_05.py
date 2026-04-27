@@ -12,7 +12,7 @@ _bind_context(globals())
 
 def enum_windows_fast(filter_title_substr=None):
     if IS_MACOS:
-        return enumerate_macos_windows(filter_title_substr=filter_title_substr)
+        return enumerate_macos_windows_quick(filter_title_substr=filter_title_substr)
 
     if isinstance(filter_title_substr, str):
         filters = [filter_title_substr.lower()]

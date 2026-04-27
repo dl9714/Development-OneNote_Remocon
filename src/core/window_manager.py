@@ -25,8 +25,8 @@ from src.constants import (
 )
 from src.macos_ui import (
     MacDesktop,
+    enumerate_macos_windows_quick,
     is_onenote_window_info as is_macos_onenote_window_info,
-    enumerate_macos_windows,
 )
 from src.platform_support import IS_MACOS, IS_WINDOWS, ONENOTE_MAC_BUNDLE_ID
 
@@ -119,7 +119,7 @@ class WindowManager:
         results = []
 
         if not IS_WINDOWS or self._user32 is None or wintypes is None:
-            return enumerate_macos_windows(filter_title_substr=filter_title_substr)
+            return enumerate_macos_windows_quick(filter_title_substr=filter_title_substr)
 
         @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
         def _enum_proc(hwnd, lparam):

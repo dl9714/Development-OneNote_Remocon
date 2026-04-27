@@ -171,51 +171,26 @@ def _hydrate_missing_macos_window_titles(
     if not missing:
         return results
 
-    fallback_results = _enumerate_macos_windows_via_system_events(
-        filter_title_substr=None
-    )
-    fallback_titles: Dict[Tuple[int, str], List[str]] = {}
-    for info in fallback_results:
-        title = _clean_field(str(info.get("title") or ""))
-        if not title:
-            continue
-        pid = int(info.get("pid") or 0)
-        if not pid:
-            continue
-        bundle_id = str(info.get("bundle_id") or "")
-        app_name = str(info.get("app_name") or "")
-        for key in (
-            (pid, bundle_id),
-            (pid, app_name),
-            (pid, ""),
-        ):
-            fallback_titles.setdefault(key, []).append(title)
+    one_note_missing = [
+        info
+        for info in missing
+        if str(info.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID
+        or str(info.get("app_name") or "") in ONENOTE_MAC_APP_NAMES
+    ]
+    if not one_note_missing:
+        return results
 
     notebook_name_cache: Dict[int, str] = {}
-    for info in results:
+    for info in one_note_missing:
         if _clean_field(str(info.get("title") or "")):
             continue
 
         pid = int(info.get("pid") or 0)
-        bundle_id = str(info.get("bundle_id") or "")
-        app_name = str(info.get("app_name") or "")
-
-        matched_titles = (
-            fallback_titles.get((pid, bundle_id))
-            or fallback_titles.get((pid, app_name))
-            or fallback_titles.get((pid, ""))
-            or []
-        )
-        if matched_titles:
-            info["title"] = matched_titles[0]
-            continue
-
-        if bundle_id == ONENOTE_MAC_BUNDLE_ID or app_name in ONENOTE_MAC_APP_NAMES:
-            if pid not in notebook_name_cache:
-                notebook_name_cache[pid] = _read_onenote_current_notebook_name(pid)
-            notebook_name = notebook_name_cache.get(pid) or ""
-            if notebook_name:
-                info["title"] = notebook_name
+        if pid not in notebook_name_cache:
+            notebook_name_cache[pid] = _read_onenote_current_notebook_name(pid)
+        notebook_name = notebook_name_cache.get(pid) or ""
+        if notebook_name:
+            info["title"] = notebook_name
 
     return results
 
