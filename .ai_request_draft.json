@@ -331,10 +331,47 @@
         }
       },
       "ui": {}
+    },
+    "_8fd4f7_3": {
+      "saved_at": 1777170258.5455518,
+      "state": {
+        "single": {
+          "multi_overwrite_1": {
+            "current_file": null
+          },
+          "multi_overwrite_2": {
+            "current_file": null
+          },
+          "multi_overwrite_3": {
+            "current_file": null
+          },
+          "multi_overwrite_4": {
+            "current_file": null
+          },
+          "new": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          },
+          "overwrite": {
+            "current_file": null
+          },
+          "tpl": {
+            "current_file": null,
+            "title": "",
+            "prompt": ""
+          }
+        },
+        "split": {
+          "left": {},
+          "right": {}
+        }
+      },
+      "ui": {}
     }
   },
   "version": 2,
-  "active_buffer": "_default",
-  "saved_at": 1776568186.7480438,
-  "project_key": "c:\\users\\dl971\\development\\project-py\\py-util-development\\development-onenote_remocon"
+  "active_buffer": "_8fd4f7_3",
+  "saved_at": 1777170258.545737,
+  "project_key": "/Users/clean/Develop/project-Py/Development-OneNote_Remocon"
 }

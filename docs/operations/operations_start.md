@@ -1,4 +1,4 @@
-<!-- ops-start-template: v6 -->
+<!-- ops-start-template: v7 -->
 # 업무운영 Start
 
 이 문서는 프로젝트 `DOCS/operations`의 부트스트랩 문서입니다. 앞으로 어떤 AI가 들어오더라도 최소한 이 파일 하나만 먼저 읽으면, 운영업무 체계의 목적과 역할, 각 하위 문서의 의미, 문서 간 이동 규칙, 사용자가 기대하는 자율 운영 방식까지 이해할 수 있어야 합니다.
@@ -72,22 +72,22 @@
 - 아직 실행으로 확정되지 않은 문제를 다루는 공간이다.
 - Todo로 넘기기 전, 여기서 우선순위와 판단 기준을 정리한다.
 
-### operations-plaining/todo.md
+### operations-plaining/todo/todo.md
 - 하기로 확정한 작업 묶음을 관리한다.
 - 후보가 아니라 실제 추진할 일만 올라온다.
 - 각 Todo는 완료 기준과 의존성, 우선순위를 가져야 한다.
 
-### operations-plaining/task.md
+### operations-plaining/task/task.md
 - Todo를 바로 실행 가능한 최소 단위로 쪼갠다.
 - 실제 코딩, 문서 작성, 검증, 운영 작업이 이루어지는 실행층이다.
 - 기대 산출물과 검증 방법이 없는 Task는 미완성 Task로 본다.
 
-### operations-context/backlog.md
+### operations-operations-context/backlog.md
 - 아직 확정하지 않은 후보, 아이디어, 개선안을 담는다.
 - Todo를 오염시키지 않으면서 가치 있는 후보를 보관하는 완충층이다.
 - 나중에 아젠다나 Todo로 승격할 수 있는 재료를 모은다.
 
-### operations-context/status.md
+### operations-operations-context/status.md
 - 현재 결과물과 진척도를 증거 기반으로 기록한다.
 - 무엇이 끝났고 무엇이 비었는지, 어떤 테스트와 운영 근거가 있는지 남긴다.
 - 비전 대비 현재 위치를 판단하는 핵심 근거 문서다.
@@ -96,12 +96,12 @@
 
 1. `operations_start.md`를 읽고 전체 구조와 규칙을 파악한다.
 2. `operations-plaining/vision.md`를 읽고 사용자의 방향과 금지사항을 이해한다.
-3. `operations-context/status.md`를 읽고 실제 결과물, 빈 구간, 진척도를 파악한다.
-4. 필요하면 `operations-context/backlog.md`를 읽어 아직 확정되지 않은 후보를 확인한다.
+3. `operations-operations-context/status.md`를 읽고 실제 결과물, 빈 구간, 진척도를 파악한다.
+4. 필요하면 `operations-operations-context/backlog.md`를 읽어 아직 확정되지 않은 후보를 확인한다.
 5. `operations-plaining/agenda.md`에 지금 중요한 논점을 정리한다.
-6. `operations-plaining/todo.md`에 하기로 확정한 작업 묶음을 올린다.
-7. `operations-plaining/task.md`에서 바로 실행 가능한 최소 단위로 쪼갠다.
-8. 생산 후에는 다시 `operations-context/status.md`에 증거를 남겨 다음 루프에 반영한다.
+6. `operations-plaining/todo/todo.md`에 하기로 확정한 작업 묶음을 올린다.
+7. `operations-plaining/task/task.md`에서 바로 실행 가능한 최소 단위로 쪼갠다.
+8. 생산 후에는 다시 `operations-operations-context/status.md`에 증거를 남겨 다음 루프에 반영한다.
 
 ## 미래 AI를 위한 읽기 규칙
 
