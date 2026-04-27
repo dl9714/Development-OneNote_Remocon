@@ -32,6 +32,19 @@ class MainWindowMixin31:
             str(info.get("title") or ""),
         )
 
+    def _mac_center_title_hint(self) -> str:
+        info = dict(getattr(getattr(self, "onenote_window", None), "info", {}) or {})
+        title = str(info.get("title") or "").strip()
+        if title and title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
+            return title
+        try:
+            title = str(self.onenote_window.window_text() or "").strip()
+        except Exception:
+            title = ""
+        if title and title.casefold() not in MACOS_GENERIC_ONENOTE_TITLES:
+            return title
+        return ""
+
     def _mac_repeat_center_hit(self, debug_source: str):
         if not (IS_MACOS and debug_source == "button"):
             return None
@@ -43,7 +56,8 @@ class MainWindowMixin31:
             if key == last_key and (now - float(last_at or 0.0)) <= 0.85:
                 self._last_macos_center_action = (key, now, last_name)
                 return str(last_name or "")
-        return None
+        title_hint = self._mac_center_title_hint()
+        return title_hint or None
 
     def _remember_macos_center_action(self, item_name: object) -> None:
         if not IS_MACOS:
