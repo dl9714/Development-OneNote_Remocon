@@ -112,6 +112,7 @@ class MainWindowMixin29:
             self._cache_tree_control()
             self._cancel_pending_center_after_activate()
             self.update_status_and_ui(f"활성화: '{final_name}'", True)
+            self._remember_mac_favorite_notebook_hit(item, final_name)
             self._dbg_hot(
                 "[DBG][FAV][FASTPATH]",
                 "mac_notebook_context",

@@ -114,9 +114,13 @@ class MainWindowMixin27:
 
     def update_status_and_ui(self, status_text: str, is_connected: bool):
         status_text = str(status_text or "")
+        is_connected = bool(is_connected)
         status_changed = self.connection_status_label.text() != status_text
         if status_changed:
             self.connection_status_label.setText(status_text)
+        last_connected = getattr(self, "_last_status_is_connected", None)
+        connected_changed = last_connected is None or bool(last_connected) != is_connected
+        self._last_status_is_connected = is_connected
 
         def set_enabled_if_needed(widget) -> bool:
             if widget is None or widget.isEnabled() == is_connected:
@@ -129,7 +133,7 @@ class MainWindowMixin27:
         controls_changed = set_enabled_if_needed(search_input) or controls_changed
         search_button = getattr(self, "search_button", None)
         controls_changed = set_enabled_if_needed(search_button) or controls_changed
-        if status_changed or controls_changed:
+        if connected_changed or controls_changed:
             self._sync_connected_onenote_special_actions(is_connected)
 
     def _sync_connected_onenote_special_actions(self, is_connected: bool) -> None:

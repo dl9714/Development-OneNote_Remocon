@@ -10,6 +10,69 @@ _bind_context(globals())
 
 class MainWindowMixin43:
 
+    def _mac_favorite_notebook_repeat_key(
+        self,
+        item: Optional[QTreeWidgetItem],
+        notebook_name: str = "",
+    ):
+        if not (IS_MACOS and item is not None):
+            return None
+        name = str(notebook_name or "").strip()
+        if not name:
+            try:
+                payload = item.data(0, ROLE_DATA) or {}
+                target = payload.get("target") if isinstance(payload, dict) else {}
+                if isinstance(target, dict):
+                    name = str(target.get("notebook_text") or "").strip()
+            except Exception:
+                name = ""
+        if not name:
+            try:
+                name = str(item.text(0) or "").strip()
+            except Exception:
+                name = ""
+        notebook_key = _normalize_notebook_name_key(_strip_stale_favorite_prefix(name))
+        if not notebook_key:
+            return None
+        window_key = self._mac_center_window_key() if hasattr(self, "_mac_center_window_key") else ()
+        return id(item), window_key, notebook_key
+
+    def _remember_mac_favorite_notebook_hit(
+        self,
+        item: Optional[QTreeWidgetItem],
+        notebook_name: str,
+    ) -> None:
+        key = self._mac_favorite_notebook_repeat_key(item, notebook_name)
+        if key is not None:
+            self._last_macos_fav_notebook_hit = (
+                key,
+                time.monotonic(),
+                str(notebook_name or "").strip(),
+            )
+
+    def _mac_repeat_favorite_notebook_hit(
+        self,
+        item: Optional[QTreeWidgetItem],
+        node_type: str,
+    ) -> bool:
+        if not (IS_MACOS and node_type == "notebook"):
+            return False
+        key = self._mac_favorite_notebook_repeat_key(item)
+        last = getattr(self, "_last_macos_fav_notebook_hit", None)
+        now = time.monotonic()
+        if not (key is not None and isinstance(last, tuple) and len(last) == 3):
+            return False
+        last_key, last_at, last_name = last
+        if key != last_key or (now - float(last_at or 0.0)) > 0.85:
+            return False
+        self._last_macos_fav_notebook_hit = (key, now, last_name)
+        self._last_favorite_activation_at = now
+        final_name = str(last_name or "").strip()
+        status = f"활성화: '{final_name}'" if final_name else ""
+        if status and self.connection_status_label.text() != status:
+            self.update_status_and_ui(status, True)
+        return True
+
     def _sync_favorite_notebook_target(
         self,
         item: Optional[QTreeWidgetItem],

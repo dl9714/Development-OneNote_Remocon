@@ -225,6 +225,29 @@ class MainWindowMixin42:
 
         menu.exec(self.fav_tree.viewport().mapToGlobal(pos))
 
+    def _mac_current_favorite_notebook_name(self, item: Optional[QTreeWidgetItem]) -> str:
+        if not (IS_MACOS and item is not None):
+            return ""
+        key = self._mac_favorite_notebook_repeat_key(item)
+        if key is None:
+            return ""
+        title = self._mac_center_title_hint() if hasattr(self, "_mac_center_title_hint") else ""
+        if not title or _normalize_notebook_name_key(title) != key[2]:
+            return ""
+        try:
+            payload = item.data(0, ROLE_DATA) or {}
+            target = payload.get("target") if isinstance(payload, dict) else {}
+            if isinstance(target, dict):
+                name = str(target.get("notebook_text") or "").strip()
+                if name:
+                    return _strip_stale_favorite_prefix(name)
+        except Exception:
+            pass
+        try:
+            return _strip_stale_favorite_prefix(str(item.text(0) or "").strip())
+        except Exception:
+            return ""
+
     def _on_fav_item_double_clicked(self, item: QTreeWidgetItem, col: int):
         if not item:
             return
@@ -233,6 +256,23 @@ class MainWindowMixin42:
         self._dbg_hot(f"[DBG][FAV][DBLCLK] type={node_type} text='{item.text(0)}'")
         # ✅ notebook 타입도 더블클릭 동작해야 함
         if node_type not in ("section", "notebook"):
+            return
+        if self._mac_repeat_favorite_notebook_hit(item, node_type):
+            return
+        current_name = (
+            self._mac_current_favorite_notebook_name(item)
+            if node_type == "notebook"
+            else ""
+        )
+        if current_name:
+            self._sync_codex_target_from_fav_item(item)
+            self._cancel_pending_favorite_activation()
+            self._cancel_pending_center_after_activate()
+            self._last_favorite_activation_at = time.monotonic()
+            self._remember_mac_favorite_notebook_hit(item, current_name)
+            status = f"활성화: '{current_name}'"
+            if self.connection_status_label.text() != status:
+                self.update_status_and_ui(status, True)
             return
         self._sync_codex_target_from_fav_item(item)
         self._activate_favorite_section(item, started_at=started_at)
