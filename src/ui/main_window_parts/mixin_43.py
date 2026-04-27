@@ -57,14 +57,27 @@ class MainWindowMixin43:
     ) -> bool:
         if not (IS_MACOS and node_type == "notebook"):
             return False
-        key = self._mac_favorite_notebook_repeat_key(item)
         last = getattr(self, "_last_macos_fav_notebook_hit", None)
         now = time.monotonic()
-        if not (key is not None and isinstance(last, tuple) and len(last) == 3):
+        if not (isinstance(last, tuple) and len(last) == 3):
             return False
         last_key, last_at, last_name = last
-        if key != last_key or (now - float(last_at or 0.0)) > 0.85:
+        if (now - float(last_at or 0.0)) > 0.85:
             return False
+
+        window_key = self._mac_center_window_key() if hasattr(self, "_mac_center_window_key") else ()
+        if (
+            isinstance(last_key, tuple)
+            and len(last_key) >= 2
+            and id(item) == last_key[0]
+            and window_key == last_key[1]
+        ):
+            key = last_key
+        else:
+            key = self._mac_favorite_notebook_repeat_key(item)
+            if key != last_key:
+                return False
+
         self._last_macos_fav_notebook_hit = (key, now, last_name)
         self._last_favorite_activation_at = now
         final_name = str(last_name or "").strip()

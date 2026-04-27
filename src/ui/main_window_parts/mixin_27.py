@@ -148,7 +148,7 @@ class MainWindowMixin27:
         open_all_enabled = is_connected
         refresh_enabled = is_connected and not refresh_open_busy
         self._sync_open_all_notebooks_action_label(
-            recalculate=open_all_enabled,
+            recalculate=False,
             busy=open_all_busy,
         )
         if hasattr(self, "open_all_notebooks_action"):

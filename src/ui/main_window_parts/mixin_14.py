@@ -246,21 +246,39 @@ class MainWindowMixin14:
         ):
             return True
 
+        target_input = getattr(self, "codex_request_target_input", None)
+        try:
+            item_text = item.text(0) if item is not None else ""
+        except Exception:
+            item_text = ""
+        if not switch_to_codex:
+            cached = getattr(self, "_last_codex_fav_target_sync", None)
+            if (
+                isinstance(cached, tuple)
+                and len(cached) == 4
+                and cached[0] == id(item)
+                and cached[1] == item_text
+                and (target_input is None or target_input.text() == cached[2])
+                and self._codex_target_from_fields() == cached[3]
+            ):
+                return True
+
         profile = self._codex_target_profile_from_fav_item(item)
         if not profile:
             return False
 
-        target_input = getattr(self, "codex_request_target_input", None)
         target_text = (
             profile.get("path")
             or "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
         )
+        cache_key = (id(item), item_text, target_text, profile)
         request_matches = target_input is None or target_input.text() == target_text
         if (
             not switch_to_codex
             and self._codex_target_from_fields() == profile
             and request_matches
         ):
+            self._last_codex_fav_target_sync = cache_key
             return True
 
         self._populate_codex_target_fields(profile)
@@ -270,6 +288,7 @@ class MainWindowMixin14:
         except Exception:
             pass
 
+        self._last_codex_fav_target_sync = cache_key
         if switch_to_codex:
             self._scroll_codex_to_widget("codex_target_group_widget")
 
