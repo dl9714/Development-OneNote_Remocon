@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+from PyInstaller.utils.hooks import collect_submodules
+
 
 SPEC_PATH = os.path.abspath(
     globals().get("__file__", os.path.join(os.getcwd(), "OneNote_Remocon.spec"))
@@ -50,6 +52,18 @@ settings_path = os.path.join(ROOT, "OneNote_Remocon_Setting.json")
 if os.path.exists(settings_path):
     datas.append((settings_path, "."))
 
+hiddenimports = collect_submodules("src") + [
+    "base64",
+    "copy",
+    "ctypes",
+    "hashlib",
+    "json",
+    "subprocess",
+    "traceback",
+    "unicodedata",
+    "urllib.parse",
+]
+
 exe_icon = None
 if sys.platform.startswith("win") and os.path.exists(WINDOWS_ICON_PATH):
     exe_icon = [WINDOWS_ICON_PATH]
@@ -68,7 +82,7 @@ a = Analysis(
     pathex=[ROOT],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
