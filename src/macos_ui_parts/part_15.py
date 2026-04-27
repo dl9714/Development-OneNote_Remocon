@@ -112,7 +112,6 @@ def select_open_notebook_by_name(
         _activate_selected_notebook_sidebar_row(window)
 
         if not wait_for_visible:
-            _drain_onenote_open_warning_dialogs(window, timeout_sec=0.35, poll_sec=0.1)
             return True
 
         deadline = time.monotonic() + 6.0

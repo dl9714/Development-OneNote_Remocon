@@ -350,7 +350,7 @@ def _ax_press_notebook_sidebar_button(window: Optional[MacWindow]) -> bool:
     try:
         for root in roots[:3]:
             if _visit(root, 0):
-                time.sleep(0.35)
+                time.sleep(0.08)
                 return True
     finally:
         _release_ax_refs(roots)

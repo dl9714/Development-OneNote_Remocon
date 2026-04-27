@@ -9,57 +9,131 @@ from src.macos_ui_parts._context import (
 _bind_context(globals())
 
 
+def _quick_open_notebook_key_set(window: Optional[MacWindow]) -> set:
+    reader = globals().get("current_open_notebook_names_quick")
+    if not callable(reader):
+        return set()
+    try:
+        result = reader(
+            window, ax_timeout_sec=0.0, plist_timeout_sec=0.18,
+            sidebar_timeout_sec=0.0, min_names_before_sidebar=1,
+        )
+    except Exception:
+        return set()
+    return {
+        _normalize_text(name)
+        for name in (result.get("names") if isinstance(result, dict) else []) or []
+        if _normalize_text(name)
+    }
 
-def _ax_click_notebook_sidebar_row(window: Optional[MacWindow], notebook_name: str) -> bool:
+
+def _ax_click_notebook_sidebar_row(
+    window: Optional[MacWindow],
+    notebook_name: str,
+    known_notebook_keys=None,
+) -> bool:
     wanted_key = _normalize_text(notebook_name)
     if not (IS_MACOS and _APP_SERVICES and window is not None and wanted_key):
         return False
+    known_keys = {str(key or "") for key in (known_notebook_keys or set()) if str(key or "")}
 
     roots = _ax_window_roots_for_onenote(window)
     if not roots:
         return False
 
-    def _visit(element: c_void_p, depth: int) -> bool:
-        if not element or depth > 18:
-            return False
+    current_title = _clean_field(str(getattr(window, "info", {}).get("title") or ""))
+    if not current_title:
+        try:
+            current_title = _clean_field(window.window_text())
+        except Exception:
+            current_title = ""
+    current_key = _normalize_text(current_title)
+    best = {"score": -1, "row": None}
+    state = {"nodes": 0, "order": 0}
+    deadline = time.monotonic() + 2.2
+
+    def _maybe_keep_row(row: c_void_p, score: int) -> None:
+        if score <= int(best.get("score") or -1):
+            return
+        retained = _cf_retain(row)
+        if not retained:
+            return
+        old_row = best.get("row")
+        if old_row:
+            _cf_release(old_row)
+        best["score"] = int(score)
+        best["row"] = retained
+
+    def _visit(element: c_void_p, depth: int) -> None:
+        if not element or depth > 18 or state["nodes"] >= 1800 or time.monotonic() > deadline:
+            return
+        state["nodes"] += 1
         role = _ax_text_attribute(element, "AXRole")
         if role == "AXOutline":
+            state["order"] += 1
+            order = int(state["order"])
             rows = _ax_array_attribute(element, "AXRows")
             if not rows:
                 rows = _ax_array_attribute(element, "AXChildren")
             try:
+                names = []
+                matched_row = None
+                exact_match = False
                 for row in rows:
                     name = _ax_row_notebook_name(row)
                     name_key = _normalize_text(name)
                     if not name_key:
                         continue
-                    if name_key == wanted_key or wanted_key in name_key or name_key in wanted_key:
-                        # A double click is more reliable on OneNote's macOS notebook list:
-                        # first click selects the row, second click activates it.
-                        return _ax_click_element_center(
-                            row,
-                            click_count=2,
-                            preferred_x_offset=36.0,
+                    names.append(name_key)
+                    if (
+                        matched_row is None
+                        and (
+                            name_key == wanted_key
+                            or wanted_key in name_key
+                            or name_key in wanted_key
                         )
+                    ):
+                        matched_row = row
+                        exact_match = name_key == wanted_key
+                if matched_row is not None:
+                    keys = set(names)
+                    overlap = len(keys.intersection(known_keys)) if known_keys else 0
+                    plausible = (
+                        current_key in keys
+                        or overlap >= 2
+                        or (not known_keys and len(keys) >= 8)
+                    )
+                    if plausible:
+                        score = min(len(keys), 80) - (order * 3) - depth
+                        score += 300 if current_key and current_key in keys else 0
+                        score += min(overlap, 20) * 15
+                        score += 80 if exact_match else 35
+                        _maybe_keep_row(matched_row, score)
             finally:
                 _release_ax_refs(rows)
 
         children = _ax_array_attribute(element, "AXChildren")
         try:
             for child in children:
-                if _visit(child, depth + 1):
-                    return True
+                _visit(child, depth + 1)
         finally:
             _release_ax_refs(children)
-        return False
 
     try:
         for root in roots[:3]:
-            if _visit(root, 0):
-                return True
+            _visit(root, 0)
     finally:
         _release_ax_refs(roots)
-    return False
+    row = best.get("row")
+    try:
+        if not row:
+            return False
+        # A double click is more reliable on OneNote's macOS notebook list:
+        # first click selects the row, second click activates it.
+        return _ax_click_element_center(row, click_count=2, preferred_x_offset=36.0)
+    finally:
+        if row:
+            _cf_release(row)
 
 
 def _select_open_notebook_by_name_ax(
@@ -87,6 +161,21 @@ def _select_open_notebook_by_name_ax(
             except Exception:
                 pass
 
+    known_keys = _quick_open_notebook_key_set(window)
+    if wanted_key in known_keys and _ax_click_notebook_sidebar_row(
+        window,
+        wanted_name,
+        known_keys,
+    ):
+        if not wait_for_visible:
+            return True
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            if _is_target_notebook_visible(window, wanted_name):
+                return True
+            time.sleep(0.2)
+        return True
+
     names = _read_open_notebook_names_from_ax(window)
     name_keys = {_normalize_text(name) for name in names}
     if wanted_key not in name_keys:
@@ -107,14 +196,13 @@ def _select_open_notebook_by_name_ax(
         )
         return False
 
-    if not _ax_click_notebook_sidebar_row(window, wanted_name):
+    if not _ax_click_notebook_sidebar_row(window, wanted_name, name_keys):
         _append_macos_debug_log(
             f"[AX_SELECT_NOTEBOOK] row_click_failed target={wanted_name!r}"
         )
         return False
 
     if not wait_for_visible:
-        _drain_onenote_open_warning_dialogs(window, timeout_sec=0.35, poll_sec=0.1)
         return True
 
     deadline = time.monotonic() + 4.0
