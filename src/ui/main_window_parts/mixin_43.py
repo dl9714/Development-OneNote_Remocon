@@ -69,11 +69,11 @@ class MainWindowMixin43:
                 target["notebook_id"] = resolved_notebook_id
                 result["changed"] = True
 
-            payload["target"] = target
-            item.setData(0, ROLE_DATA, payload)
             result["display_name"] = clean_name or current_name
 
             if result["changed"]:
+                payload["target"] = target
+                item.setData(0, ROLE_DATA, payload)
                 self._save_favorites()
         except Exception:
             print("[ERR][FAV][SYNC] exception")

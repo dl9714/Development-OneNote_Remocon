@@ -287,7 +287,18 @@ class MainWindowMixin31:
                 f"[DBG][CENTER][START] source={debug_source} "
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
-        if not skip_precheck and not self._pre_action_check():
+        can_use_mac_title_hint = (
+            IS_MACOS
+            and not expected_text
+            and preselected_item is None
+            and preselected_tree_control is None
+        )
+        repeat_name = (
+            None
+            if skip_precheck or not can_use_mac_title_hint
+            else self._mac_repeat_center_hit(debug_source)
+        )
+        if repeat_name is None and not skip_precheck and not self._pre_action_check():
             print(
                 f"[DBG][CENTER][ABORT] source={debug_source} "
                 f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
@@ -305,17 +316,11 @@ class MainWindowMixin31:
         elif not self.tree_control and not IS_MACOS:
             self.tree_control = _find_tree_or_list(self.onenote_window)
 
-        repeat_name = (
-            None
-            if (
-                expected_text
-                or preselected_item is not None
-                or preselected_tree_control is not None
-            )
-            else self._mac_repeat_center_hit(debug_source)
-        )
+        if repeat_name is None and can_use_mac_title_hint:
+            repeat_name = self._mac_repeat_center_hit(debug_source)
         if repeat_name is not None:
             success, item_name = True, repeat_name
+            self._remember_macos_center_action(item_name)
         else:
             success, item_name = scroll_selected_item_to_center(
                 self.onenote_window,

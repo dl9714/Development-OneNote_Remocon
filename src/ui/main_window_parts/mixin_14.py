@@ -240,6 +240,19 @@ class MainWindowMixin14:
         if not profile:
             return False
 
+        target_input = getattr(self, "codex_request_target_input", None)
+        target_text = (
+            profile.get("path")
+            or "생산성도구-임시 메모 > A 미정리-생성 메모 > 미정리"
+        )
+        request_matches = target_input is None or target_input.text() == target_text
+        if (
+            not switch_to_codex
+            and self._codex_target_from_fields() == profile
+            and request_matches
+        ):
+            return True
+
         self._populate_codex_target_fields(profile)
         self._apply_codex_target_to_request()
         try:

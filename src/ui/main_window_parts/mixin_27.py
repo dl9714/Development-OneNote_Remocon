@@ -113,15 +113,24 @@ class MainWindowMixin27:
         super().closeEvent(event)
 
     def update_status_and_ui(self, status_text: str, is_connected: bool):
-        self.connection_status_label.setText(status_text)
-        self.center_button.setEnabled(is_connected)
+        status_text = str(status_text or "")
+        status_changed = self.connection_status_label.text() != status_text
+        if status_changed:
+            self.connection_status_label.setText(status_text)
+
+        def set_enabled_if_needed(widget) -> bool:
+            if widget is None or widget.isEnabled() == is_connected:
+                return False
+            widget.setEnabled(is_connected)
+            return True
+
+        controls_changed = set_enabled_if_needed(self.center_button)
         search_input = getattr(self, "search_input", None)
-        if search_input is not None:
-            search_input.setEnabled(is_connected)
+        controls_changed = set_enabled_if_needed(search_input) or controls_changed
         search_button = getattr(self, "search_button", None)
-        if search_button is not None:
-            search_button.setEnabled(is_connected)
-        self._sync_connected_onenote_special_actions(is_connected)
+        controls_changed = set_enabled_if_needed(search_button) or controls_changed
+        if status_changed or controls_changed:
+            self._sync_connected_onenote_special_actions(is_connected)
 
     def _sync_connected_onenote_special_actions(self, is_connected: bool) -> None:
         open_all_busy = bool(
