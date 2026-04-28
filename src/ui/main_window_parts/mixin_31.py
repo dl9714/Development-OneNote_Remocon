@@ -160,6 +160,13 @@ class MainWindowMixin31:
                 self._perform_connection(info)
 
     def disconnect_and_clear_info(self):
+        try:
+            worker = getattr(self, "_tree_warm_worker", None)
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+        except Exception:
+            pass
+        self._tree_warm_worker = None
         self.onenote_window = None
         self.tree_control = None
         self.update_status_and_ui("연결 해제됨.", False)
@@ -359,6 +366,13 @@ class MainWindowMixin31:
             if worker is not None and worker.isRunning():
                 self.update_status_and_ui("OneNote 위치정렬 진행 중입니다.", True)
                 return True
+        except Exception:
+            pass
+
+        try:
+            warm_worker = getattr(self, "_tree_warm_worker", None)
+            if warm_worker is not None and warm_worker.isRunning():
+                warm_worker.requestInterruption()
         except Exception:
             pass
 

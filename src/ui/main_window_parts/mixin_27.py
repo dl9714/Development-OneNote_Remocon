@@ -53,6 +53,7 @@ class MainWindowMixin27:
         for attr in [
             "_reconnect_worker",
             "_scanner_worker",
+            "_tree_warm_worker",
             "_scan_worker",
             "_window_list_worker",
             "_center_worker",

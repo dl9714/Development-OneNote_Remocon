@@ -310,6 +310,59 @@ class ReconnectWorker(QThread):
         self.finished.emit(payload)
 
 
+class WindowsTreeWarmWorker(QThread):
+    done = pyqtSignal(object)
+
+    def __init__(self, sig: Dict[str, Any], parent=None):
+        super().__init__(parent)
+        self.sig = copy.deepcopy(sig or {})
+        self.cached_tree = None
+        self.selected_name = ""
+
+    def run(self):
+        payload = {"ok": False, "tree": None, "handle": 0, "selected_name": ""}
+        try:
+            ensure_pywinauto()
+            if not IS_WINDOWS or not _pwa_ready or not self.sig:
+                self.done.emit(payload)
+                return
+
+            win = reacquire_window_by_signature(self.sig)
+            if not win or self.isInterruptionRequested():
+                self.done.emit(payload)
+                return
+
+            ensure_windows_onenote_ready_for_tree_lookup(win)
+            if self.isInterruptionRequested():
+                self.done.emit(payload)
+                return
+
+            tree = _find_tree_or_list(win)
+            if not tree or self.isInterruptionRequested():
+                self.done.emit(payload)
+                return
+
+            selected_item = get_selected_tree_item_fast(tree)
+            selected_name = ""
+            if selected_item is not None:
+                try:
+                    selected_name = selected_item.window_text()
+                except Exception:
+                    selected_name = ""
+
+            self.cached_tree = tree
+            self.selected_name = selected_name
+            payload = {
+                "ok": True,
+                "tree": tree,
+                "handle": _window_handle_cache_key(win),
+                "selected_name": selected_name,
+            }
+        except Exception as e:
+            payload = {"ok": False, "tree": None, "handle": 0, "selected_name": "", "error": str(e)}
+        self.done.emit(payload)
+
+
 # ----------------- 3-A. OneNote 창 목록 스캔 워커 -----------------
 class OneNoteWindowScanner(QThread):
     done = pyqtSignal(list)

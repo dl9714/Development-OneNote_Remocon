@@ -53,6 +53,7 @@ class MainWindowMixin30:
                     return
                 info = dict(_window_info_dict(target) or sig or {})
                 self._on_onenote_list_ready([info] if info else [])
+                QTimer.singleShot(50, self._start_windows_tree_warm_worker)
                 return
 
         self.onenote_window = None
@@ -263,6 +264,69 @@ class MainWindowMixin30:
             return
         self.tree_control = _find_tree_or_list(self.onenote_window)
 
+    def _start_windows_tree_warm_worker(self) -> bool:
+        if not IS_WINDOWS or getattr(self, "onenote_window", None) is None:
+            return False
+        if getattr(self, "tree_control", None) is not None:
+            return True
+        try:
+            center_worker = getattr(self, "_center_worker", None)
+            if center_worker is not None and center_worker.isRunning():
+                return False
+        except Exception:
+            pass
+        try:
+            worker = getattr(self, "_tree_warm_worker", None)
+            if worker is not None and worker.isRunning():
+                return True
+        except Exception:
+            pass
+
+        sig = self.settings.get("connection_signature")
+        if not isinstance(sig, dict) or not sig:
+            try:
+                sig = _build_connection_signature_for_save(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+            except Exception:
+                sig = {}
+        if not sig:
+            return False
+
+        expected_handle = self._current_onenote_handle()
+        worker = WindowsTreeWarmWorker(sig, parent=self)
+        self._tree_warm_worker = worker
+        self._retain_qthread_until_finished(worker, "_tree_warm_worker")
+
+        def _on_done(payload) -> None:
+            if getattr(self, "_tree_warm_worker", None) is not worker:
+                return
+            if not isinstance(payload, dict) or not payload.get("ok"):
+                return
+            payload_handle = int(payload.get("handle") or 0)
+            current_handle = self._current_onenote_handle()
+            if not current_handle:
+                return
+            if expected_handle and expected_handle != current_handle:
+                return
+            if payload_handle and current_handle != payload_handle:
+                return
+            tree = payload.get("tree")
+            if tree is not None:
+                self.tree_control = tree
+            self._dbg_hot(
+                "[DBG][TREE_WARM]",
+                f"handle={payload_handle}",
+                f"selected={payload.get('selected_name')!r}",
+            )
+
+        worker.done.connect(_on_done)
+        worker.start()
+        return True
+
     def _perform_connection(self, info: Dict) -> bool:
         t0 = time.perf_counter()
         ensure_pywinauto()
@@ -299,6 +363,7 @@ class MainWindowMixin30:
                 QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
             else:
                 self.tree_control = None
+                QTimer.singleShot(80, self._start_windows_tree_warm_worker)
             return True
 
         except ElementNotFoundError:

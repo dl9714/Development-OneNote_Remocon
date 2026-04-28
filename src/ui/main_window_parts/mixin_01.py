@@ -27,6 +27,7 @@ class MainWindowMixin01:
         self.tree_control = None
         self._reconnect_worker = None
         self._scanner_worker = None
+        self._tree_warm_worker: Optional[WindowsTreeWarmWorker] = None
         self._pending_center_timer: Optional[QTimer] = None
         self._center_worker: Optional[CenterAfterActivateWorker] = None
         self._favorite_activation_worker: Optional[FavoriteActivationWorker] = None
