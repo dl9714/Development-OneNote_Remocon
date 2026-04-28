@@ -297,6 +297,25 @@ def load_settings(cache_object: bool = True) -> Dict[str, Any]:
         return settings
 
 
+_DEBUG_HOTPATHS_FLAG_CACHE = {
+    "expires_at": 0.0,
+    "value": False,
+}
+
+
+def _debug_hotpaths_enabled() -> bool:
+    now = time.monotonic()
+    if now < float(_DEBUG_HOTPATHS_FLAG_CACHE.get("expires_at") or 0.0):
+        return bool(_DEBUG_HOTPATHS_FLAG_CACHE.get("value"))
+    try:
+        value = bool(load_settings(cache_object=True).get("debug_hotpaths", False))
+    except Exception:
+        value = False
+    _DEBUG_HOTPATHS_FLAG_CACHE["value"] = value
+    _DEBUG_HOTPATHS_FLAG_CACHE["expires_at"] = now + 0.5
+    return value
+
+
 def save_settings(data: Dict[str, Any]) -> bool:
     # 설정 파일 경로를 실행 파일 위치 기준으로 가져옴
     settings_path = _get_settings_file_path()

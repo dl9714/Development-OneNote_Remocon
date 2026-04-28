@@ -53,40 +53,42 @@ def scroll_selected_item_to_center(
                     selected_item = candidate_item
                     break
         if not selected_item:
-            print("[DBG][CENTER][TARGET] selected_item=None")
+            if _debug_hotpaths_enabled():
+                print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None
 
         item_name = selected_item.window_text()
-        try:
-            has_focus = bool(selected_item.has_keyboard_focus())
-        except Exception:
-            has_focus = False
-        try:
-            is_selected = bool(selected_item.is_selected())
-        except Exception:
-            is_selected = False
-        depth = _control_depth_within_tree(selected_item, tree_control)
-        rect = _safe_rectangle(selected_item)
-        height = None if rect is None else max(1, rect.bottom - rect.top)
         anchor_element, anchor_source, placement = _resolve_alignment_target_for_selected_item(
             selected_item, tree_control
         )
-        anchor_text = _safe_window_text(anchor_element)
-        anchor_rect = _safe_rectangle(anchor_element)
-        anchor_height = None if anchor_rect is None else max(1, anchor_rect.bottom - anchor_rect.top)
-        print(
-            "[DBG][CENTER][TARGET]",
-            f"text={item_name!r}",
-            f"type={_safe_control_type(selected_item)!r}",
-            f"depth={depth}",
-            f"height={height}",
-            f"placement={placement}",
-            f"anchor_source={anchor_source}",
-            f"anchor_text={anchor_text!r}",
-            f"anchor_height={anchor_height}",
-            f"selected={is_selected}",
-            f"focus={has_focus}",
-        )
+        if _debug_hotpaths_enabled():
+            try:
+                has_focus = bool(selected_item.has_keyboard_focus())
+            except Exception:
+                has_focus = False
+            try:
+                is_selected = bool(selected_item.is_selected())
+            except Exception:
+                is_selected = False
+            depth = _control_depth_within_tree(selected_item, tree_control)
+            rect = _safe_rectangle(selected_item)
+            height = None if rect is None else max(1, rect.bottom - rect.top)
+            anchor_text = _safe_window_text(anchor_element)
+            anchor_rect = _safe_rectangle(anchor_element)
+            anchor_height = None if anchor_rect is None else max(1, anchor_rect.bottom - anchor_rect.top)
+            print(
+                "[DBG][CENTER][TARGET]",
+                f"text={item_name!r}",
+                f"type={_safe_control_type(selected_item)!r}",
+                f"depth={depth}",
+                f"height={height}",
+                f"placement={placement}",
+                f"anchor_source={anchor_source}",
+                f"anchor_text={anchor_text!r}",
+                f"anchor_height={anchor_height}",
+                f"selected={is_selected}",
+                f"focus={has_focus}",
+            )
         _center_element_in_view(
             selected_item,
             tree_control,

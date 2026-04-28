@@ -228,16 +228,18 @@ def _center_element_in_view(
             )
 
         rect_container, rect_item, anchor_rect, offset, anchor_mode = _calc_offset()
-        print(
-            "[DBG][CENTER][GEOM]",
-            f"phase=initial",
-            f"placement={placement}",
-            f"anchor={anchor_mode}",
-            f"offset={offset:.1f}",
-            f"container={rect_container}",
-            f"item={rect_item}",
-            f"anchor_rect={anchor_rect}",
-        )
+        debug_hotpaths = _debug_hotpaths_enabled()
+        if debug_hotpaths:
+            print(
+                "[DBG][CENTER][GEOM]",
+                f"phase=initial",
+                f"placement={placement}",
+                f"anchor={anchor_mode}",
+                f"offset={offset:.1f}",
+                f"container={rect_container}",
+                f"item={rect_item}",
+                f"anchor_rect={anchor_rect}",
+            )
 
         if _is_already_well_placed_in_view(
             rect_container, rect_item, anchor_rect, placement=placement
@@ -285,16 +287,17 @@ def _center_element_in_view(
             ):
                 break
 
-        print(
-            "[DBG][CENTER][GEOM]",
-            f"phase=final",
-            f"placement={placement}",
-            f"anchor={anchor_mode}",
-            f"offset={offset:.1f}",
-            f"container={rect_container}",
-            f"item={rect_item}",
-            f"anchor_rect={anchor_rect}",
-        )
+        if debug_hotpaths:
+            print(
+                "[DBG][CENTER][GEOM]",
+                f"phase=final",
+                f"placement={placement}",
+                f"anchor={anchor_mode}",
+                f"offset={offset:.1f}",
+                f"container={rect_container}",
+                f"item={rect_item}",
+                f"anchor_rect={anchor_rect}",
+            )
 
     except Exception as e:
         print(f"[WARN] 중앙 정렬 중 오류: {e}")
