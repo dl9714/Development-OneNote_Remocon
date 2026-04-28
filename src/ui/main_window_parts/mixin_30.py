@@ -37,11 +37,13 @@ class MainWindowMixin30:
                     except Exception:
                         pass
                 else:
-                    try:
-                        save_connection_info(self.onenote_window)
-                    except Exception:
-                        pass
-                    self._remember_connection_signature(self.onenote_window)
+                    if isinstance(sig, dict) and payload.get("connection_saved"):
+                        self.settings["connection_signature"] = dict(sig)
+                    else:
+                        self._save_and_remember_connection_signature(
+                            self.onenote_window,
+                            sig,
+                        )
                 self.update_status_and_ui(f"연결됨: {status}", True)
                 if IS_MACOS:
                     info = dict(_window_info_dict(target) or sig or {})
@@ -264,6 +266,32 @@ class MainWindowMixin30:
             return
         self.tree_control = _find_tree_or_list(self.onenote_window)
 
+    def _save_and_remember_connection_signature(
+        self,
+        window_element,
+        previous_sig: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        current_sig = (
+            previous_sig
+            if isinstance(previous_sig, dict)
+            else self.settings.get("connection_signature")
+        )
+        current_sig = current_sig if isinstance(current_sig, dict) else None
+        next_sig = _build_connection_signature_for_save(window_element, current_sig)
+        next_sig = _merge_connection_signature(next_sig, current_sig)
+        self.settings["connection_signature"] = next_sig
+        try:
+            current_settings = load_settings()
+            if current_settings.get("connection_signature") != next_sig:
+                current_settings["connection_signature"] = next_sig
+                save_settings(current_settings)
+        except Exception:
+            try:
+                save_connection_info(window_element)
+            except Exception:
+                pass
+        return next_sig
+
     def _start_windows_tree_warm_worker(self) -> bool:
         if not IS_WINDOWS or getattr(self, "onenote_window", None) is None:
             return False
@@ -348,8 +376,7 @@ class MainWindowMixin30:
 
             self.onenote_window = target
             window_title = _preferred_connected_window_title(self.onenote_window, info)
-            save_connection_info(self.onenote_window)
-            self._remember_connection_signature(self.onenote_window)
+            self._save_and_remember_connection_signature(self.onenote_window, info)
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             self._dbg_hot(
                 f"[DBG][CONNECT] success title={window_title!r} "

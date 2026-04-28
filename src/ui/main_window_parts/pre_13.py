@@ -228,7 +228,7 @@ def ensure_windows_onenote_ready_for_tree_lookup(win) -> bool:
 
 
 # ----------------- 12. 저장된 정보로 재연결 -----------------
-def load_connection_info_and_reconnect():
+def load_connection_info_and_reconnect(*, save_on_success: bool = True):
     ensure_pywinauto()
     settings = load_settings()
     sig = settings.get("connection_signature")
@@ -254,10 +254,11 @@ def load_connection_info_and_reconnect():
 
         if win and win_is_ready:
             window_title = _preferred_connected_window_title(win, sig)
-            try:
-                save_connection_info(win)
-            except Exception:
-                pass
+            if save_on_success:
+                try:
+                    save_connection_info(win)
+                except Exception:
+                    pass
             return win, f"(자동 재연결) '{window_title}'"
 
         return None, "(재연결 실패) 이전 앱을 찾을 수 없습니다."
@@ -293,15 +294,24 @@ class ReconnectWorker(QThread):
                 self.finished.emit(payload)
                 return
 
-            win, status = load_connection_info_and_reconnect()
+            settings = load_settings()
+            previous_sig = settings.get("connection_signature")
+            win, status = load_connection_info_and_reconnect(save_on_success=False)
             if win:
+                next_sig = _build_connection_signature_for_save(
+                    win,
+                    previous_sig if isinstance(previous_sig, dict) else None,
+                )
+                next_sig = _merge_connection_signature(next_sig, previous_sig)
+                connection_saved = settings.get("connection_signature") == next_sig
+                if not connection_saved:
+                    settings["connection_signature"] = next_sig
+                    connection_saved = bool(save_settings(settings))
                 payload = {
                     "ok": True,
                     "status": status,
-                    "sig": _build_connection_signature_for_save(
-                        win,
-                        load_settings().get("connection_signature"),
-                    ),
+                    "sig": next_sig,
+                    "connection_saved": connection_saved,
                 }
             else:
                 payload = {"ok": False, "status": status}
