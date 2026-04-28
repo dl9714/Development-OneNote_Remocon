@@ -87,7 +87,7 @@ from PyQt6.QtCore import (
     QByteArray,
 )
 from PyQt6.QtGui import QIcon, QAction, QBrush, QColor, QPixmap, QPainter, QPen
-from src.app_version import APP_BUILD_VERSION, APP_VERSION
+from src.app_version import APP_BUILD_VERSION, APP_TITLE_VERSION, APP_VERSION
 _MACOS_UI_MODULE = "src.macos_ui"
 MacAutomationError = lazy_class(_MACOS_UI_MODULE, "MacAutomationError", Exception)
 MacDesktop = lazy_class(_MACOS_UI_MODULE, "MacDesktop")
@@ -298,7 +298,10 @@ def _center_target_ui_name() -> str:
 
 
 def _main_window_title() -> str:
-    return "OneNote 빠른 이동" if IS_MACOS else "OneNote 전자필기장 위치정렬"
+    title = "OneNote 빠른 이동" if IS_MACOS else "OneNote 전자필기장 위치정렬"
+    if IS_WINDOWS:
+        return f"{title} {APP_TITLE_VERSION}"
+    return title
 
 
 def _remocon_workspace_tab_title() -> str:

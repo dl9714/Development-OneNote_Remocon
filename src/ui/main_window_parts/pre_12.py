@@ -37,6 +37,20 @@ def scroll_selected_item_to_center(
             return False, None
 
         selected_item = selected_item or get_selected_tree_item_fast(tree_control)
+        if not selected_item and IS_WINDOWS:
+            current_tree_key = _wrapper_identity_key(tree_control)
+            fallback_types = ("Tree", "List") if expected_text else ("Tree",)
+            for candidate_tree in _iter_tree_or_list_controls(
+                onenote_window,
+                control_types=fallback_types,
+            ):
+                if _wrapper_identity_key(candidate_tree) == current_tree_key:
+                    continue
+                candidate_item = get_selected_tree_item_fast(candidate_tree)
+                if candidate_item:
+                    tree_control = candidate_tree
+                    selected_item = candidate_item
+                    break
         if not selected_item:
             print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None
@@ -86,15 +100,30 @@ def scroll_selected_item_to_center(
 
 
 # ----------------- 11. 연결 시그니처 저장/스코어 기반 재획득 -----------------
+def _window_info_dict(win) -> Dict[str, Any]:
+    if win is None:
+        return {}
+    try:
+        info = object.__getattribute__(win, "info")
+        if isinstance(info, dict):
+            return info
+    except Exception:
+        pass
+    if IS_MACOS:
+        try:
+            info = getattr(win, "info", {}) or {}
+            if isinstance(info, dict):
+                return info
+        except Exception:
+            pass
+    return {}
+
+
 def _preferred_connected_window_title(
     win,
     fallback_sig: Optional[Dict[str, Any]] = None,
 ) -> str:
-    info: Dict[str, Any] = {}
-    try:
-        info = getattr(win, "info", {}) or {}
-    except Exception:
-        info = {}
+    info = _window_info_dict(win)
 
     def _clean(value: Any) -> str:
         return str(value or "").strip()
@@ -181,11 +210,7 @@ def _preferred_connected_window_title_quick(
     win,
     fallback_sig: Optional[Dict[str, Any]] = None,
 ) -> str:
-    info: Dict[str, Any] = {}
-    try:
-        info = getattr(win, "info", {}) or {}
-    except Exception:
-        info = {}
+    info = _window_info_dict(win)
 
     for source in (info, fallback_sig or {}):
         if not isinstance(source, dict):
@@ -220,7 +245,7 @@ def _resolve_macos_primary_notebook_window(
     if not IS_MACOS or win is None:
         return win if isinstance(win, MacWindow) else None
 
-    current_info = dict(getattr(win, "info", {}) or {})
+    current_info = dict(_window_info_dict(win))
     current_title = _preferred_connected_window_title_quick(win, fallback_sig)
     if current_title and not _is_macos_recent_notebooks_dialog_title(current_title):
         return win if isinstance(win, MacWindow) else MacWindow(current_info or dict(fallback_sig or {}))
@@ -261,36 +286,46 @@ def build_window_signature_quick(
     win,
     fallback_sig: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    try:
-        info = getattr(win, "info", {}) or {}
-    except Exception:
-        info = {}
+    info = _window_info_dict(win)
 
-    try:
-        pid = int(info.get("pid") or win.process_id() or 0) or None
-    except Exception:
-        pid = None
-
-    try:
-        bundle_id = str(info.get("bundle_id") or win.bundle_id() or "").strip()
-    except Exception:
-        bundle_id = str(info.get("bundle_id") or "").strip()
-
-    try:
-        cls_name = str(
-            info.get("class_name") or win.class_name() or info.get("app_name") or ""
-        ).strip()
-    except Exception:
-        cls_name = str(info.get("class_name") or info.get("app_name") or "").strip()
-
-    try:
-        handle = int(info.get("handle") or win.handle or 0) or None
-    except Exception:
-        handle = int(info.get("handle") or 0) or None
-    try:
-        window_number = int(info.get("window_number") or 0) or None
-    except Exception:
-        window_number = int(info.get("window_number") or 0) or None
+    if IS_WINDOWS:
+        try:
+            pid = int(win.process_id() or 0) or None
+        except Exception:
+            pid = int(info.get("pid") or 0) or None
+        try:
+            cls_name = str(win.class_name() or "").strip()
+        except Exception:
+            cls_name = str(info.get("class_name") or "").strip()
+        try:
+            handle = int(win.handle or 0) or None
+        except Exception:
+            handle = int(info.get("handle") or 0) or None
+        bundle_id = ""
+        window_number = None
+    else:
+        try:
+            pid = int(info.get("pid") or win.process_id() or 0) or None
+        except Exception:
+            pid = None
+        try:
+            bundle_id = str(info.get("bundle_id") or win.bundle_id() or "").strip()
+        except Exception:
+            bundle_id = str(info.get("bundle_id") or "").strip()
+        try:
+            cls_name = str(
+                info.get("class_name") or win.class_name() or info.get("app_name") or ""
+            ).strip()
+        except Exception:
+            cls_name = str(info.get("class_name") or info.get("app_name") or "").strip()
+        try:
+            handle = int(info.get("handle") or win.handle or 0) or None
+        except Exception:
+            handle = int(info.get("handle") or 0) or None
+        try:
+            window_number = int(info.get("window_number") or 0) or None
+        except Exception:
+            window_number = int(info.get("window_number") or 0) or None
 
     exe_name = os.path.basename(bundle_id or cls_name or "").lower()
     title = _preferred_connected_window_title_quick(win, fallback_sig)
@@ -327,7 +362,7 @@ def build_window_signature(win) -> dict:
     except Exception:
         handle = None
     try:
-        window_number = int(getattr(win, "info", {}).get("window_number") or 0) or None
+        window_number = int(_window_info_dict(win).get("window_number") or 0) or None
     except Exception:
         window_number = None
     title = _preferred_connected_window_title(win)
@@ -348,11 +383,35 @@ def build_window_signature(win) -> dict:
     }
 
 
+def _build_connection_signature_for_save(
+    window_element,
+    previous_sig: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    if not IS_WINDOWS:
+        return build_window_signature(window_element)
+    info = build_window_signature_quick(window_element, previous_sig)
+    if isinstance(previous_sig, dict):
+        if previous_sig.get("exe_path"):
+            info["exe_path"] = previous_sig.get("exe_path")
+        previous_exe_name = str(previous_sig.get("exe_name") or "").strip()
+        current_exe_name = str(info.get("exe_name") or "").strip()
+        class_name = str(info.get("class_name") or "").strip()
+        if previous_exe_name and (
+            not current_exe_name
+            or current_exe_name.casefold() == class_name.casefold()
+        ):
+            info["exe_name"] = previous_exe_name
+    return info
+
+
 def save_connection_info(window_element):
     try:
-        info = build_window_signature(window_element)
         current_settings = load_settings()
         current_sig = current_settings.get("connection_signature")
+        info = _build_connection_signature_for_save(
+            window_element,
+            current_sig if isinstance(current_sig, dict) else None,
+        )
         info = _merge_connection_signature(info, current_sig)
         if current_settings.get("connection_signature") == info:
             return

@@ -118,6 +118,10 @@ class MainWindowMixin26:
             lambda: self._register_all_notebooks_from_current_onenote(force=True)
         )
         self.refresh_open_notebooks_action.setEnabled(False)
+        if IS_WINDOWS:
+            self.refresh_open_notebooks_action.setStatusTip(
+                "Windows OneNote의 현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 열림 체크에 반영합니다."
+            )
         special_menu.addAction(self.refresh_open_notebooks_action)
 
         help_menu = menubar.addMenu("&도움말")
@@ -195,7 +199,6 @@ class MainWindowMixin26:
             COLOR_STATUS_BAR,
             search_hint_font_pt,
         )
-
         self._restore_initial_splitter_states()
 
         # 초기 상태 업데이트

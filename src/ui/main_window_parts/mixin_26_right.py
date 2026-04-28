@@ -32,6 +32,18 @@ class MainWindowInitRightMixin:
         COLOR_STATUS_BAR,
         search_hint_font_pt,
     ) -> None:
+        def _make_right_button_compact(button, *, min_width: int = 44) -> None:
+            if not IS_WINDOWS:
+                return
+            try:
+                button.setMinimumWidth(min_width)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Fixed,
+                )
+            except Exception:
+                pass
+
         # 3. 오른쪽 패널: 위치정렬/코덱스 탭만 교체되고 1, 2패널은 고정된다.
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -40,19 +52,36 @@ class MainWindowInitRightMixin:
 
         connection_group = QGroupBox(_connection_group_title())
         connection_layout = QVBoxLayout(connection_group)
+        if IS_WINDOWS:
+            connection_layout.setContentsMargins(6, 8, 6, 6)
+            connection_layout.setSpacing(5)
 
         list_header_layout = QHBoxLayout()
-        list_header_layout.addWidget(
-            QLabel(_onenote_list_hint_text()),
-            alignment=Qt.AlignmentFlag.AlignLeft,
+        if IS_WINDOWS:
+            list_header_layout.setSpacing(4)
+        list_hint_label = QLabel(
+            "더블클릭/Enter 연결" if IS_WINDOWS else _onenote_list_hint_text()
         )
+        if IS_WINDOWS:
+            list_hint_label.setMinimumWidth(0)
+            list_hint_label.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Fixed,
+            )
+        list_header_layout.addWidget(list_hint_label, alignment=Qt.AlignmentFlag.AlignLeft)
         list_header_layout.addStretch()
 
         self.refresh_button = QPushButton(" 새로고침")
+        if IS_WINDOWS:
+            self.refresh_button.setText("새로고침")
+            _make_right_button_compact(self.refresh_button, min_width=64)
         self.refresh_button.clicked.connect(self.refresh_onenote_list)
         list_header_layout.addWidget(self.refresh_button)
 
         self.connect_selected_list_button = QPushButton("선택 연결")
+        if IS_WINDOWS:
+            self.connect_selected_list_button.setText("연결")
+            _make_right_button_compact(self.connect_selected_list_button, min_width=44)
         self.connect_selected_list_button.clicked.connect(
             self._connect_selected_onenote_list_item
         )
@@ -102,13 +131,18 @@ class MainWindowInitRightMixin:
         self.center_button.setEnabled(False)
         actions_layout.addWidget(self.center_button)
 
-        if IS_MACOS:
-            mac_bulk_actions_layout = QHBoxLayout()
+        if IS_WINDOWS or IS_MACOS:
+            mac_bulk_actions_layout = QVBoxLayout() if IS_WINDOWS else QHBoxLayout()
+            if IS_WINDOWS:
+                mac_bulk_actions_layout.setSpacing(5)
 
             self.open_all_notebooks_button = QPushButton(
                 _open_unchecked_notebooks_button_label()
             )
             self.open_all_notebooks_button.setToolTip(_open_unchecked_notebooks_tip())
+            if IS_WINDOWS:
+                self.open_all_notebooks_button.setText("미체크 열기")
+                _make_right_button_compact(self.open_all_notebooks_button, min_width=86)
             self.open_all_notebooks_button.clicked.connect(
                 self._open_all_notebooks_from_connected_onenote
             )
@@ -123,16 +157,30 @@ class MainWindowInitRightMixin:
                 lambda: self._register_all_notebooks_from_current_onenote(force=True)
             )
             self.refresh_open_notebooks_button.setEnabled(False)
+            if IS_WINDOWS:
+                self.refresh_open_notebooks_button.setText("열림 새로고침")
+                _make_right_button_compact(self.refresh_open_notebooks_button, min_width=96)
+                self.refresh_open_notebooks_button.setToolTip(
+                    "Windows OneNote의 현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 열림 체크에 반영합니다."
+                )
             mac_bulk_actions_layout.addWidget(self.refresh_open_notebooks_button)
 
             actions_layout.addLayout(mac_bulk_actions_layout)
 
         other_buttons_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            other_buttons_layout.setSpacing(4)
         connect_other_button = QPushButton("다른 앱에 연결...")
+        if IS_WINDOWS:
+            connect_other_button.setText("다른 앱")
+            _make_right_button_compact(connect_other_button, min_width=58)
         connect_other_button.clicked.connect(self.select_other_window)
         other_buttons_layout.addWidget(connect_other_button)
 
         disconnect_button = QPushButton("연결 해제")
+        if IS_WINDOWS:
+            disconnect_button.setText("해제")
+            _make_right_button_compact(disconnect_button, min_width=44)
         disconnect_button.clicked.connect(self.disconnect_and_clear_info)
         other_buttons_layout.addWidget(disconnect_button)
         actions_layout.addLayout(other_buttons_layout)
@@ -156,6 +204,9 @@ class MainWindowInitRightMixin:
         )
         self.btn_module_project_search_clear = QToolButton()
         self.btn_module_project_search_clear.setText("검색 지우기")
+        if IS_WINDOWS:
+            self.btn_module_project_search_clear.setText("지우기")
+            _make_right_button_compact(self.btn_module_project_search_clear, min_width=52)
         self.btn_module_project_search_clear.clicked.connect(
             self.module_project_search_input.clear
         )

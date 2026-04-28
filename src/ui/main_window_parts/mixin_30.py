@@ -45,7 +45,7 @@ class MainWindowMixin30:
                 self.update_status_and_ui(f"연결됨: {status}", True)
                 QTimer.singleShot(0, self._cache_tree_control)
                 if IS_MACOS:
-                    info = dict(getattr(target, "info", {}) or sig or {})
+                    info = dict(_window_info_dict(target) or sig or {})
                     if info:
                         self._on_onenote_list_ready([info])
                     QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
@@ -154,7 +154,10 @@ class MainWindowMixin30:
     def _remember_connection_signature(self, window_element) -> None:
         try:
             current_sig = self.settings.get("connection_signature")
-            next_sig = build_window_signature(window_element)
+            next_sig = _build_connection_signature_for_save(
+                window_element,
+                current_sig if isinstance(current_sig, dict) else None,
+            )
             self.settings["connection_signature"] = _merge_connection_signature(
                 next_sig,
                 current_sig if isinstance(current_sig, dict) else None,

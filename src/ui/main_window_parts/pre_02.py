@@ -81,6 +81,8 @@ def _project_search_status_text(
 def _primary_restore_button_text() -> str:
     if IS_MACOS:
         return "현재 전자필기장 보기"
+    if IS_WINDOWS:
+        return "선택 위치정렬"
     return f"현재 선택된 {_center_target_ui_name()} 중앙으로 정렬"
 
 

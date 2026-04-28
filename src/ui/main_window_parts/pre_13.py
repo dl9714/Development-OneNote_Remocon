@@ -66,16 +66,74 @@ def _score_candidate_dict(c, sig) -> int:
         return -1
 
 
+def _signature_looks_like_windows_onenote(sig: Optional[Dict[str, Any]]) -> bool:
+    if not IS_WINDOWS or not isinstance(sig, dict):
+        return False
+    title = str(sig.get("title") or "").casefold()
+    class_name = str(sig.get("class_name") or "").casefold()
+    exe_name = str(sig.get("exe_name") or "").casefold()
+    return (
+        "onenote" in title
+        or "원노트" in title
+        or "onenote" in exe_name
+        or "onenoteim" in exe_name
+        or "omain" in class_name
+    )
+
+
+def _window_info_from_wrapper(win) -> Dict[str, Any]:
+    try:
+        handle = int(getattr(win, "handle", 0) or 0)
+    except Exception:
+        handle = 0
+    try:
+        title = win.window_text() or ""
+    except Exception:
+        title = ""
+    try:
+        class_name = win.class_name() or ""
+    except Exception:
+        class_name = ""
+    try:
+        pid = win.process_id()
+    except Exception:
+        pid = 0
+    return {
+        "handle": handle,
+        "title": title,
+        "class_name": class_name,
+        "pid": pid,
+    }
+
+
 def reacquire_window_by_signature(sig) -> Optional[object]:
     ensure_pywinauto()
     if not IS_MACOS and not _pwa_ready:
         return None
+    h = sig.get("handle")
+    if IS_WINDOWS and h:
+        try:
+            w = Desktop(backend="uia").window(handle=h)
+            if w.is_visible():
+                if _signature_looks_like_windows_onenote(sig):
+                    info = _window_info_from_wrapper(w)
+                    if not is_strict_onenote_window(info, os.getpid()):
+                        return None
+                return w
+        except Exception:
+            pass
+
     candidates = (
         enumerate_macos_windows_quick(filter_title_substr=None)
         if IS_MACOS
         else enum_windows_fast(filter_title_substr=None)
     )
-    h = sig.get("handle")
+    if IS_WINDOWS and _signature_looks_like_windows_onenote(sig):
+        candidates = [
+            c
+            for c in candidates
+            if is_strict_onenote_window(c, os.getpid())
+        ]
     if IS_MACOS:
         exact = None
         if h:
@@ -85,14 +143,6 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
                     break
         if exact:
             return MacWindow(dict(exact))
-    elif h:
-        try:
-            w = Desktop(backend="uia").window(handle=h)
-            if w.is_visible():
-                return w
-        except Exception:
-            pass
-
     best, best_score = None, -1
     for c in candidates:
         s = _score_candidate_dict(c, sig)
@@ -126,6 +176,10 @@ def resolve_window_target(sig: Dict[str, Any]) -> Optional[object]:
         try:
             target = Desktop(backend="uia").window(handle=handle)
             if target.is_visible():
+                if _signature_looks_like_windows_onenote(sig):
+                    info = _window_info_from_wrapper(target)
+                    if not is_strict_onenote_window(info, os.getpid()):
+                        raise ElementNotFoundError
                 return target
         except Exception:
             pass
@@ -172,7 +226,7 @@ class ReconnectWorker(QThread):
                         "ok": True,
                         "status": f"(자동 재연결) '{title}'",
                         "sig": next_sig,
-                        "target_info": dict(getattr(win, "info", {}) or next_sig),
+                        "target_info": dict(_window_info_dict(win) or next_sig),
                     }
                 else:
                     payload = {
@@ -187,7 +241,10 @@ class ReconnectWorker(QThread):
                 payload = {
                     "ok": True,
                     "status": status,
-                    "sig": build_window_signature(win),
+                    "sig": _build_connection_signature_for_save(
+                        win,
+                        load_settings().get("connection_signature"),
+                    ),
                 }
             else:
                 payload = {"ok": False, "status": status}
