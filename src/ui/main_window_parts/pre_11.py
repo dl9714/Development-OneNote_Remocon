@@ -153,6 +153,18 @@ def _center_element_in_view(
     if not _pwa_ready:
         return
     try:
+        if IS_WINDOWS:
+            rect_container = _safe_rectangle(scroll_container)
+            rect_item = _safe_rectangle(element_to_center)
+            rect_anchor = _safe_rectangle(anchor_element) if anchor_element else None
+            if _is_already_well_placed_in_view(
+                rect_container,
+                rect_item,
+                rect_anchor,
+                placement=placement,
+            ):
+                return
+
         try:
             element_to_center.iface_scroll_item.ScrollIntoView()
         except AttributeError:
