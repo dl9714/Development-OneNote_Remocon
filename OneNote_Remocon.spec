@@ -52,6 +52,10 @@ settings_path = os.path.join(ROOT, "OneNote_Remocon_Setting.json")
 if os.path.exists(settings_path):
     datas.append((settings_path, "."))
 
+src_docs_path = os.path.join(ROOT, "src", "docs")
+if os.path.exists(src_docs_path):
+    datas.append((src_docs_path, os.path.join("src", "docs")))
+
 hiddenimports = collect_submodules("src") + [
     "base64",
     "copy",
