@@ -37,6 +37,20 @@ def scroll_selected_item_to_center(
             return False, None
 
         selected_item = selected_item or get_selected_tree_item_fast(tree_control)
+        if not selected_item and IS_WINDOWS:
+            current_tree_key = _wrapper_identity_key(tree_control)
+            fallback_types = ("Tree", "List") if expected_text else ("Tree",)
+            for candidate_tree in _iter_tree_or_list_controls(
+                onenote_window,
+                control_types=fallback_types,
+            ):
+                if _wrapper_identity_key(candidate_tree) == current_tree_key:
+                    continue
+                candidate_item = get_selected_tree_item_fast(candidate_tree)
+                if candidate_item:
+                    tree_control = candidate_tree
+                    selected_item = candidate_item
+                    break
         if not selected_item:
             print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None

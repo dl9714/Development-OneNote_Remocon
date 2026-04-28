@@ -92,17 +92,127 @@ def get_selected_tree_item_fast(tree_control):
 
 
 # ----------------- 8. 페이지/섹션 컨테이너(Tree/List) 찾기 - ensure 호출 -----------------
+def _iter_tree_or_list_controls(onenote_window, control_types=("Tree", "List")):
+    ensure_pywinauto()
+    if not IS_MACOS and not _pwa_ready:
+        return
+    if not IS_WINDOWS:
+        for ctype in control_types:
+            try:
+                yield onenote_window.child_window(
+                    control_type=ctype, found_index=0
+                ).wrapper_object()
+            except Exception:
+                continue
+        return
+
+    seen = set()
+
+    def _yield_once(ctrl):
+        key = _wrapper_identity_key(ctrl)
+        if key in seen:
+            return False
+        seen.add(key)
+        return True
+
+    for ctype in control_types:
+        if hasattr(onenote_window, "child_window"):
+            for index in range(8):
+                try:
+                    ctrl = onenote_window.child_window(
+                        control_type=ctype,
+                        found_index=index,
+                    ).wrapper_object()
+                except Exception:
+                    break
+                if _yield_once(ctrl):
+                    yield ctrl
+        try:
+            for index, ctrl in enumerate(onenote_window.descendants(control_type=ctype)):
+                if index >= 8:
+                    break
+                if _yield_once(ctrl):
+                    yield ctrl
+        except Exception:
+            continue
+
+
 def _find_tree_or_list(onenote_window):
     ensure_pywinauto()
     if not IS_MACOS and not _pwa_ready:
         return None
-    for ctype in ("Tree", "List"):
+    if not IS_WINDOWS:
+        for ctrl in _iter_tree_or_list_controls(onenote_window):
+            return ctrl
+        return None
+
+    def _selection_length(ctrl) -> int:
         try:
-            return onenote_window.child_window(
-                control_type=ctype, found_index=0
-            ).wrapper_object()
+            if hasattr(ctrl, "get_selection"):
+                selected = ctrl.get_selection()
+                if selected:
+                    return len(selected)
         except Exception:
-            continue
+            pass
+        try:
+            iface_sel = getattr(ctrl, "iface_selection", None)
+            if iface_sel:
+                arr = iface_sel.GetSelection()
+                return int(getattr(arr, "Length", 0) or 0)
+        except Exception:
+            pass
+        return 0
+
+    def _score_candidate(ctrl):
+        rect = _safe_rectangle(ctrl)
+        if rect is None:
+            return None
+        width = max(0, rect.right - rect.left)
+        height = max(0, rect.bottom - rect.top)
+        if width < 80 or height < 80:
+            return None
+
+        selected_score = min(_selection_length(ctrl), 4) * 100
+        focused_or_selected = 0
+        item_count = 0
+        for control_type in ("TreeItem", "ListItem"):
+            try:
+                for item in ctrl.descendants(control_type=control_type):
+                    item_count += 1
+                    if item_count > 80:
+                        break
+                    try:
+                        if item.is_selected() or item.has_keyboard_focus():
+                            focused_or_selected += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if item_count <= 0:
+            return None
+        try:
+            control_type_bonus = 240 if ctrl.element_info.control_type == "Tree" else 0
+        except Exception:
+            control_type_bonus = 0
+        return (
+            control_type_bonus + selected_score + min(focused_or_selected, 4) * 80,
+            min(item_count, 80),
+            height,
+            -rect.left,
+        )
+
+    candidates = []
+    for ctrl in _iter_tree_or_list_controls(onenote_window):
+        score = _score_candidate(ctrl)
+        if score is not None:
+            candidates.append((score, ctrl))
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    for ctrl in _iter_tree_or_list_controls(onenote_window):
+        return ctrl
     return None
 
 

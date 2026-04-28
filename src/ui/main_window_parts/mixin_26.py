@@ -50,8 +50,8 @@ class MainWindowInitStateMixin:
                 codex_restored = False
 
         if not restored:
-            self.left_splitter.setSizes([150, 250])
-            self.main_splitter.setSizes([400, 560])
+            self.left_splitter.setSizes([88, 172] if IS_WINDOWS else [150, 250])
+            self.main_splitter.setSizes([280, 680] if IS_WINDOWS else [400, 560])
         if getattr(self, "codex_splitter", None) is not None and not codex_restored:
             self.codex_splitter.setSizes([208, 920])
 
@@ -118,6 +118,10 @@ class MainWindowMixin26:
             lambda: self._register_all_notebooks_from_current_onenote(force=True)
         )
         self.refresh_open_notebooks_action.setEnabled(False)
+        if IS_WINDOWS:
+            self.refresh_open_notebooks_action.setStatusTip(
+                "Windows OneNote의 현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 열림 체크에 반영합니다."
+            )
         special_menu.addAction(self.refresh_open_notebooks_action)
 
         help_menu = menubar.addMenu("&도움말")
@@ -179,11 +183,14 @@ class MainWindowMixin26:
         main_layout.setSpacing(10)
 
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)  # self로 저장
-        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setChildrenCollapsible(bool(IS_WINDOWS))
+        if IS_WINDOWS:
+            self.main_splitter.setCollapsible(0, True)
+            self.main_splitter.setCollapsible(1, False)
         main_layout.addWidget(self.main_splitter, stretch=1)
 
         self.left_splitter = QSplitter(Qt.Orientation.Horizontal)  # self로 저장
-        self.left_splitter.setChildrenCollapsible(False)
+        self.left_splitter.setChildrenCollapsible(bool(IS_WINDOWS))
 
         self._build_left_panels()
 
@@ -195,6 +202,13 @@ class MainWindowMixin26:
             COLOR_STATUS_BAR,
             search_hint_font_pt,
         )
+        if IS_WINDOWS:
+            self.main_splitter.setChildrenCollapsible(True)
+            self.left_splitter.setChildrenCollapsible(True)
+            self.main_splitter.setCollapsible(0, True)
+            self.main_splitter.setCollapsible(1, False)
+            self.left_splitter.setCollapsible(0, True)
+            self.left_splitter.setCollapsible(1, True)
 
         self._restore_initial_splitter_states()
 

@@ -284,15 +284,25 @@ class MainWindowMixin41:
 
             unclassified_count = len(categorized[0].get("children") or []) if categorized else 0
             classified_count = len(categorized[1].get("children") or []) if len(categorized) > 1 else 0
-            open_checked_count = sum(
-                1 for node in notebook_nodes if bool(node.get("is_open"))
-            )
+            if IS_WINDOWS:
+                counted_nodes = self._collect_notebook_nodes_from_nodes(notebook_nodes)
+                total_count = len(counted_nodes)
+                open_checked_count = sum(
+                    1
+                    for node in counted_nodes
+                    if bool(node.get("is_open") or (node.get("target") or {}).get("is_open"))
+                )
+            else:
+                total_count = len(notebook_nodes)
+                open_checked_count = sum(
+                    1 for node in notebook_nodes if bool(node.get("is_open"))
+                )
             elapsed_ms = (time.perf_counter() - started_at) * 1000.0
             prefix = "종합 새로고침 완료" if is_agg else "종합 데이터 자동 갱신 완료"
             self.update_status_and_ui(
                 (
                     f"{prefix}: "
-                    f"전체 {len(notebook_nodes)}개, "
+                    f"전체 {total_count}개, "
                     f"열림 체크 {open_checked_count}개, "
                     f"분류 안 됨 {unclassified_count}개, "
                     f"분류됨 {classified_count}개 "

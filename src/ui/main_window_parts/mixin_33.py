@@ -77,7 +77,35 @@ class MainWindowMixin33:
                 _name_sort_key((node or {}).get("name", "")),
             )
 
+        def _count_unique_notebooks(children: List[Dict[str, Any]]) -> tuple[int, int]:
+            total = 0
+            open_by_index: Dict[int, bool] = {}
+            seen: Dict[str, int] = {}
+            for child in children or []:
+                if not isinstance(child, dict) or child.get("type") != "notebook":
+                    continue
+                child_keys = self._aggregate_notebook_keys_from_node(child)
+                index = None
+                for key in child_keys:
+                    if key in seen:
+                        index = seen[key]
+                        break
+                if index is None:
+                    index = total
+                    total += 1
+                    for key in child_keys:
+                        seen[key] = index
+                if _notebook_is_open(child):
+                    open_by_index[index] = True
+                elif index not in open_by_index:
+                    open_by_index[index] = False
+            open_count = sum(1 for is_open in open_by_index.values() if is_open)
+            return open_count, total
+
         def _group_label(base_name: str, children: List[Dict[str, Any]]) -> str:
+            if IS_WINDOWS:
+                open_count, total_count = _count_unique_notebooks(children)
+                return f"{base_name} (열림 {open_count}/{total_count})"
             if not children:
                 return f"{base_name} (열림 0/0)"
             open_count = sum(1 for child in children if _notebook_is_open(child))
@@ -85,6 +113,8 @@ class MainWindowMixin33:
 
         source_id = id(source_nodes)
         if (
+            not IS_WINDOWS
+            and
             source_id == getattr(self, "_aggregate_display_cache_source_id", 0)
             and getattr(self, "_aggregate_display_cache_kind", None) == "categorized"
             and isinstance(getattr(self, "_aggregate_display_cache", None), list)
@@ -92,7 +122,19 @@ class MainWindowMixin33:
             return self._aggregate_display_cache
 
         classified_keys = self._collect_classified_aggregate_notebook_keys()
-        cache_sig = ("categorized", tuple(sorted(classified_keys)))
+        source_sig = self._calc_nodes_signature(source_nodes) if IS_WINDOWS else None
+        cache_sig = (
+            "categorized",
+            tuple(sorted(classified_keys)),
+            source_sig if IS_WINDOWS else source_id,
+        )
+        if (
+            IS_WINDOWS
+            and cache_sig == getattr(self, "_aggregate_display_cache_sig", None)
+            and getattr(self, "_aggregate_display_cache_kind", None) == "categorized"
+            and isinstance(getattr(self, "_aggregate_display_cache", None), list)
+        ):
+            return self._aggregate_display_cache
 
         notebooks = self._collect_notebook_nodes_from_nodes(source_nodes, include_keys=True)
         if not notebooks:

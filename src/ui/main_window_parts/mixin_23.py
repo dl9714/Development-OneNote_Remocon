@@ -93,27 +93,29 @@ class MainWindowMixin23:
             total = fallback_width
 
         if mode == "codex":
-            left_width = min(max(int(total * 0.32), 320), 500)
+            min_left = 210 if IS_WINDOWS else 320
+            left_width = min(max(int(total * 0.32), min_left), 500)
             if total - left_width < 620:
-                left_width = max(280, total - 620)
+                left_width = max(195 if IS_WINDOWS else 280, total - 620)
             status_name = "코덱스"
         elif mode == "balanced":
-            left_width = max(300, total // 2)
+            left_width = max(200 if IS_WINDOWS else 300, total // 2)
             status_name = "균등"
         else:
-            left_width = min(max(int(total * 0.42), 390), 610)
+            min_left = 225 if IS_WINDOWS else 390
+            left_width = min(max(int(total * 0.42), min_left), 610)
             if total - left_width < 420:
-                left_width = max(300, total - 420)
+                left_width = max(200 if IS_WINDOWS else 300, total - 420)
             status_name = _remocon_workspace_tab_title()
 
-        right_width = max(260, total - left_width)
+        right_width = max(220 if IS_WINDOWS else 260, total - left_width)
         main_splitter.setSizes([left_width, right_width])
 
         if mode == "codex":
-            first_width = min(max(int(left_width * 0.42), 145), 215)
+            first_width = min(max(int(left_width * 0.42), 110 if IS_WINDOWS else 145), 215)
         else:
-            first_width = min(max(int(left_width * 0.38), 155), 245)
-        second_width = max(180, left_width - first_width)
+            first_width = min(max(int(left_width * 0.38), 115 if IS_WINDOWS else 155), 245)
+        second_width = max(140 if IS_WINDOWS else 180, left_width - first_width)
         left_splitter.setSizes([first_width, second_width])
 
         codex_splitter = getattr(self, "codex_splitter", None)

@@ -342,7 +342,7 @@ class MainWindowMixin32:
         if not isinstance(nodes, list):
             return []
         found: List[Any] = []
-        seen: Set[str] = set()
+        seen: Dict[str, int] = {}
         stack = list(reversed(nodes))
         while stack:
             node = stack.pop()
@@ -350,13 +350,30 @@ class MainWindowMixin32:
                 continue
             if node.get("type") == "notebook":
                 node_keys = self._aggregate_notebook_keys_from_node(node)
-                if node_keys and not (node_keys & seen):
-                    seen.update(node_keys)
+                if node_keys:
+                    duplicate_index = None
+                    for key in node_keys:
+                        if key in seen:
+                            duplicate_index = seen[key]
+                            break
                     is_open = bool(
                         node.get("is_open")
                         or node.get("open")
                         or (node.get("target") or {}).get("is_open")
                     )
+                    if duplicate_index is not None:
+                        if IS_WINDOWS and is_open:
+                            existing = (
+                                found[duplicate_index][0]
+                                if include_keys
+                                else found[duplicate_index]
+                            )
+                            if isinstance(existing, dict):
+                                existing["is_open"] = True
+                                target = dict(existing.get("target") or {})
+                                target["is_open"] = True
+                                existing["target"] = target
+                        continue
                     target = dict(node.get("target") or {})
                     sig = target.get("sig")
                     if isinstance(sig, dict):
@@ -369,6 +386,9 @@ class MainWindowMixin32:
                         "is_open": is_open,
                     }
                     found.append((record, node_keys) if include_keys else record)
+                    record_index = len(found) - 1
+                    for key in node_keys:
+                        seen[key] = record_index
                 continue
             children = node.get("children")
             if isinstance(children, list):

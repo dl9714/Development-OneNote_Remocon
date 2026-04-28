@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from src.ui.main_window_parts._context import (
     bind_context as _bind_context,
+    finalize_context as _finalize_context,
     publish_context as _publish_context,
 )
 
@@ -275,12 +276,45 @@ keyboard = None
 
 _pwa_ready = False
 _pwa_import_error = ""
+_pwa_context_synced = False
+
+
+def _sync_pywinauto_context_for_windows() -> None:
+    global _pwa_context_synced
+    if not IS_WINDOWS:
+        return
+    if _pwa_context_synced:
+        return
+    try:
+        _publish_context(globals())
+        _finalize_context()
+        import sys as _sys
+
+        facade = _sys.modules.get("src.ui.main_window")
+        if facade is not None:
+            for name in (
+                "Desktop",
+                "WindowNotFoundError",
+                "ElementNotFoundError",
+                "TimeoutError",
+                "UIAWrapper",
+                "UIAElementInfo",
+                "mouse",
+                "keyboard",
+                "_pwa_ready",
+                "_pwa_import_error",
+            ):
+                setattr(facade, name, globals().get(name))
+        _pwa_context_synced = True
+    except Exception:
+        pass
 
 
 def ensure_pywinauto():
-    global _pwa_ready, _pwa_import_error, Desktop, WindowNotFoundError, ElementNotFoundError, TimeoutError, UIAWrapper, UIAElementInfo, mouse, keyboard
+    global _pwa_ready, _pwa_import_error, _pwa_context_synced, Desktop, WindowNotFoundError, ElementNotFoundError, TimeoutError, UIAWrapper, UIAElementInfo, mouse, keyboard
     # NameError 수정: _ppa_ready -> _pwa_ready
     if _pwa_ready:
+        _sync_pywinauto_context_for_windows()
         return
     if IS_MACOS:
         from src import macos_ui as _macos_ui
@@ -295,8 +329,10 @@ def ensure_pywinauto():
         keyboard = None
         _pwa_ready = True
         _pwa_import_error = ""
+        _sync_pywinauto_context_for_windows()
         return
     try:
+        _pwa_context_synced = False
         from pywinauto import (
             Desktop as _Desktop,
             mouse as _mouse,
@@ -320,8 +356,10 @@ def ensure_pywinauto():
         keyboard = _keyboard
         _pwa_ready = True
         _pwa_import_error = ""
+        _sync_pywinauto_context_for_windows()
     except ImportError as e:
         _pwa_import_error = str(e)
+        _sync_pywinauto_context_for_windows()
         print(f"[WARN][PWA] import failed: {_pwa_import_error}")
 
 

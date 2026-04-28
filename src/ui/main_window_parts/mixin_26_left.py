@@ -66,28 +66,69 @@ class MainWindowInitLeftMixin:
                 tree.blockSignals(was_blocked)
 
     def _build_left_panels(self) -> None:
+        def _make_toolbar_button_compact(button, *, fixed_width: Optional[int] = None) -> None:
+            try:
+                if fixed_width is not None:
+                    button.setFixedWidth(fixed_width)
+                    return
+                if not IS_WINDOWS:
+                    return
+                button.setMinimumWidth(38)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Fixed,
+                )
+            except Exception:
+                pass
+
         # 1. 즐겨찾기 버퍼 관리 패널 (가장 왼쪽)
         buffer_panel = QWidget()
+        if IS_WINDOWS:
+            buffer_panel.setMinimumWidth(80)
+            buffer_panel.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
         buffer_layout = QVBoxLayout(buffer_panel)
         buffer_layout.setContentsMargins(0, 0, 0, 0)
         buffer_layout.setSpacing(8)
 
         buffer_group = QGroupBox(_buffer_group_title())
+        if IS_WINDOWS:
+            buffer_group.setMinimumWidth(0)
+            buffer_group.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
         buffer_group_layout = QVBoxLayout(buffer_group)
+        if IS_WINDOWS:
+            buffer_group_layout.setContentsMargins(6, 8, 6, 6)
+            buffer_group_layout.setSpacing(5)
 
         # 즐겨찾기 버퍼 상단 툴바: 추가, 이름변경
         buffer_toolbar_top_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            buffer_toolbar_top_layout.setSpacing(4)
         self.btn_add_buffer_group = QToolButton()
         self.btn_add_buffer_group.setText(_buffer_group_add_label())
+        if IS_WINDOWS:
+            self.btn_add_buffer_group.setText("그룹")
         self.btn_add_buffer_group.clicked.connect(self._add_buffer_group)
+        _make_toolbar_button_compact(self.btn_add_buffer_group)
 
         self.btn_add_buffer = QToolButton()
         self.btn_add_buffer.setText(_buffer_item_add_label())
+        if IS_WINDOWS:
+            self.btn_add_buffer.setText("버퍼")
         self.btn_add_buffer.clicked.connect(self._add_buffer)
+        _make_toolbar_button_compact(self.btn_add_buffer)
 
         self.btn_rename_buffer = QToolButton()
         self.btn_rename_buffer.setText(_rename_button_label())
+        if IS_WINDOWS:
+            self.btn_rename_buffer.setText("이름")
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
+        _make_toolbar_button_compact(self.btn_rename_buffer)
 
         self.btn_register_all_notebooks = QToolButton()
         self.btn_register_all_notebooks.setText(_register_all_notebooks_button_label())
@@ -97,15 +138,23 @@ class MainWindowInitLeftMixin:
         self.btn_register_all_notebooks.clicked.connect(self._register_all_notebooks_from_current_onenote)
         self.btn_register_all_notebooks.setEnabled(False)  # 종합 버퍼에서만 활성화
         self.btn_register_all_notebooks.setVisible(False)  # 종합 버퍼에서만 표시
+        _make_toolbar_button_compact(self.btn_register_all_notebooks)
 
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer_group)
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer)
-        buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
+        if not IS_WINDOWS:
+            buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
         buffer_toolbar_top_layout.addStretch(1)
         buffer_group_layout.addLayout(buffer_toolbar_top_layout)
 
         # QListWidget -> BufferTree로 교체
         self.buffer_tree = BufferTree()
+        if IS_WINDOWS:
+            self.buffer_tree.setMinimumWidth(0)
+            self.buffer_tree.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Expanding,
+            )
         self._tree_name_edit_delegate = TreeNameEditDelegate(self)
         self.buffer_tree.setItemDelegate(self._tree_name_edit_delegate)
         # PERF: 큰 트리에서 초기 렌더링 성능 개선
@@ -135,28 +184,52 @@ class MainWindowInitLeftMixin:
         buffer_group_layout.addWidget(self.buffer_tree)
 
         # 즐겨찾기 버퍼 하단 툴바: 삭제, 위로, 아래로
-        buffer_toolbar_bottom_layout = QHBoxLayout()
         self.btn_delete_buffer = QToolButton()
         self.btn_delete_buffer.setText("삭제")
-        self.btn_delete_buffer.setFixedWidth(52)
+        _make_toolbar_button_compact(
+            self.btn_delete_buffer,
+            fixed_width=44 if IS_WINDOWS else 52,
+        )
         self.btn_delete_buffer.clicked.connect(self._delete_buffer)
 
         self.btn_buffer_move_up = QToolButton()
         self.btn_buffer_move_up.setText("▲")
         self.btn_buffer_move_up.setToolTip("위로")
-        self.btn_buffer_move_up.setFixedWidth(32)
+        _make_toolbar_button_compact(
+            self.btn_buffer_move_up,
+            fixed_width=26 if IS_WINDOWS else 32,
+        )
         self.btn_buffer_move_up.clicked.connect(self._move_buffer_up)
 
         self.btn_buffer_move_down = QToolButton()
         self.btn_buffer_move_down.setText("▼")
         self.btn_buffer_move_down.setToolTip("아래로")
-        self.btn_buffer_move_down.setFixedWidth(32)
+        _make_toolbar_button_compact(
+            self.btn_buffer_move_down,
+            fixed_width=26 if IS_WINDOWS else 32,
+        )
         self.btn_buffer_move_down.clicked.connect(self._move_buffer_down)
 
-        buffer_toolbar_bottom_layout.addWidget(self.btn_delete_buffer)
-        buffer_toolbar_bottom_layout.addStretch(1)
-        buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_up)
-        buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_down)
+        buffer_toolbar_bottom_layout = QVBoxLayout() if IS_WINDOWS else QHBoxLayout()
+        if IS_WINDOWS:
+            buffer_toolbar_bottom_layout.setSpacing(3)
+            buffer_edit_layout = QHBoxLayout()
+            buffer_edit_layout.setSpacing(4)
+            buffer_edit_layout.addWidget(self.btn_delete_buffer)
+            buffer_edit_layout.addWidget(self.btn_rename_buffer)
+            buffer_edit_layout.addStretch(1)
+            buffer_move_layout = QHBoxLayout()
+            buffer_move_layout.setSpacing(4)
+            buffer_move_layout.addStretch(1)
+            buffer_move_layout.addWidget(self.btn_buffer_move_up)
+            buffer_move_layout.addWidget(self.btn_buffer_move_down)
+            buffer_toolbar_bottom_layout.addLayout(buffer_edit_layout)
+            buffer_toolbar_bottom_layout.addLayout(buffer_move_layout)
+        else:
+            buffer_toolbar_bottom_layout.addWidget(self.btn_delete_buffer)
+            buffer_toolbar_bottom_layout.addStretch(1)
+            buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_up)
+            buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_down)
         buffer_group_layout.addLayout(buffer_toolbar_bottom_layout)
 
         buffer_layout.addWidget(buffer_group)
@@ -164,37 +237,71 @@ class MainWindowInitLeftMixin:
 
         # 2. 즐겨찾기 관리 패널 (중앙)
         favorites_panel = QWidget()
+        if IS_WINDOWS:
+            favorites_panel.setMinimumWidth(104)
+            favorites_panel.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
         left_layout = QVBoxLayout(favorites_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
 
         fav_group = QGroupBox(_favorites_group_title())
+        if IS_WINDOWS:
+            fav_group.setMinimumWidth(0)
+            fav_group.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
         fav_layout = QVBoxLayout(fav_group)
+        if IS_WINDOWS:
+            fav_layout.setContentsMargins(6, 8, 6, 6)
+            fav_layout.setSpacing(5)
 
         # 툴바 - 1행: 그룹추가, 현재 전자필기장 추가, 이름 바꾸기
         tb1_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            tb1_layout.setSpacing(4)
         self.btn_add_group = QToolButton()
         self.btn_add_group.setText("그룹 추가")
+        if IS_WINDOWS:
+            self.btn_add_group.setText("그룹")
         self.btn_add_group.clicked.connect(self._add_group)
+        _make_toolbar_button_compact(self.btn_add_group)
         self.btn_add_section_current = QToolButton()
         self.btn_add_section_current.setText(_current_add_button_label())
+        if IS_WINDOWS:
+            self.btn_add_section_current.setText("현재")
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
+        _make_toolbar_button_compact(self.btn_add_section_current)
         self.btn_activate_favorite = QToolButton()
         self.btn_activate_favorite.setText(_favorite_activate_button_label())
+        if IS_WINDOWS:
+            self.btn_activate_favorite.setText("실행")
         self.btn_activate_favorite.clicked.connect(self._activate_current_favorite_item)
         self.btn_activate_favorite.setEnabled(False)
+        _make_toolbar_button_compact(self.btn_activate_favorite)
         self.btn_rename = QToolButton()
         self.btn_rename.setText(_rename_button_label())
+        if IS_WINDOWS:
+            self.btn_rename.setText("이름")
         self.btn_rename.clicked.connect(self._rename_favorite_item)
+        _make_toolbar_button_compact(self.btn_rename)
         tb1_layout.addWidget(self.btn_add_section_current)
         tb1_layout.addWidget(self.btn_activate_favorite)
-        tb1_layout.addWidget(self.btn_rename)
+        if not IS_WINDOWS:
+            tb1_layout.addWidget(self.btn_rename)
         tb1_layout.addStretch(1)
 
         # 툴바 - 2행: 그룹 추가, 그룹 펼치기/접기 드롭다운
         tb2_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            tb2_layout.setSpacing(4)
         self.btn_group_expand_collapse = QToolButton()
         self.btn_group_expand_collapse.setText("그룹 펼치기/접기")
+        if IS_WINDOWS:
+            self.btn_group_expand_collapse.setText("펼침/접기")
         self.btn_group_expand_collapse.setToolTip("그룹 펼치기 또는 그룹 접기를 선택합니다.")
         self.btn_group_expand_collapse.setPopupMode(
             QToolButton.ToolButtonPopupMode.InstantPopup
@@ -205,11 +312,14 @@ class MainWindowInitLeftMixin:
         self.menu_group_expand_collapse.addAction(self.action_expand_all_groups)
         self.menu_group_expand_collapse.addAction(self.action_collapse_all_groups)
         self.btn_group_expand_collapse.setMenu(self.menu_group_expand_collapse)
+        _make_toolbar_button_compact(self.btn_group_expand_collapse)
         tb2_layout.addWidget(self.btn_add_group)
         tb2_layout.addStretch(1)
         tb2_layout.addWidget(self.btn_group_expand_collapse)
 
         tb3_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            tb3_layout.setSpacing(4)
         tb3_layout.addStretch(1)
         tb3_layout.addWidget(self.btn_register_all_notebooks)
         tb3_layout.addStretch(1)
@@ -219,6 +329,12 @@ class MainWindowInitLeftMixin:
         fav_layout.addLayout(tb3_layout)
 
         self.fav_tree = FavoritesTree()
+        if IS_WINDOWS:
+            self.fav_tree.setMinimumWidth(0)
+            self.fav_tree.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Expanding,
+            )
         self.fav_tree.setItemDelegate(self._tree_name_edit_delegate)
         # PERF: 큰 트리에서 초기 렌더링 성능 개선
         try:
@@ -256,29 +372,52 @@ class MainWindowInitLeftMixin:
 
         # 즐겨찾기 하단 툴바: 삭제, 위로, 아래로 (삭제 버튼 재배치)
         move_buttons_layout = QHBoxLayout()
+        if IS_WINDOWS:
+            move_buttons_layout.setSpacing(4)
 
         # 삭제 버튼 (tb2에서 이동)
         self.btn_delete = QToolButton()
         self.btn_delete.setText("삭제")
-        self.btn_delete.setFixedWidth(52)
+        _make_toolbar_button_compact(
+            self.btn_delete,
+            fixed_width=44 if IS_WINDOWS else 52,
+        )
         self.btn_delete.clicked.connect(self._delete_favorite_item)
-        move_buttons_layout.addWidget(self.btn_delete)
-
-        move_buttons_layout.addStretch(1)
 
         self.btn_move_up = QToolButton()
         self.btn_move_up.setText("▲")
         self.btn_move_up.setToolTip("위로")
-        self.btn_move_up.setFixedWidth(32)
+        _make_toolbar_button_compact(
+            self.btn_move_up,
+            fixed_width=26 if IS_WINDOWS else 32,
+        )
         self.btn_move_up.clicked.connect(self._move_item_up)
         self.btn_move_down = QToolButton()
         self.btn_move_down.setText("▼")
         self.btn_move_down.setToolTip("아래로")
-        self.btn_move_down.setFixedWidth(32)
+        _make_toolbar_button_compact(
+            self.btn_move_down,
+            fixed_width=26 if IS_WINDOWS else 32,
+        )
         self.btn_move_down.clicked.connect(self._move_item_down)
-        move_buttons_layout.addWidget(self.btn_move_up)
-        move_buttons_layout.addWidget(self.btn_move_down)
-        fav_layout.addLayout(move_buttons_layout)
+
+        if IS_WINDOWS:
+            favorite_edit_layout = QHBoxLayout()
+            favorite_edit_layout.setSpacing(4)
+            favorite_edit_layout.addWidget(self.btn_delete)
+            favorite_edit_layout.addWidget(self.btn_rename)
+            favorite_edit_layout.addStretch(1)
+            move_buttons_layout.addStretch(1)
+            move_buttons_layout.addWidget(self.btn_move_up)
+            move_buttons_layout.addWidget(self.btn_move_down)
+            fav_layout.addLayout(favorite_edit_layout)
+            fav_layout.addLayout(move_buttons_layout)
+        else:
+            move_buttons_layout.addWidget(self.btn_delete)
+            move_buttons_layout.addStretch(1)
+            move_buttons_layout.addWidget(self.btn_move_up)
+            move_buttons_layout.addWidget(self.btn_move_down)
+            fav_layout.addLayout(move_buttons_layout)
 
         self.fav_tree.itemSelectionChanged.connect(self._update_move_button_state)
         self.fav_tree.itemSelectionChanged.connect(self._sync_favorite_action_buttons)

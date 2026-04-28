@@ -66,6 +66,46 @@ def _score_candidate_dict(c, sig) -> int:
         return -1
 
 
+def _signature_looks_like_windows_onenote(sig: Optional[Dict[str, Any]]) -> bool:
+    if not IS_WINDOWS or not isinstance(sig, dict):
+        return False
+    title = str(sig.get("title") or "").casefold()
+    class_name = str(sig.get("class_name") or "").casefold()
+    exe_name = str(sig.get("exe_name") or "").casefold()
+    return (
+        "onenote" in title
+        or "원노트" in title
+        or "onenote" in exe_name
+        or "onenoteim" in exe_name
+        or "omain" in class_name
+    )
+
+
+def _window_info_from_wrapper(win) -> Dict[str, Any]:
+    try:
+        handle = int(getattr(win, "handle", 0) or 0)
+    except Exception:
+        handle = 0
+    try:
+        title = win.window_text() or ""
+    except Exception:
+        title = ""
+    try:
+        class_name = win.class_name() or ""
+    except Exception:
+        class_name = ""
+    try:
+        pid = win.process_id()
+    except Exception:
+        pid = 0
+    return {
+        "handle": handle,
+        "title": title,
+        "class_name": class_name,
+        "pid": pid,
+    }
+
+
 def reacquire_window_by_signature(sig) -> Optional[object]:
     ensure_pywinauto()
     if not IS_MACOS and not _pwa_ready:
@@ -75,6 +115,12 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
         if IS_MACOS
         else enum_windows_fast(filter_title_substr=None)
     )
+    if IS_WINDOWS and _signature_looks_like_windows_onenote(sig):
+        candidates = [
+            c
+            for c in candidates
+            if is_strict_onenote_window(c, os.getpid())
+        ]
     h = sig.get("handle")
     if IS_MACOS:
         exact = None
@@ -89,6 +135,10 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
         try:
             w = Desktop(backend="uia").window(handle=h)
             if w.is_visible():
+                if _signature_looks_like_windows_onenote(sig):
+                    info = _window_info_from_wrapper(w)
+                    if not is_strict_onenote_window(info, os.getpid()):
+                        return None
                 return w
         except Exception:
             pass
@@ -126,6 +176,10 @@ def resolve_window_target(sig: Dict[str, Any]) -> Optional[object]:
         try:
             target = Desktop(backend="uia").window(handle=handle)
             if target.is_visible():
+                if _signature_looks_like_windows_onenote(sig):
+                    info = _window_info_from_wrapper(target)
+                    if not is_strict_onenote_window(info, os.getpid()):
+                        raise ElementNotFoundError
                 return target
         except Exception:
             pass

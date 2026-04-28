@@ -316,6 +316,10 @@ class MainWindowMixin31:
 
         if preselected_tree_control is not None:
             self.tree_control = preselected_tree_control
+        elif IS_WINDOWS and preselected_item is None and not expected_text:
+            refreshed_tree = _find_tree_or_list(self.onenote_window)
+            if refreshed_tree is not None:
+                self.tree_control = refreshed_tree
         elif not self.tree_control and not IS_MACOS:
             self.tree_control = _find_tree_or_list(self.onenote_window)
 
@@ -372,6 +376,11 @@ class MainWindowMixin31:
                     f"elapsed_ms={(time.perf_counter() - op_started_at) * 1000.0:.1f} "
                     f"at_s={(time.perf_counter() - self._t_boot):.3f}"
                 )
+                if IS_WINDOWS:
+                    self.update_status_and_ui(
+                        "실패: Windows OneNote에서 현재 선택 항목을 찾거나 위치정렬하지 못했습니다. OneNote 창을 다시 연결하거나 전자필기장 목록에서 항목을 선택하세요.",
+                        True,
+                    )
         else:
             print(
                 f"[DBG][CENTER][DONE] source={debug_source} success=False retry=skip "
