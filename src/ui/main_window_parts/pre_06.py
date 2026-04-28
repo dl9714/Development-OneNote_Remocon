@@ -218,6 +218,15 @@ def _find_tree_or_list(onenote_window):
 
     candidates = []
     for ctrl in _iter_tree_or_list_controls(onenote_window):
+        if _safe_control_type(ctrl) == "Tree":
+            tree_name = _safe_window_text(ctrl).casefold()
+            if "전자 필기장" in tree_name or "notebook" in tree_name:
+                rect = _safe_rectangle(ctrl)
+                if rect is not None:
+                    width = max(0, rect.right - rect.left)
+                    height = max(0, rect.bottom - rect.top)
+                    if width >= 80 and height >= 80:
+                        return ctrl
         score = _score_candidate(ctrl)
         if score is not None:
             candidates.append((score, ctrl))
