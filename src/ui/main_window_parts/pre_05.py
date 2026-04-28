@@ -153,6 +153,11 @@ def is_strict_onenote_window(w: Dict[str, Any], my_pid: int) -> bool:
     if "omain" in (cls or "").lower():
         return True
 
+    if cls == "Framework::CFrame" and (
+        "onenote" in title_lower or "원노트" in title_lower
+    ):
+        return True
+
     # 2. Modern App (ApplicationFrameWindow) + 타이틀 키워드
     if cls == ONENOTE_CLASS_NAME and (
         "onenote" in title_lower or "원노트" in title_lower

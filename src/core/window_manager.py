@@ -169,6 +169,11 @@ class WindowManager:
             return True
 
         # 2. Modern App (ApplicationFrameWindow) + 타이틀 키워드
+        if cls == "Framework::CFrame" and any(
+            keyword in title_lower for keyword in ONENOTE_KEYWORDS
+        ):
+            return True
+
         if cls == ONENOTE_CLASS_NAME:
             if any(keyword in title_lower for keyword in ONENOTE_KEYWORDS):
                 return True
@@ -228,6 +233,10 @@ class WindowManager:
         title = str(window_info.get("title") or "").lower()
         cls = str(window_info.get("class_name") or "")
         if "omain" in cls.lower():
+            return True
+        if cls == "Framework::CFrame" and any(
+            keyword in title for keyword in ONENOTE_KEYWORDS
+        ):
             return True
         if cls == ONENOTE_CLASS_NAME and any(
             keyword in title for keyword in ONENOTE_KEYWORDS

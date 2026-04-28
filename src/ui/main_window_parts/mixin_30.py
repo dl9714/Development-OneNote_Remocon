@@ -43,7 +43,6 @@ class MainWindowMixin30:
                         pass
                     self._remember_connection_signature(self.onenote_window)
                 self.update_status_and_ui(f"연결됨: {status}", True)
-                QTimer.singleShot(0, self._cache_tree_control)
                 if IS_MACOS:
                     info = dict(_window_info_dict(target) or sig or {})
                     if info:
@@ -297,9 +296,11 @@ class MainWindowMixin30:
 
             status_text = f"연결됨: '{window_title}'"
             self.update_status_and_ui(status_text, True)
-            self._cache_tree_control()
             if IS_MACOS:
+                self._cache_tree_control()
                 QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
+            else:
+                self.tree_control = None
             return True
 
         except ElementNotFoundError:

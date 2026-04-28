@@ -299,16 +299,11 @@ class MainWindowMixin31:
             )
             return True
 
+        self._ensure_windows_onenote_ready_for_alignment(win)
+
         tree = getattr(self, "tree_control", None)
         if tree is None:
-            tree = _find_tree_or_list(win)
-            self.tree_control = tree
-
-        if tree is None:
-            self.update_status_and_ui(
-                "OneNote 전자필기장 목록을 찾지 못했습니다.",
-                False,
-            )
+            self._start_windows_center_worker(debug_source=debug_source)
             return True
 
         success, item_name = scroll_selected_item_to_center(
@@ -341,6 +336,65 @@ class MainWindowMixin31:
             f"[DBG][CENTER][WINDOWS_FAST] source={debug_source} "
             f"success={success} elapsed_ms={elapsed_ms:.1f}"
         )
+        return True
+
+    def _ensure_windows_onenote_ready_for_alignment(self, win) -> None:
+        try:
+            ensure_windows_onenote_ready_for_tree_lookup(win)
+        except Exception:
+            pass
+
+    def _start_windows_center_worker(self, *, debug_source: str) -> bool:
+        settings = getattr(self, "settings", {}) or {}
+        sig = settings.get("connection_signature")
+        if not isinstance(sig, dict) or not sig:
+            self.update_status_and_ui(
+                "OneNote 창을 다시 연결한 뒤 위치정렬을 실행하세요.",
+                False,
+            )
+            return False
+
+        worker = getattr(self, "_center_worker", None)
+        try:
+            if worker is not None and worker.isRunning():
+                self.update_status_and_ui("OneNote 위치정렬 진행 중입니다.", True)
+                return True
+        except Exception:
+            pass
+
+        started_at = time.perf_counter()
+        worker = CenterAfterActivateWorker(sig, "", target_kind="", parent=self)
+        self._center_worker = worker
+        self._retain_qthread_until_finished(worker, "_center_worker")
+        self.update_status_and_ui("OneNote 위치정렬 준비 중...", True)
+
+        def _on_done(ok: bool, selected_name: str) -> None:
+            if getattr(self, "_center_worker", None) is not worker:
+                return
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            cached_tree = getattr(worker, "cached_tree", None)
+            if cached_tree is not None:
+                self.tree_control = cached_tree
+            if ok:
+                item_name = str(selected_name or "").strip()
+                self.update_status_and_ui(
+                    f"위치정렬 완료: '{item_name}' ({elapsed_ms:.0f}ms)"
+                    if item_name
+                    else f"위치정렬 완료 ({elapsed_ms:.0f}ms)",
+                    True,
+                )
+            else:
+                self.update_status_and_ui(
+                    "현재 선택된 OneNote 항목을 찾지 못했습니다.",
+                    False,
+                )
+            self._dbg_hot(
+                f"[DBG][CENTER][WINDOWS_WORKER] source={debug_source} "
+                f"success={ok} elapsed_ms={elapsed_ms:.1f}"
+            )
+
+        worker.done.connect(_on_done)
+        worker.start()
         return True
 
     def center_selected_item_action(

@@ -78,6 +78,7 @@ def _signature_looks_like_windows_onenote(sig: Optional[Dict[str, Any]]) -> bool
         or "onenote" in exe_name
         or "onenoteim" in exe_name
         or "omain" in class_name
+        or class_name == "framework::cframe"
     )
 
 
@@ -188,6 +189,31 @@ def resolve_window_target(sig: Dict[str, Any]) -> Optional[object]:
         except Exception:
             pass
     return reacquire_window_by_signature(sig)
+
+
+def ensure_windows_onenote_ready_for_tree_lookup(win) -> bool:
+    if not IS_WINDOWS or win is None:
+        return False
+
+    rect = _safe_rectangle(win)
+    should_restore = True
+    if rect is not None:
+        left = int(getattr(rect, "left", 0) or 0)
+        top = int(getattr(rect, "top", 0) or 0)
+        width = int(getattr(rect, "right", 0) or 0) - left
+        height = int(getattr(rect, "bottom", 0) or 0) - top
+        should_restore = width <= 0 or height <= 0 or left <= -30000 or top <= -30000
+
+    if should_restore:
+        try:
+            win.restore()
+        except Exception:
+            pass
+        try:
+            win.set_focus()
+        except Exception:
+            pass
+    return True
 
 
 # ----------------- 12. 저장된 정보로 재연결 -----------------
@@ -334,6 +360,7 @@ class CenterAfterActivateWorker(QThread):
         self.sig = copy.deepcopy(sig or {})
         self.expected_text = expected_text or ""
         self.target_kind = (target_kind or "").strip().lower()
+        self.cached_tree = None
 
     def run(self):
         try:
@@ -346,6 +373,9 @@ class CenterAfterActivateWorker(QThread):
             if not win:
                 self.done.emit(False, "")
                 return
+
+            if IS_WINDOWS:
+                ensure_windows_onenote_ready_for_tree_lookup(win)
 
             if IS_MACOS:
                 ok, item_name = mac_center_selected_row(
@@ -360,8 +390,31 @@ class CenterAfterActivateWorker(QThread):
             if not tree:
                 self.done.emit(False, "")
                 return
+            self.cached_tree = tree
 
             expected_norm = _normalize_text(self.expected_text)
+            if not expected_norm:
+                selected_item = get_selected_tree_item_fast(tree)
+                if selected_item is not None:
+                    anchor_element, _anchor_source, placement = _resolve_alignment_target_for_selected_item(
+                        selected_item,
+                        tree,
+                    )
+                    _center_element_in_view(
+                        selected_item,
+                        tree,
+                        anchor_element=anchor_element,
+                        placement=placement,
+                    )
+                    try:
+                        item_name = selected_item.window_text()
+                    except Exception:
+                        item_name = ""
+                    self.done.emit(True, item_name)
+                    return
+                self.done.emit(False, "")
+                return
+
             deadline = time.monotonic() + (
                 0.28 if self.target_kind == "notebook" else 0.6
             )
