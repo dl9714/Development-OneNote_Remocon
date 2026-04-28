@@ -17,6 +17,7 @@ def scroll_selected_item_to_center(
     *,
     selected_item=None,
     expected_text: str = "",
+    fast_windows: bool = False,
 ):
     if IS_MACOS:
         try:
@@ -37,7 +38,7 @@ def scroll_selected_item_to_center(
             return False, None
 
         selected_item = selected_item or get_selected_tree_item_fast(tree_control)
-        if not selected_item and IS_WINDOWS:
+        if not selected_item and IS_WINDOWS and not fast_windows:
             current_tree_key = _wrapper_identity_key(tree_control)
             fallback_types = ("Tree", "List") if expected_text else ("Tree",)
             for candidate_tree in _iter_tree_or_list_controls(
@@ -390,6 +391,12 @@ def _build_connection_signature_for_save(
     if not IS_WINDOWS:
         return build_window_signature(window_element)
     info = build_window_signature_quick(window_element, previous_sig)
+    try:
+        current_title = str(window_element.window_text() or "").strip()
+        if current_title:
+            info["title"] = current_title
+    except Exception:
+        pass
     if isinstance(previous_sig, dict):
         if previous_sig.get("exe_path"):
             info["exe_path"] = previous_sig.get("exe_path")

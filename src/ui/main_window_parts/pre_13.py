@@ -114,11 +114,11 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
     if IS_WINDOWS and h:
         try:
             w = Desktop(backend="uia").window(handle=h)
-            if w.is_visible():
-                if _signature_looks_like_windows_onenote(sig):
-                    info = _window_info_from_wrapper(w)
-                    if not is_strict_onenote_window(info, os.getpid()):
-                        return None
+            if _signature_looks_like_windows_onenote(sig):
+                info = _window_info_from_wrapper(w)
+                if is_strict_onenote_window(info, os.getpid()):
+                    return w
+            elif w.is_visible():
                 return w
         except Exception:
             pass
@@ -154,7 +154,11 @@ def reacquire_window_by_signature(sig) -> Optional[object]:
             if IS_MACOS:
                 return MacWindow(dict(best))
             w = Desktop(backend="uia").window(handle=best["handle"])
-            if w.is_visible():
+            if _signature_looks_like_windows_onenote(sig):
+                info = _window_info_from_wrapper(w)
+                if is_strict_onenote_window(info, os.getpid()):
+                    return w
+            elif w.is_visible():
                 return w
         except Exception:
             return None
@@ -175,11 +179,11 @@ def resolve_window_target(sig: Dict[str, Any]) -> Optional[object]:
     if handle:
         try:
             target = Desktop(backend="uia").window(handle=handle)
-            if target.is_visible():
-                if _signature_looks_like_windows_onenote(sig):
-                    info = _window_info_from_wrapper(target)
-                    if not is_strict_onenote_window(info, os.getpid()):
-                        raise ElementNotFoundError
+            if _signature_looks_like_windows_onenote(sig):
+                info = _window_info_from_wrapper(target)
+                if is_strict_onenote_window(info, os.getpid()):
+                    return target
+            elif target.is_visible():
                 return target
         except Exception:
             pass
@@ -195,7 +199,23 @@ def load_connection_info_and_reconnect():
         return None, "연결되지 않음"
     try:
         win = reacquire_window_by_signature(sig)
-        if win and win.is_visible():
+        win_is_ready = False
+        if win:
+            try:
+                win_is_ready = bool(win.is_visible())
+            except Exception:
+                win_is_ready = False
+            if (
+                not win_is_ready
+                and IS_WINDOWS
+                and _signature_looks_like_windows_onenote(sig)
+            ):
+                win_is_ready = is_strict_onenote_window(
+                    _window_info_from_wrapper(win),
+                    os.getpid(),
+                )
+
+        if win and win_is_ready:
             window_title = _preferred_connected_window_title(win, sig)
             try:
                 save_connection_info(win)

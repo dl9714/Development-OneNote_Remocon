@@ -115,14 +115,29 @@ def _iter_tree_or_list_controls(onenote_window, control_types=("Tree", "List")):
         seen.add(key)
         return True
 
+    if IS_WINDOWS:
+        for ctype in control_types:
+            try:
+                for index, ctrl in enumerate(onenote_window.descendants(control_type=ctype)):
+                    if index >= 8:
+                        break
+                    if _yield_once(ctrl):
+                        yield ctrl
+            except Exception:
+                continue
+        return
+
     for ctype in control_types:
         if hasattr(onenote_window, "child_window"):
-            for index in range(8):
+            for index in range(3):
                 try:
-                    ctrl = onenote_window.child_window(
+                    spec = onenote_window.child_window(
                         control_type=ctype,
                         found_index=index,
-                    ).wrapper_object()
+                    )
+                    if not spec.exists(timeout=0.02):
+                        break
+                    ctrl = spec.wrapper_object()
                 except Exception:
                     break
                 if _yield_once(ctrl):

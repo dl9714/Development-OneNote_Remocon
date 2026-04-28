@@ -183,6 +183,74 @@ class WindowManager:
 
         return False
 
+    def _signature_looks_like_onenote(self, signature: Dict[str, Any]) -> bool:
+        title = str(signature.get("title") or "").lower()
+        cls = str(signature.get("class_name") or "")
+        exe_name = str(signature.get("exe_name") or "").lower()
+        bundle_id = str(signature.get("bundle_id") or "")
+        return (
+            "omain" in cls.lower()
+            or cls == ONENOTE_CLASS_NAME
+            or any(keyword in title for keyword in ONENOTE_KEYWORDS)
+            or any(onenote_exe in exe_name for onenote_exe in ONENOTE_EXE_NAMES)
+            or bundle_id == ONENOTE_MAC_BUNDLE_ID
+        )
+
+    def _window_info_from_element(self, window_element) -> Dict[str, Any]:
+        try:
+            handle = window_element.handle
+        except Exception:
+            handle = None
+        try:
+            title = window_element.window_text()
+        except Exception:
+            title = ""
+        try:
+            cls_name = window_element.class_name()
+        except Exception:
+            cls_name = ""
+        try:
+            pid = window_element.process_id()
+        except Exception:
+            pid = None
+        return {
+            "handle": handle,
+            "title": title,
+            "class_name": cls_name,
+            "pid": pid,
+        }
+
+    def _looks_like_onenote_window_fast(self, window_info: Dict[str, Any]) -> bool:
+        if IS_MACOS:
+            return is_macos_onenote_window_info(window_info, self._current_pid)
+        if window_info.get("pid") == self._current_pid:
+            return False
+        title = str(window_info.get("title") or "").lower()
+        cls = str(window_info.get("class_name") or "")
+        if "omain" in cls.lower():
+            return True
+        if cls == ONENOTE_CLASS_NAME and any(
+            keyword in title for keyword in ONENOTE_KEYWORDS
+        ):
+            return True
+        return any(keyword in title for keyword in ONENOTE_KEYWORDS)
+
+    def _handle_target_is_compatible(
+        self,
+        window_element,
+        signature: Dict[str, Any],
+    ) -> bool:
+        if not self._signature_looks_like_onenote(signature):
+            return True
+        info = self._window_info_from_element(window_element)
+        if (
+            signature.get("pid")
+            and info.get("pid")
+            and signature.get("pid") != info.get("pid")
+        ):
+            return False
+        return self._looks_like_onenote_window_fast(info)
+
     def enumerate_onenote_windows(self) -> List[Dict[str, Any]]:
         all_windows = self.enumerate_windows(filter_title_substr=ONENOTE_KEYWORDS)
         onenote_windows = [w for w in all_windows if self.is_onenote_window(w)]
@@ -316,7 +384,10 @@ class WindowManager:
         if h:
             try:
                 w = Desktop(backend="uia").window(handle=h)
-                if w.is_visible():
+                if self._signature_looks_like_onenote(signature):
+                    if self._handle_target_is_compatible(w, signature):
+                        return w
+                elif w.is_visible():
                     return w
             except Exception:
                 pass
@@ -334,7 +405,10 @@ class WindowManager:
         if best and best_score >= min_score:
             try:
                 w = Desktop(backend="uia").window(handle=best["handle"])
-                if w.is_visible():
+                if self._signature_looks_like_onenote(signature):
+                    if self._handle_target_is_compatible(w, signature):
+                        return w
+                elif w.is_visible():
                     return w
             except Exception:
                 return None

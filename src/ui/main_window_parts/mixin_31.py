@@ -271,6 +271,78 @@ class MainWindowMixin31:
             print("[DBG][PRECHECK] PASS")
         return True
 
+    def _center_selected_item_windows_fast(
+        self,
+        *,
+        op_started_at: float,
+        debug_source: str,
+        allow_retry: bool,
+    ) -> bool:
+        ensure_pywinauto()
+        if not _pwa_ready:
+            self.update_status_and_ui("pywinauto가 준비되지 않았습니다.", False)
+            return True
+
+        win = getattr(self, "onenote_window", None)
+        if win is None:
+            settings = getattr(self, "settings", {}) or {}
+            connection_signature = settings.get("connection_signature")
+            sig = connection_signature if isinstance(connection_signature, dict) else {}
+            win = reacquire_window_by_signature(sig or {})
+            if win is not None:
+                self.onenote_window = win
+
+        if win is None:
+            self.update_status_and_ui(
+                "OneNote 창을 찾지 못했습니다. 창 목록에서 다시 연결하세요.",
+                False,
+            )
+            return True
+
+        tree = getattr(self, "tree_control", None)
+        if tree is None:
+            tree = _find_tree_or_list(win)
+            self.tree_control = tree
+
+        if tree is None:
+            self.update_status_and_ui(
+                "OneNote 전자필기장 목록을 찾지 못했습니다.",
+                False,
+            )
+            return True
+
+        success, item_name = scroll_selected_item_to_center(
+            win,
+            tree,
+            fast_windows=True,
+        )
+        if not success and allow_retry:
+            refreshed_tree = _find_tree_or_list(win)
+            if refreshed_tree is not None:
+                self.tree_control = refreshed_tree
+                success, item_name = scroll_selected_item_to_center(
+                    win,
+                    refreshed_tree,
+                    fast_windows=True,
+                )
+
+        elapsed_ms = (time.perf_counter() - op_started_at) * 1000.0
+        if success:
+            self.update_status_and_ui(
+                f"위치정렬 완료: '{item_name}' ({elapsed_ms:.0f}ms)",
+                True,
+            )
+        else:
+            self.update_status_and_ui(
+                "현재 선택된 OneNote 항목을 찾지 못했습니다.",
+                False,
+            )
+        self._dbg_hot(
+            f"[DBG][CENTER][WINDOWS_FAST] source={debug_source} "
+            f"success={success} elapsed_ms={elapsed_ms:.1f}"
+        )
+        return True
+
     def center_selected_item_action(
         self,
         checked: bool = False,
@@ -290,6 +362,20 @@ class MainWindowMixin31:
                 f"[DBG][CENTER][START] source={debug_source} "
                 f"at_s={(time.perf_counter() - self._t_boot):.3f}"
             )
+        if (
+            IS_WINDOWS
+            and not skip_precheck
+            and preselected_item is None
+            and preselected_tree_control is None
+            and not expected_text
+        ):
+            if self._center_selected_item_windows_fast(
+                op_started_at=op_started_at,
+                debug_source=debug_source,
+                allow_retry=allow_retry,
+            ):
+                return
+
         can_use_mac_title_hint = (
             IS_MACOS
             and not expected_text
