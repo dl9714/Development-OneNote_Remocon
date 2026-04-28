@@ -190,17 +190,18 @@ class WindowManager:
 
     # ==================== 윈도우 시그니처 관리 ====================
 
-    def create_window_signature(self, window_element) -> Dict[str, Any]:
+    def create_window_signature(
+        self,
+        window_element,
+        previous_signature: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        previous_signature = (
+            previous_signature if isinstance(previous_signature, dict) else {}
+        )
         try:
             pid = window_element.process_id()
         except Exception:
             pid = None
-
-        exe_path = self.get_process_image_path(pid) if pid else None
-        if IS_MACOS:
-            exe_name = os.path.basename(window_element.class_name() or "").lower()
-        else:
-            exe_name = os.path.basename(exe_path).lower() if exe_path else None
 
         try:
             handle = window_element.handle
@@ -217,6 +218,17 @@ class WindowManager:
         except Exception:
             cls_name = None
 
+        if IS_WINDOWS:
+            exe_path = previous_signature.get("exe_path") or ""
+            exe_name = previous_signature.get("exe_name") or ""
+            if not exe_name:
+                exe_name = os.path.basename(str(cls_name or "")).lower()
+            bundle_id = ""
+        else:
+            exe_path = ""
+            bundle_id = getattr(window_element, "bundle_id", lambda: "")() or ""
+            exe_name = os.path.basename(bundle_id or cls_name or "").lower()
+
         return {
             "handle": handle,
             "pid": pid,
@@ -224,7 +236,7 @@ class WindowManager:
             "title": title,
             "exe_path": exe_path,
             "exe_name": exe_name,
-            "bundle_id": getattr(window_element, "bundle_id", lambda: "")() if IS_MACOS else "",
+            "bundle_id": bundle_id,
         }
 
     def score_candidate(self, candidate: Dict[str, Any], signature: Dict[str, Any]) -> int:
@@ -233,11 +245,9 @@ class WindowManager:
             cls = candidate.get("class_name") or ""
             pid = candidate.get("pid")
             if IS_MACOS:
-                exe_path = ""
                 exe_name = os.path.basename(str(candidate.get("bundle_id") or cls or "")).lower()
             else:
-                exe_path = self.get_process_image_path(pid) or ""
-                exe_name = os.path.basename(exe_path).lower() if exe_path else ""
+                exe_name = str(candidate.get("exe_name") or "").lower()
 
             score = 0
 
@@ -252,8 +262,10 @@ class WindowManager:
             # OneNote EXE인지 확인
             if IS_MACOS and str(candidate.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID:
                 score += 50
-            elif "onenote.exe" in exe_name:
+            elif exe_name and any(onenote_exe in exe_name for onenote_exe in ONENOTE_EXE_NAMES):
                 score += 50
+            elif "omain" in (cls or "").lower():
+                score += 40
 
             # 제목에 OneNote 키워드 포함
             if any(keyword in title for keyword in ONENOTE_KEYWORDS):

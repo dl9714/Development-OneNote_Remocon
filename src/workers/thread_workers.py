@@ -31,7 +31,7 @@ class ReconnectWorker(QThread):
             if win and win.is_visible():
                 window_title = win.window_text()
                 # 새 시그니처 저장
-                new_sig = self.window_manager.create_window_signature(win)
+                new_sig = self.window_manager.create_window_signature(win, sig)
                 self.settings_manager.set_connection_signature(new_sig)
                 self.settings_manager.save()
 

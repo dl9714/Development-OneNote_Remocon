@@ -1,22 +1,47 @@
-# 코덱스 전용 OneNote 조작 지침
+# Codex 전용 OneNote 작업 지침
 
-이 문서는 사용자 스킬이 아니다. OneNote 작업을 수행하는 Codex가 항상 전제로 삼는 내부 실행 지침이다.
+이 문서는 사용자 스킬이 아니다. OneNote Remocon에서 Codex가 OneNote 작업을 수행할 때 항상 전제로 삼는 내부 실행 기준이다.
 
 ## 적용 순서
 
 1. 사용자 요청에서 목표, 대상, 출력 형식, 금지 조건, 주의 조건을 분리한다.
-2. 사용자 스킬은 글쓰기 형식과 정리 방식만 적용하고, OneNote 조작 방식은 이 폴더의 내부 지침에서 고른다.
+2. 사용자 스킬은 글쓰기 형식과 정리 방식에만 적용하고, OneNote 조작 방식은 이 내부 지침에서 고른다.
 3. 대상은 명시된 ID, 저장된 대상 ID, 위치 캐시, 제한된 계층 조회 순서로 확정한다.
 4. 변경 전에는 작업 종류, 대상 경로, 대상 ID, 검증 방법을 먼저 확정한다.
 5. 완료 후에는 플랫폼에 맞는 조회 결과로 검증한다. Windows는 COM 결과, macOS는 접근성/UI 조회 결과를 우선 사용한다.
 6. 최종 보고에는 변경 항목, 대상, 검증 결과, 남은 확인 사항만 짧게 남긴다.
+
+## OS 분리 원칙
+
+- UI 문구와 배치는 가능한 한 공통 구조를 유지한다.
+- 내부 실행 경로는 Windows와 macOS를 분리한다.
+- Windows는 2026-04-23 최적화 흐름을 기준으로 한다.
+- macOS는 최신 MacWindow/AppleScript/접근성 자동화 흐름을 기준으로 한다.
+- 한쪽 OS를 고치면서 다른 OS의 연결, 창 재획득, 전자필기장 열기 흐름을 바꾸지 않는다.
+
+## Windows 경로
+
+- OneNote 창 재연결은 저장된 `handle`을 먼저 사용한다.
+- `handle`이 살아 있으면 전체 창 스캔을 하지 않는다.
+- 연결 정보 저장 시 `get_process_image_path()`를 반복 호출하지 않는다.
+- 창 전체 스캔은 `handle` 재획득 실패 후에만 수행한다.
+- 전자필기장, 섹션, 페이지 작업은 가능한 한 OneNote COM API를 우선 사용한다.
+- PowerShell에서는 `New-Object -ComObject OneNote.Application`로 연결한다.
+- XML은 문자열 치환보다 XML 파서로 처리한다.
+
+## macOS 경로
+
+- macOS는 `MacWindow`의 `info`, `bundle_id`, `window_number`를 우선 사용한다.
+- OneNote 전자필기장 열기는 최신 Mac 전용 빠른 열기 흐름을 유지한다.
+- 체크 없는 전자필기장 열기 기능은 Mac 전용 캐시/최근 목록/접근성 흐름을 우선한다.
+- Windows COM 또는 pywinauto 전제를 macOS 경로에 섞지 않는다.
 
 ## 사용자 스킬과의 경계
 
 - 사용자 스킬에서는 `## Instructions`만 작업에 맞게 적용한다.
 - 사용자 요청문, 작업 주문서, 스킬 호출문에는 이 문서 전문이나 플랫폼 내부 템플릿을 붙이지 않는다.
 - 글쓰기 형식, 정리 방식, 이름 규칙처럼 요청마다 달라지는 기준은 사용자 스킬에 둔다.
-- 플랫폼별 호출 순서, 대상 ID/경로 우선순위, 본문 수정 방식, 검증 절차는 코덱스 전용 지침에 둔다.
+- 플랫폼별 호출 순서, 대상 ID/경로 우선순위, 본문 수정 방식, 검증 절차는 Codex 전용 지침에 둔다.
 - 사용자가 내부 구현 설명을 요청하지 않았다면 COM/접근성 세부 호출을 길게 설명하지 않는다.
 
 ## 대상 판정 원칙
@@ -32,10 +57,8 @@
 
 - Windows에서는 화면 클릭 자동화보다 OneNote COM API를 우선 사용한다.
 - macOS에서는 OneNote 접근성 트리와 UI 자동화를 우선 사용한다.
-- Windows PowerShell에서는 `New-Object -ComObject OneNote.Application`으로 연결한다.
 - 구조 탐색은 기본적으로 `GetHierarchy('', hsSections, ref xml)`까지만 사용한다.
 - `hsPages` 전체 조회는 페이지가 많으면 느리므로 페이지 복제, 페이지 목록 조회, 최종 페이지 수 검증처럼 필요한 경우에만 쓴다.
-- XML은 문자열 치환보다 XML 파서로 수정한다.
 - `OpenHierarchy` 또는 `CreateNewPage` 직후에는 짧게 대기하고 재조회해서 새 ID가 실제 사용 가능한지 확인한다.
 - 삭제, 덮어쓰기, 대량 이동, 대량 복제는 대상과 영향 범위를 다시 확인한 뒤 실행한다.
 - OneNote 호출이 실패하면 같은 쓰기 작업을 무한 반복하지 않는다. 원인 확인 후 한 번만 보정 재시도한다.
@@ -58,8 +81,19 @@
 - 새 전자필기장은 OneNote가 열 수 있는 로컬/동기화 경로를 확인한 뒤 `OpenHierarchy(notebookPath, "", ref newId, cftNotebook)`를 사용한다.
 - 전자필기장 복제는 대상 이름을 `코덱스-{원본 전자필기장명}`으로 잡고, 활성 섹션 그룹/섹션/페이지 수가 원본과 같은지 확인한다.
 
+## UI 기준
+
+- 버튼 이름과 배치는 플랫폼별로 필요한 차이만 둔다.
+- Windows 왼쪽 패널은 2026-04-23의 안정적인 폭과 버튼 배치를 기준으로 한다.
+- 패널은 사용자가 줄일 수 있어야 하지만, 버튼이 사라지거나 세로로 깨지면 안 된다.
+- macOS에는 `선택 전자필기장 보기`, `체크 없는 전자필기장 열기`, `열린 전자필기장 새로고침` 흐름을 유지한다.
+
 ## 검증 기준
 
+- Windows에서 자동 재연결 시간이 느려지면 먼저 `handle` 우선 경로가 깨졌는지 확인한다.
+- Windows 재연결 검증은 `reacquire`, `build_save_signature`, `save_connection_info`, `load_reconnect` 시간을 나누어 본다.
+- macOS 검증은 최소한 가짜 macOS 초기화 테스트로 버튼과 타이틀이 유지되는지 확인한다.
+- 공통 변경 후에는 `py_compile`, Windows UI 초기화, macOS 분기 초기화를 모두 확인한다.
 - 페이지 추가/수정: `GetPageContent(pageId)`에서 제목과 본문 일부를 확인한다.
 - 섹션 생성: `GetHierarchy(sectionGroupId, hsSections, ref xml)`에서 새 섹션 이름을 확인한다.
 - 섹션 그룹 생성: `GetHierarchy(parentId, hsSections, ref xml)`에서 새 그룹 이름을 확인한다.
