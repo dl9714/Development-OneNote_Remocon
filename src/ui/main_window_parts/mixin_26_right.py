@@ -219,8 +219,10 @@ class MainWindowInitRightMixin:
 
         self.connection_status_label = QLabel(initial_status)
         self.statusBar().addPermanentWidget(self.connection_status_label)
-        self.version_status_label = QLabel(f"v{APP_VERSION} ({APP_BUILD_VERSION})")
-        self.version_status_label.setToolTip("앱 버전 / 빌드")
+        self.version_status_label = QLabel(f"v{APP_TITLE_VERSION}")
+        self.version_status_label.setToolTip(
+            f"제목표시줄 버전 / 앱 {APP_VERSION} / 빌드 {APP_BUILD_VERSION}"
+        )
         self.statusBar().addPermanentWidget(self.version_status_label)
         self.statusBar().setStyleSheet(f"background-color: {COLOR_STATUS_BAR};")
         QTimer.singleShot(0, self._apply_workspace_button_icons)
