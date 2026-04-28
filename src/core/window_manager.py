@@ -195,6 +195,7 @@ class WindowManager:
         bundle_id = str(signature.get("bundle_id") or "")
         return (
             "omain" in cls.lower()
+            or cls == "Framework::CFrame"
             or cls == ONENOTE_CLASS_NAME
             or any(keyword in title for keyword in ONENOTE_KEYWORDS)
             or any(onenote_exe in exe_name for onenote_exe in ONENOTE_EXE_NAMES)
@@ -368,7 +369,9 @@ class WindowManager:
                             break
 
             # OneNote 앱 프레임 윈도우
-            if cls == ONENOTE_CLASS_NAME:
+            if cls == "Framework::CFrame":
+                score += 8
+            elif cls == ONENOTE_CLASS_NAME:
                 score += 5
 
             return score

@@ -59,11 +59,22 @@ def _score_candidate_dict(c, sig) -> int:
                     score += 4
                 if "원노트" in prev_title and "원노트" in title:
                     score += 4
-        if cls == ONENOTE_CLASS_NAME or (IS_MACOS and str(c.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID):
+        if cls == "Framework::CFrame":
+            score += 8
+        elif cls == ONENOTE_CLASS_NAME or (IS_MACOS and str(c.get("bundle_id") or "") == ONENOTE_MAC_BUNDLE_ID):
             score += 5
         return score
     except Exception:
         return -1
+
+
+def _windows_onenote_class_sort_key(info: Dict[str, Any]) -> int:
+    class_name = str((info or {}).get("class_name") or "").casefold()
+    if class_name == "framework::cframe" or "omain" in class_name:
+        return 0
+    if class_name == str(ONENOTE_CLASS_NAME).casefold():
+        return 1
+    return 2
 
 
 def _signature_looks_like_windows_onenote(sig: Optional[Dict[str, Any]]) -> bool:
@@ -324,7 +335,7 @@ class OneNoteWindowScanner(QThread):
 
             results.sort(
                 key=lambda r: (
-                    r.get("class_name", "") != ONENOTE_CLASS_NAME,
+                    _windows_onenote_class_sort_key(r),
                     r.get("title", ""),
                 )
             )

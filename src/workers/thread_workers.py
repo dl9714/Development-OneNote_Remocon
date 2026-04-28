@@ -10,6 +10,15 @@ from src.core.window_manager import WindowManager
 from src.constants import ONENOTE_CLASS_NAME
 
 
+def _onenote_class_sort_key(info):
+    class_name = str((info or {}).get("class_name") or "").casefold()
+    if class_name == "framework::cframe" or "omain" in class_name:
+        return 0
+    if class_name == str(ONENOTE_CLASS_NAME).casefold():
+        return 1
+    return 2
+
+
 class ReconnectWorker(QThread):
     """백그라운드에서 이전 OneNote 연결을 복구하는 워커"""
 
@@ -28,7 +37,7 @@ class ReconnectWorker(QThread):
                 return
 
             win = self.window_manager.find_window_by_signature(sig)
-            if win and win.is_visible():
+            if win:
                 window_title = win.window_text()
                 # 새 시그니처 저장
                 new_sig = self.window_manager.create_window_signature(win, sig)
@@ -72,7 +81,7 @@ class OneNoteWindowScanner(QThread):
             # OneNote 클래스 이름 우선 정렬
             results.sort(
                 key=lambda r: (
-                    r.get("class_name", "") != ONENOTE_CLASS_NAME,
+                    _onenote_class_sort_key(r),
                     r.get("title", ""),
                 )
             )
