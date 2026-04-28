@@ -32,6 +32,18 @@ class MainWindowInitRightMixin:
         COLOR_STATUS_BAR,
         search_hint_font_pt,
     ) -> None:
+        def _make_right_button_compact(button, *, min_width: int = 44) -> None:
+            if not IS_WINDOWS:
+                return
+            try:
+                button.setMinimumWidth(min_width)
+                button.setSizePolicy(
+                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Fixed,
+                )
+            except Exception:
+                pass
+
         # 3. 오른쪽 패널: 위치정렬/코덱스 탭만 교체되고 1, 2패널은 고정된다.
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
@@ -62,22 +74,14 @@ class MainWindowInitRightMixin:
         self.refresh_button = QPushButton(" 새로고침")
         if IS_WINDOWS:
             self.refresh_button.setText("새로고침")
-            self.refresh_button.setMinimumWidth(0)
-            self.refresh_button.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Fixed,
-            )
+            _make_right_button_compact(self.refresh_button, min_width=64)
         self.refresh_button.clicked.connect(self.refresh_onenote_list)
         list_header_layout.addWidget(self.refresh_button)
 
         self.connect_selected_list_button = QPushButton("선택 연결")
         if IS_WINDOWS:
             self.connect_selected_list_button.setText("연결")
-            self.connect_selected_list_button.setMinimumWidth(0)
-            self.connect_selected_list_button.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Fixed,
-            )
+            _make_right_button_compact(self.connect_selected_list_button, min_width=44)
         self.connect_selected_list_button.clicked.connect(
             self._connect_selected_onenote_list_item
         )
@@ -138,11 +142,7 @@ class MainWindowInitRightMixin:
             self.open_all_notebooks_button.setToolTip(_open_unchecked_notebooks_tip())
             if IS_WINDOWS:
                 self.open_all_notebooks_button.setText("미체크 열기")
-                self.open_all_notebooks_button.setMinimumWidth(0)
-                self.open_all_notebooks_button.setSizePolicy(
-                    QSizePolicy.Policy.Ignored,
-                    QSizePolicy.Policy.Fixed,
-                )
+                _make_right_button_compact(self.open_all_notebooks_button, min_width=86)
             self.open_all_notebooks_button.clicked.connect(
                 self._open_all_notebooks_from_connected_onenote
             )
@@ -159,11 +159,7 @@ class MainWindowInitRightMixin:
             self.refresh_open_notebooks_button.setEnabled(False)
             if IS_WINDOWS:
                 self.refresh_open_notebooks_button.setText("열림 새로고침")
-                self.refresh_open_notebooks_button.setMinimumWidth(0)
-                self.refresh_open_notebooks_button.setSizePolicy(
-                    QSizePolicy.Policy.Ignored,
-                    QSizePolicy.Policy.Fixed,
-                )
+                _make_right_button_compact(self.refresh_open_notebooks_button, min_width=96)
                 self.refresh_open_notebooks_button.setToolTip(
                     "Windows OneNote의 현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 열림 체크에 반영합니다."
                 )
@@ -177,22 +173,14 @@ class MainWindowInitRightMixin:
         connect_other_button = QPushButton("다른 앱에 연결...")
         if IS_WINDOWS:
             connect_other_button.setText("다른 앱")
-            connect_other_button.setMinimumWidth(0)
-            connect_other_button.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Fixed,
-            )
+            _make_right_button_compact(connect_other_button, min_width=58)
         connect_other_button.clicked.connect(self.select_other_window)
         other_buttons_layout.addWidget(connect_other_button)
 
         disconnect_button = QPushButton("연결 해제")
         if IS_WINDOWS:
             disconnect_button.setText("해제")
-            disconnect_button.setMinimumWidth(0)
-            disconnect_button.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Fixed,
-            )
+            _make_right_button_compact(disconnect_button, min_width=44)
         disconnect_button.clicked.connect(self.disconnect_and_clear_info)
         other_buttons_layout.addWidget(disconnect_button)
         actions_layout.addLayout(other_buttons_layout)
@@ -218,11 +206,7 @@ class MainWindowInitRightMixin:
         self.btn_module_project_search_clear.setText("검색 지우기")
         if IS_WINDOWS:
             self.btn_module_project_search_clear.setText("지우기")
-            self.btn_module_project_search_clear.setMinimumWidth(0)
-            self.btn_module_project_search_clear.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Fixed,
-            )
+            _make_right_button_compact(self.btn_module_project_search_clear, min_width=52)
         self.btn_module_project_search_clear.clicked.connect(
             self.module_project_search_input.clear
         )
