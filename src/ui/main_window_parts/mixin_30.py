@@ -51,7 +51,8 @@ class MainWindowMixin30:
                     self.refresh_button.setEnabled(True)
                     self._sync_onenote_list_action_buttons()
                     return
-                self.refresh_onenote_list()
+                info = dict(_window_info_dict(target) or sig or {})
+                self._on_onenote_list_ready([info] if info else [])
                 return
 
         self.onenote_window = None
@@ -82,9 +83,11 @@ class MainWindowMixin30:
         self.refresh_button.setEnabled(False)
         self.connect_selected_list_button.setEnabled(False)
 
-        self._scanner_worker = OneNoteWindowScanner(self.my_pid)
-        self._scanner_worker.done.connect(self._on_onenote_list_ready)
-        self._scanner_worker.start()
+        worker = OneNoteWindowScanner(self.my_pid, parent=self)
+        self._scanner_worker = worker
+        self._retain_qthread_until_finished(worker, "_scanner_worker")
+        worker.done.connect(self._on_onenote_list_ready)
+        worker.start()
 
     def _on_onenote_list_ready(self, results: List[Dict]):
         self.onenote_windows_info = results
