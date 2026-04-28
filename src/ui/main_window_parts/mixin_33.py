@@ -77,39 +77,15 @@ class MainWindowMixin33:
                 _name_sort_key((node or {}).get("name", "")),
             )
 
-        def _count_unique_notebooks(children: List[Dict[str, Any]]) -> tuple[int, int]:
-            total = 0
-            open_by_index: Dict[int, bool] = {}
-            seen: Dict[str, int] = {}
-            for child in children or []:
-                if not isinstance(child, dict) or child.get("type") != "notebook":
-                    continue
-                child_keys = self._aggregate_notebook_keys_from_node(child)
-                index = None
-                for key in child_keys:
-                    if key in seen:
-                        index = seen[key]
-                        break
-                if index is None:
-                    index = total
-                    total += 1
-                    for key in child_keys:
-                        seen[key] = index
-                if _notebook_is_open(child):
-                    open_by_index[index] = True
-                elif index not in open_by_index:
-                    open_by_index[index] = False
-            open_count = sum(1 for is_open in open_by_index.values() if is_open)
-            return open_count, total
-
         def _group_label(base_name: str, children: List[Dict[str, Any]]) -> str:
-            if IS_WINDOWS:
-                open_count, total_count = _count_unique_notebooks(children)
-                return f"{base_name} (열림 {open_count}/{total_count})"
-            if not children:
-                return f"{base_name} (열림 0/0)"
-            open_count = sum(1 for child in children if _notebook_is_open(child))
-            return f"{base_name} (열림 {open_count}/{len(children)})"
+            count = sum(
+                1
+                for child in children or []
+                if isinstance(child, dict) and child.get("type") == "notebook"
+            )
+            if base_name == AGG_UNCLASSIFIED_GROUP_NAME:
+                return f"{base_name}({count})"
+            return f"{base_name} ({count})"
 
         source_id = id(source_nodes)
         if (
