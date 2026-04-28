@@ -52,8 +52,8 @@ class MainWindowMixin30:
                     self._sync_onenote_list_action_buttons()
                     return
                 info = dict(_window_info_dict(target) or sig or {})
+                self._start_windows_tree_warm_worker()
                 self._on_onenote_list_ready([info] if info else [])
-                QTimer.singleShot(50, self._start_windows_tree_warm_worker)
                 return
 
         self.onenote_window = None
@@ -363,7 +363,7 @@ class MainWindowMixin30:
                 QTimer.singleShot(100, self._warm_macos_open_notebook_cache)
             else:
                 self.tree_control = None
-                QTimer.singleShot(80, self._start_windows_tree_warm_worker)
+                QTimer.singleShot(0, self._start_windows_tree_warm_worker)
             return True
 
         except ElementNotFoundError:
