@@ -15,34 +15,71 @@ _WINDOW_SELECTED_TREE_ITEM_CACHE = {}
 _WINDOW_SELECTED_TREE_ITEM_CACHE_TTL_SEC = 30.0
 
 
+def _selected_tree_item_cache_key(tree_control) -> int:
+    return id(tree_control) if IS_WINDOWS and tree_control is not None else 0
+
+
+def _get_selected_tree_item_cache_entry(tree_control):
+    selected_cache_key = _selected_tree_item_cache_key(tree_control)
+    if not selected_cache_key:
+        return None
+    cached = _WINDOW_SELECTED_TREE_ITEM_CACHE.get(selected_cache_key)
+    if not cached or time.monotonic() >= cached.get("expires_at", 0.0):
+        _WINDOW_SELECTED_TREE_ITEM_CACHE.pop(selected_cache_key, None)
+        return None
+    cached_item = cached.get("item")
+    try:
+        if cached_item is not None and (
+            cached_item.is_selected() or cached_item.has_keyboard_focus()
+        ):
+            return cached
+    except Exception:
+        pass
+    _WINDOW_SELECTED_TREE_ITEM_CACHE.pop(selected_cache_key, None)
+    return None
+
+
+def _remember_selected_tree_item(
+    tree_control,
+    item,
+    *,
+    item_name=None,
+    anchor_element=None,
+    anchor_source=None,
+    placement=None,
+):
+    selected_cache_key = _selected_tree_item_cache_key(tree_control)
+    if not selected_cache_key or item is None:
+        return item
+    if len(_WINDOW_SELECTED_TREE_ITEM_CACHE) >= 64:
+        _WINDOW_SELECTED_TREE_ITEM_CACHE.clear()
+    cached = _WINDOW_SELECTED_TREE_ITEM_CACHE.get(selected_cache_key) or {}
+    cached.update(
+        {
+            "item": item,
+            "expires_at": time.monotonic() + _WINDOW_SELECTED_TREE_ITEM_CACHE_TTL_SEC,
+        }
+    )
+    if item_name is not None:
+        cached["name"] = str(item_name or "")
+    if anchor_element is not None:
+        cached["anchor_element"] = anchor_element
+    if anchor_source is not None:
+        cached["anchor_source"] = anchor_source
+    if placement is not None:
+        cached["placement"] = placement
+    _WINDOW_SELECTED_TREE_ITEM_CACHE[selected_cache_key] = cached
+    return item
+
+
 def get_selected_tree_item_fast(tree_control):
     ensure_pywinauto()
     if not IS_MACOS and not _pwa_ready:
         return None
 
-    selected_cache_key = id(tree_control) if IS_WINDOWS and tree_control is not None else 0
-    if selected_cache_key:
-        cached = _WINDOW_SELECTED_TREE_ITEM_CACHE.get(selected_cache_key)
-        if cached and time.monotonic() < cached.get("expires_at", 0.0):
-            cached_item = cached.get("item")
-            try:
-                if cached_item is not None and (
-                    cached_item.is_selected() or cached_item.has_keyboard_focus()
-                ):
-                    return cached_item
-            except Exception:
-                pass
-        _WINDOW_SELECTED_TREE_ITEM_CACHE.pop(selected_cache_key, None)
-
-    def _remember_selected_item(item):
-        if selected_cache_key and item is not None:
-            if len(_WINDOW_SELECTED_TREE_ITEM_CACHE) >= 64:
-                _WINDOW_SELECTED_TREE_ITEM_CACHE.clear()
-            _WINDOW_SELECTED_TREE_ITEM_CACHE[selected_cache_key] = {
-                "item": item,
-                "expires_at": time.monotonic() + _WINDOW_SELECTED_TREE_ITEM_CACHE_TTL_SEC,
-            }
-        return item
+    cached = _get_selected_tree_item_cache_entry(tree_control)
+    if cached is not None:
+        return cached.get("item")
 
     candidates = []
     seen = set()
@@ -72,7 +109,7 @@ def get_selected_tree_item_fast(tree_control):
 
     best = _best_candidate()
     if best is not None:
-        return _remember_selected_item(best)
+        return _remember_selected_tree_item(tree_control, best)
 
     try:
         iface_sel = getattr(tree_control, "iface_selection", None)
@@ -91,7 +128,7 @@ def get_selected_tree_item_fast(tree_control):
 
     best = _best_candidate()
     if best is not None:
-        return _remember_selected_item(best)
+        return _remember_selected_tree_item(tree_control, best)
 
     try:
         for item in tree_control.children():
@@ -105,7 +142,7 @@ def get_selected_tree_item_fast(tree_control):
 
     best = _best_candidate()
     if best is not None:
-        return _remember_selected_item(best)
+        return _remember_selected_tree_item(tree_control, best)
 
     try:
         for control_type in ("TreeItem", "ListItem"):
@@ -118,7 +155,7 @@ def get_selected_tree_item_fast(tree_control):
     except Exception:
         pass
 
-    return _remember_selected_item(_best_candidate())
+    return _remember_selected_tree_item(tree_control, _best_candidate())
 
 
 # ----------------- 8. 페이지/섹션 컨테이너(Tree/List) 찾기 - ensure 호출 -----------------

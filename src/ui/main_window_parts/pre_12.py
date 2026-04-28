@@ -57,10 +57,34 @@ def scroll_selected_item_to_center(
                 print("[DBG][CENTER][TARGET] selected_item=None")
             return False, None
 
-        item_name = selected_item.window_text()
-        anchor_element, anchor_source, placement = _resolve_alignment_target_for_selected_item(
-            selected_item, tree_control
+        selected_cache = _get_selected_tree_item_cache_entry(tree_control)
+        cache_matches_selection = (
+            IS_WINDOWS
+            and selected_cache is not None
+            and selected_cache.get("item") is selected_item
         )
+        if cache_matches_selection and selected_cache.get("name") is not None:
+            item_name = selected_cache.get("name", "")
+        else:
+            item_name = selected_item.window_text()
+
+        if cache_matches_selection and selected_cache.get("placement"):
+            anchor_element = selected_cache.get("anchor_element") or selected_item
+            anchor_source = selected_cache.get("anchor_source") or "cache"
+            placement = selected_cache.get("placement")
+        else:
+            anchor_element, anchor_source, placement = _resolve_alignment_target_for_selected_item(
+                selected_item, tree_control
+            )
+        if IS_WINDOWS:
+            _remember_selected_tree_item(
+                tree_control,
+                selected_item,
+                item_name=item_name,
+                anchor_element=anchor_element,
+                anchor_source=anchor_source,
+                placement=placement,
+            )
         if _debug_hotpaths_enabled():
             try:
                 has_focus = bool(selected_item.has_keyboard_focus())

@@ -349,6 +349,21 @@ class WindowsTreeWarmWorker(QThread):
                     selected_name = selected_item.window_text()
                 except Exception:
                     selected_name = ""
+                try:
+                    anchor_element, anchor_source, placement = _resolve_alignment_target_for_selected_item(
+                        selected_item,
+                        tree,
+                    )
+                except Exception:
+                    anchor_element, anchor_source, placement = None, None, None
+                _remember_selected_tree_item(
+                    tree,
+                    selected_item,
+                    item_name=selected_name,
+                    anchor_element=anchor_element,
+                    anchor_source=anchor_source,
+                    placement=placement,
+                )
 
             self.cached_tree = tree
             self.selected_name = selected_name
