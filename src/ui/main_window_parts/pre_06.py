@@ -9,6 +9,9 @@ from src.ui.main_window_parts._context import (
 _bind_context(globals())
 
 
+_WINDOW_TREE_CONTROL_CACHE = {}
+_WINDOW_TREE_CONTROL_CACHE_TTL_SEC = 300.0
+
 
 def get_selected_tree_item_fast(tree_control):
     ensure_pywinauto()
@@ -152,6 +155,29 @@ def _iter_tree_or_list_controls(onenote_window, control_types=("Tree", "List")):
             continue
 
 
+def _window_handle_cache_key(win) -> int:
+    try:
+        handle = getattr(win, "handle", None)
+        if callable(handle):
+            handle = handle()
+        return int(handle or 0)
+    except Exception:
+        return 0
+
+
+def _is_valid_tree_or_list_control(ctrl) -> bool:
+    if ctrl is None:
+        return False
+    if _safe_control_type(ctrl) not in {"Tree", "List"}:
+        return False
+    rect = _safe_rectangle(ctrl)
+    if rect is None:
+        return False
+    width = max(0, rect.right - rect.left)
+    height = max(0, rect.bottom - rect.top)
+    return width >= 80 and height >= 80
+
+
 def _find_tree_or_list(onenote_window):
     ensure_pywinauto()
     if not IS_MACOS and not _pwa_ready:
@@ -160,6 +186,23 @@ def _find_tree_or_list(onenote_window):
         for ctrl in _iter_tree_or_list_controls(onenote_window):
             return ctrl
         return None
+
+    cache_key = _window_handle_cache_key(onenote_window)
+    if cache_key:
+        cached = _WINDOW_TREE_CONTROL_CACHE.get(cache_key)
+        if cached and time.monotonic() < cached.get("expires_at", 0.0):
+            cached_ctrl = cached.get("control")
+            if _is_valid_tree_or_list_control(cached_ctrl):
+                return cached_ctrl
+        _WINDOW_TREE_CONTROL_CACHE.pop(cache_key, None)
+
+    def _remember_control(ctrl):
+        if cache_key and _is_valid_tree_or_list_control(ctrl):
+            _WINDOW_TREE_CONTROL_CACHE[cache_key] = {
+                "control": ctrl,
+                "expires_at": time.monotonic() + _WINDOW_TREE_CONTROL_CACHE_TTL_SEC,
+            }
+        return ctrl
 
     def _selection_length(ctrl) -> int:
         try:
@@ -226,17 +269,17 @@ def _find_tree_or_list(onenote_window):
                     width = max(0, rect.right - rect.left)
                     height = max(0, rect.bottom - rect.top)
                     if width >= 80 and height >= 80:
-                        return ctrl
+                        return _remember_control(ctrl)
         score = _score_candidate(ctrl)
         if score is not None:
             candidates.append((score, ctrl))
 
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates[0][1]
+        return _remember_control(candidates[0][1])
 
     for ctrl in _iter_tree_or_list_controls(onenote_window):
-        return ctrl
+        return _remember_control(ctrl)
     return None
 
 

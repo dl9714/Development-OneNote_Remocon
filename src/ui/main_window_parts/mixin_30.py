@@ -262,11 +262,6 @@ class MainWindowMixin30:
             self.tree_control = None
             return
         self.tree_control = _find_tree_or_list(self.onenote_window)
-        if self.tree_control:
-            try:
-                _ = self.tree_control.children()
-            except Exception:
-                pass
 
     def _perform_connection(self, info: Dict) -> bool:
         t0 = time.perf_counter()
