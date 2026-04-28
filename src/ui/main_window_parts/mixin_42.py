@@ -55,7 +55,21 @@ class MainWindowMixin42:
             return
 
         try:
-            sig = build_window_signature(self.onenote_window)
+            sig = (
+                build_window_signature_quick(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+                if IS_MACOS
+                else _build_connection_signature_for_save(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+            )
         except Exception:
             sig = {}
 
@@ -97,7 +111,11 @@ class MainWindowMixin42:
             win = resolve_window_target(info)
             if win is None:
                 raise ElementNotFoundError
-            sig = build_window_signature(win)
+            sig = (
+                build_window_signature_quick(win, info)
+                if IS_MACOS
+                else _build_connection_signature_for_save(win, info)
+            )
         except Exception:
             sig = {
                 "handle": info.get("handle"),

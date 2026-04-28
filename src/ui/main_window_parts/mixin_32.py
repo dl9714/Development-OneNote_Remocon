@@ -58,7 +58,12 @@ class MainWindowMixin32:
             )
             sig = build_window_signature_quick(win, saved_sig)
         else:
-            sig = build_window_signature(win)
+            sig = _build_connection_signature_for_save(
+                win,
+                self.settings.get("connection_signature")
+                if isinstance(self.settings.get("connection_signature"), dict)
+                else None,
+            )
         if not sig:
             self.update_status_and_ui("오류: OneNote 창 정보를 읽지 못했습니다.", True)
             return

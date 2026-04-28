@@ -142,7 +142,21 @@ class MainWindowMixin28:
             return True
 
         try:
-            current_sig = build_window_signature(self.onenote_window)
+            current_sig = (
+                build_window_signature_quick(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+                if IS_MACOS
+                else _build_connection_signature_for_save(
+                    self.onenote_window,
+                    self.settings.get("connection_signature")
+                    if isinstance(self.settings.get("connection_signature"), dict)
+                    else None,
+                )
+            )
         except Exception:
             current_sig = {}
 

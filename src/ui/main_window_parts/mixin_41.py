@@ -105,7 +105,12 @@ class MainWindowMixin41:
                             else None,
                         )
                         if IS_MACOS
-                        else build_window_signature(onenote_window)
+                        else _build_connection_signature_for_save(
+                            onenote_window,
+                            self.settings.get("connection_signature")
+                            if isinstance(self.settings.get("connection_signature"), dict)
+                            else None,
+                        )
                     )
                 except Exception as e:
                     print(f"[WARN][AGG_REFRESH] signature build failed: {e}")

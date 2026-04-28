@@ -75,7 +75,7 @@ class MainWindowInitLeftMixin:
                     return
                 button.setMinimumWidth(38)
                 button.setSizePolicy(
-                    QSizePolicy.Policy.Minimum,
+                    QSizePolicy.Policy.Preferred,
                     QSizePolicy.Policy.Fixed,
                 )
             except Exception:
@@ -126,7 +126,7 @@ class MainWindowInitLeftMixin:
         self.btn_rename_buffer = QToolButton()
         self.btn_rename_buffer.setText(_rename_button_label())
         if IS_WINDOWS:
-            self.btn_rename_buffer.setText("이름")
+            self.btn_rename_buffer.setText("이름변경")
         self.btn_rename_buffer.clicked.connect(self._rename_buffer)
         _make_toolbar_button_compact(self.btn_rename_buffer)
 
@@ -142,8 +142,7 @@ class MainWindowInitLeftMixin:
 
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer_group)
         buffer_toolbar_top_layout.addWidget(self.btn_add_buffer)
-        if not IS_WINDOWS:
-            buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
+        buffer_toolbar_top_layout.addWidget(self.btn_rename_buffer)
         buffer_toolbar_top_layout.addStretch(1)
         buffer_group_layout.addLayout(buffer_toolbar_top_layout)
 
@@ -210,26 +209,11 @@ class MainWindowInitLeftMixin:
         )
         self.btn_buffer_move_down.clicked.connect(self._move_buffer_down)
 
-        buffer_toolbar_bottom_layout = QVBoxLayout() if IS_WINDOWS else QHBoxLayout()
-        if IS_WINDOWS:
-            buffer_toolbar_bottom_layout.setSpacing(3)
-            buffer_edit_layout = QHBoxLayout()
-            buffer_edit_layout.setSpacing(4)
-            buffer_edit_layout.addWidget(self.btn_delete_buffer)
-            buffer_edit_layout.addWidget(self.btn_rename_buffer)
-            buffer_edit_layout.addStretch(1)
-            buffer_move_layout = QHBoxLayout()
-            buffer_move_layout.setSpacing(4)
-            buffer_move_layout.addStretch(1)
-            buffer_move_layout.addWidget(self.btn_buffer_move_up)
-            buffer_move_layout.addWidget(self.btn_buffer_move_down)
-            buffer_toolbar_bottom_layout.addLayout(buffer_edit_layout)
-            buffer_toolbar_bottom_layout.addLayout(buffer_move_layout)
-        else:
-            buffer_toolbar_bottom_layout.addWidget(self.btn_delete_buffer)
-            buffer_toolbar_bottom_layout.addStretch(1)
-            buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_up)
-            buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_down)
+        buffer_toolbar_bottom_layout = QHBoxLayout()
+        buffer_toolbar_bottom_layout.addWidget(self.btn_delete_buffer)
+        buffer_toolbar_bottom_layout.addStretch(1)
+        buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_up)
+        buffer_toolbar_bottom_layout.addWidget(self.btn_buffer_move_down)
         buffer_group_layout.addLayout(buffer_toolbar_bottom_layout)
 
         buffer_layout.addWidget(buffer_group)
@@ -272,7 +256,7 @@ class MainWindowInitLeftMixin:
         self.btn_add_section_current = QToolButton()
         self.btn_add_section_current.setText(_current_add_button_label())
         if IS_WINDOWS:
-            self.btn_add_section_current.setText("현재")
+            self.btn_add_section_current.setText("현재 전자필기장 추가")
         self.btn_add_section_current.clicked.connect(self._add_section_from_current)
         _make_toolbar_button_compact(self.btn_add_section_current)
         self.btn_activate_favorite = QToolButton()
@@ -285,12 +269,16 @@ class MainWindowInitLeftMixin:
         self.btn_rename = QToolButton()
         self.btn_rename.setText(_rename_button_label())
         if IS_WINDOWS:
-            self.btn_rename.setText("이름")
+            self.btn_rename.setText("이름바꾸기")
         self.btn_rename.clicked.connect(self._rename_favorite_item)
         _make_toolbar_button_compact(self.btn_rename)
         tb1_layout.addWidget(self.btn_add_section_current)
-        tb1_layout.addWidget(self.btn_activate_favorite)
-        if not IS_WINDOWS:
+        if IS_WINDOWS:
+            self.btn_activate_favorite.setVisible(False)
+        else:
+            tb1_layout.addWidget(self.btn_activate_favorite)
+            tb1_layout.addWidget(self.btn_rename)
+        if IS_WINDOWS:
             tb1_layout.addWidget(self.btn_rename)
         tb1_layout.addStretch(1)
 
@@ -300,8 +288,6 @@ class MainWindowInitLeftMixin:
             tb2_layout.setSpacing(4)
         self.btn_group_expand_collapse = QToolButton()
         self.btn_group_expand_collapse.setText("그룹 펼치기/접기")
-        if IS_WINDOWS:
-            self.btn_group_expand_collapse.setText("펼침/접기")
         self.btn_group_expand_collapse.setToolTip("그룹 펼치기 또는 그룹 접기를 선택합니다.")
         self.btn_group_expand_collapse.setPopupMode(
             QToolButton.ToolButtonPopupMode.InstantPopup
@@ -401,23 +387,11 @@ class MainWindowInitLeftMixin:
         )
         self.btn_move_down.clicked.connect(self._move_item_down)
 
-        if IS_WINDOWS:
-            favorite_edit_layout = QHBoxLayout()
-            favorite_edit_layout.setSpacing(4)
-            favorite_edit_layout.addWidget(self.btn_delete)
-            favorite_edit_layout.addWidget(self.btn_rename)
-            favorite_edit_layout.addStretch(1)
-            move_buttons_layout.addStretch(1)
-            move_buttons_layout.addWidget(self.btn_move_up)
-            move_buttons_layout.addWidget(self.btn_move_down)
-            fav_layout.addLayout(favorite_edit_layout)
-            fav_layout.addLayout(move_buttons_layout)
-        else:
-            move_buttons_layout.addWidget(self.btn_delete)
-            move_buttons_layout.addStretch(1)
-            move_buttons_layout.addWidget(self.btn_move_up)
-            move_buttons_layout.addWidget(self.btn_move_down)
-            fav_layout.addLayout(move_buttons_layout)
+        move_buttons_layout.addWidget(self.btn_delete)
+        move_buttons_layout.addStretch(1)
+        move_buttons_layout.addWidget(self.btn_move_up)
+        move_buttons_layout.addWidget(self.btn_move_down)
+        fav_layout.addLayout(move_buttons_layout)
 
         self.fav_tree.itemSelectionChanged.connect(self._update_move_button_state)
         self.fav_tree.itemSelectionChanged.connect(self._sync_favorite_action_buttons)
