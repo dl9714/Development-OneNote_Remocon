@@ -149,41 +149,7 @@ class MainWindowInitRightMixin:
             self.open_all_notebooks_button.setEnabled(False)
             mac_bulk_actions_layout.addWidget(self.open_all_notebooks_button)
 
-            self.refresh_open_notebooks_button = QPushButton("열린 전자필기장 새로고침")
-            self.refresh_open_notebooks_button.setToolTip(
-                "현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 연두색 체크에 반영합니다."
-            )
-            self.refresh_open_notebooks_button.clicked.connect(
-                lambda: self._register_all_notebooks_from_current_onenote(force=True)
-            )
-            self.refresh_open_notebooks_button.setEnabled(False)
-            if IS_WINDOWS:
-                self.refresh_open_notebooks_button.setText("열림 새로고침")
-                _make_right_button_compact(self.refresh_open_notebooks_button, min_width=96)
-                self.refresh_open_notebooks_button.setToolTip(
-                    "Windows OneNote의 현재 열린 전자필기장 목록을 다시 읽어 종합 버퍼의 열림 체크에 반영합니다."
-                )
-            mac_bulk_actions_layout.addWidget(self.refresh_open_notebooks_button)
-
             actions_layout.addLayout(mac_bulk_actions_layout)
-
-        other_buttons_layout = QHBoxLayout()
-        if IS_WINDOWS:
-            other_buttons_layout.setSpacing(4)
-        connect_other_button = QPushButton("다른 앱에 연결...")
-        if IS_WINDOWS:
-            connect_other_button.setText("다른 앱")
-            _make_right_button_compact(connect_other_button, min_width=58)
-        connect_other_button.clicked.connect(self.select_other_window)
-        other_buttons_layout.addWidget(connect_other_button)
-
-        disconnect_button = QPushButton("연결 해제")
-        if IS_WINDOWS:
-            disconnect_button.setText("해제")
-            _make_right_button_compact(disconnect_button, min_width=44)
-        disconnect_button.clicked.connect(self.disconnect_and_clear_info)
-        other_buttons_layout.addWidget(disconnect_button)
-        actions_layout.addLayout(other_buttons_layout)
 
         right_layout.addWidget(actions_group)
 
