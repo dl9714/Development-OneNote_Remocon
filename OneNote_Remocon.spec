@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -21,6 +22,7 @@ MAC_PNG_ICON_PATH = os.path.join(ROOT, "assets", "app_icon.png")
 MAC_BUNDLE_ICON_PATH = os.path.join(ROOT, "assets", "app_icon.icns")
 MAC_ENTITLEMENTS_PATH = os.path.join(ROOT, "assets", "macos-entitlements.plist")
 MAC_DEFAULT_CODESIGN_IDENTITY = "OneNote Remocon Local Code Signing"
+SETTINGS_DATA_DIR = ".data"
 
 
 def _mac_codesign_identity():
@@ -47,10 +49,6 @@ datas = [
 
 if os.path.exists(MAC_BUNDLE_ICON_PATH):
     datas.append((MAC_BUNDLE_ICON_PATH, "assets"))
-
-settings_path = os.path.join(ROOT, "OneNote_Remocon_Setting.json")
-if os.path.exists(settings_path):
-    datas.append((settings_path, "."))
 
 src_docs_path = os.path.join(ROOT, "src", "docs")
 if os.path.exists(src_docs_path):
@@ -123,6 +121,21 @@ coll = COLLECT(
     upx_exclude=[],
     name="OneNote_Remocon",
 )
+
+
+def _copy_settings_data_to_dist():
+    if sys.platform == "darwin":
+        return
+    dist_root = os.path.abspath(globals().get("DISTPATH", os.path.join(ROOT, "dist")))
+    dist_data_dir = os.path.join(dist_root, "OneNote_Remocon", SETTINGS_DATA_DIR)
+    os.makedirs(dist_data_dir, exist_ok=True)
+    for settings_filename in ("OneNote_Remocon_Setting.json", "OneNote_Remocon_Setting.json.bak"):
+        settings_path = os.path.join(ROOT, settings_filename)
+        if os.path.exists(settings_path):
+            shutil.copy2(settings_path, os.path.join(dist_data_dir, settings_filename))
+
+
+_copy_settings_data_to_dist()
 
 if sys.platform == "darwin":
     app = BUNDLE(

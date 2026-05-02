@@ -9,6 +9,7 @@ from src.platform_support import default_icon_path
 
 # ----------------- 파일 경로 관련 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
+SETTINGS_DATA_DIR = ".data"
 APP_ICON_PATH = default_icon_path()
 
 # ----------------- 윈도우 관련 -----------------
