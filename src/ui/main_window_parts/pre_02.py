@@ -153,9 +153,7 @@ def _get_app_base_path() -> str:
 def _get_default_settings_dir() -> str:
     if IS_MACOS:
         return _settings_path_config_dir()
-    if getattr(sys, "frozen", False):
-        return os.path.join(_get_app_base_path(), SETTINGS_DATA_DIR)
-    return _get_app_base_path()
+    return os.path.join(_get_app_base_path(), SETTINGS_DATA_DIR)
 
 
 def _get_default_settings_file_path() -> str:

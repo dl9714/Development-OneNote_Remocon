@@ -126,9 +126,13 @@ def _copy_settings_data_to_dist():
     dist_data_dir = os.path.join(dist_root, "OneNote_Remocon", SETTINGS_DATA_DIR)
     os.makedirs(dist_data_dir, exist_ok=True)
     for settings_filename in ("OneNote_Remocon_Setting.json", "OneNote_Remocon_Setting.json.bak"):
-        settings_path = os.path.join(ROOT, settings_filename)
-        if os.path.exists(settings_path):
-            shutil.copy2(settings_path, os.path.join(dist_data_dir, settings_filename))
+        for settings_path in (
+            os.path.join(ROOT, SETTINGS_DATA_DIR, settings_filename),
+            os.path.join(ROOT, settings_filename),
+        ):
+            if os.path.exists(settings_path):
+                shutil.copy2(settings_path, os.path.join(dist_data_dir, settings_filename))
+                break
 
 
 _copy_settings_data_to_dist()

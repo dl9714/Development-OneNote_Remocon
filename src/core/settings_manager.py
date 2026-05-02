@@ -44,7 +44,10 @@ class SettingsManager:
         if getattr(sys, "frozen", False):
             base_path = os.path.join(os.path.dirname(sys.executable), SETTINGS_DATA_DIR)
         else:
-            base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            base_path = os.path.join(
+                os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")),
+                SETTINGS_DATA_DIR,
+            )
 
         self._settings_path = os.path.join(base_path, SETTINGS_FILE)
         return self._settings_path
@@ -104,6 +107,8 @@ class SettingsManager:
 
         try:
             # 구버전 favorites 키 제거 (마이그레이션 완료)
+            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+
             save_data = data.copy()
             if "favorites" in save_data:
                 del save_data["favorites"]
