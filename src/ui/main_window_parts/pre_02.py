@@ -150,10 +150,16 @@ def _get_app_base_path() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
-def _get_default_settings_file_path() -> str:
+def _get_default_settings_dir() -> str:
     if IS_MACOS:
-        return os.path.join(_settings_path_config_dir(), SETTINGS_FILE)
-    return os.path.join(_get_app_base_path(), SETTINGS_FILE)
+        return _settings_path_config_dir()
+    if getattr(sys, "frozen", False):
+        return os.path.join(_get_app_base_path(), SETTINGS_DATA_DIR)
+    return _get_app_base_path()
+
+
+def _get_default_settings_file_path() -> str:
+    return os.path.join(_get_default_settings_dir(), SETTINGS_FILE)
 
 
 def _settings_path_config_dir() -> str:
@@ -210,11 +216,19 @@ def _get_external_settings_file_path() -> str:
     if user_pointer:
         return user_pointer
 
-    local_pointer = _read_settings_path_pointer(
-        os.path.join(_get_app_base_path(), SETTINGS_PATH_POINTER_FILE)
-    )
-    if local_pointer:
-        return local_pointer
+    local_pointer_candidates = [
+        os.path.join(_get_default_settings_dir(), SETTINGS_PATH_POINTER_FILE),
+        os.path.join(_get_app_base_path(), SETTINGS_PATH_POINTER_FILE),
+    ]
+    seen = set()
+    for pointer_path in local_pointer_candidates:
+        pointer_abs = os.path.abspath(pointer_path)
+        if pointer_abs in seen:
+            continue
+        seen.add(pointer_abs)
+        local_pointer = _read_settings_path_pointer(pointer_path)
+        if local_pointer:
+            return local_pointer
 
     return ""
 
@@ -263,9 +277,13 @@ def _find_settings_seed_file(primary_path: str) -> Optional[str]:
     candidates = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
+        candidates.append(os.path.join(meipass, SETTINGS_DATA_DIR, SETTINGS_FILE))
         candidates.append(os.path.join(meipass, SETTINGS_FILE))
     candidates.append(_get_default_settings_file_path())
+    candidates.append(os.path.join(os.path.abspath("."), SETTINGS_DATA_DIR, SETTINGS_FILE))
     candidates.append(os.path.join(os.path.abspath("."), SETTINGS_FILE))
+    candidates.append(os.path.join(_get_app_base_path(), SETTINGS_DATA_DIR, SETTINGS_FILE))
+    candidates.append(os.path.join(_get_app_base_path(), SETTINGS_FILE))
     candidates.append(
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", SETTINGS_FILE))
     )

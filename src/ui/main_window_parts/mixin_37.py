@@ -21,7 +21,7 @@ class MainWindowMixin37:
 
     def _backup_full_settings(self):
         """전체 설정을 백업합니다."""
-        last_dir = self.settings.get("last_backup_dir", os.getcwd())
+        last_dir = self.settings.get("last_backup_dir") or _get_default_settings_dir()
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         default_filename = f"OneNote_Remocon_Backup_{timestamp}.json"
 
@@ -189,7 +189,7 @@ class MainWindowMixin37:
 
     def _restore_full_settings(self):
         """설정 파일을 복원합니다."""
-        last_dir = self.settings.get("last_backup_dir", os.getcwd())
+        last_dir = self.settings.get("last_backup_dir") or _get_default_settings_dir()
 
         file_path, _ = QFileDialog.getOpenFileName(
             self,

@@ -170,6 +170,7 @@ TreeNameEditDelegate = lazy_class("src.ui.widgets", "TreeNameEditDelegate")
 
 # ----------------- 0. 전역 상수 -----------------
 SETTINGS_FILE = "OneNote_Remocon_Setting.json"
+SETTINGS_DATA_DIR = ".data"
 SETTINGS_PATH_POINTER_FILE = "OneNote_Remocon_Setting.path"
 SETTINGS_PATH_ENV = "ONENOTE_REMOCON_SETTINGS_PATH"
 APP_ICON_PATH = default_icon_path()

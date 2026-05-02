@@ -10,7 +10,12 @@ import json
 import os
 from typing import Dict, Any, Optional
 import uuid
-from src.constants import SETTINGS_FILE, DEFAULT_SETTINGS, DEFAULT_FAVORITES_BUFFER
+from src.constants import (
+    SETTINGS_DATA_DIR,
+    SETTINGS_FILE,
+    DEFAULT_SETTINGS,
+    DEFAULT_FAVORITES_BUFFER,
+)
 
 
 class SettingsManager:
@@ -37,7 +42,7 @@ class SettingsManager:
 
         # sys.frozen은 PyInstaller에 의해 생성된 실행 파일인지 확인하는 일반적인 방법입니다.
         if getattr(sys, "frozen", False):
-            base_path = os.path.dirname(sys.executable)
+            base_path = os.path.join(os.path.dirname(sys.executable), SETTINGS_DATA_DIR)
         else:
             base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 

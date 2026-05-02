@@ -65,8 +65,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+set "DATA_DIR=%CD%\dist\OneNote_Remocon\.data"
+if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"
+
 if exist "%~dp0OneNote_Remocon_Setting.json" (
-    copy /Y "%~dp0OneNote_Remocon_Setting.json" "%CD%\dist\OneNote_Remocon\OneNote_Remocon_Setting.json" >nul
+    copy /Y "%~dp0OneNote_Remocon_Setting.json" "%DATA_DIR%\OneNote_Remocon_Setting.json" >nul
+)
+if exist "%~dp0OneNote_Remocon_Setting.json.bak" (
+    copy /Y "%~dp0OneNote_Remocon_Setting.json.bak" "%DATA_DIR%\OneNote_Remocon_Setting.json.bak" >nul
 )
 
 echo.
