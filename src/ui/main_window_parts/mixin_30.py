@@ -129,7 +129,7 @@ class MainWindowMixin30:
                 item = QListWidgetItem(
                     self._format_onenote_list_item_label(info, duplicate_title_counts)
                 )
-                item.setData(Qt.ItemDataRole.UserRole, copy.deepcopy(info))
+                item.setData(Qt.ItemDataRole.UserRole, dict(info))
                 self.onenote_list_widget.addItem(item)
                 item_key = (info.get("handle"), info.get("pid"), info.get("title"))
                 if selection_key and item_key == selection_key:
